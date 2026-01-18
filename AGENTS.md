@@ -1,483 +1,192 @@
-# AGENTS.md - Production Embedded Engineering Guidelines
+# AGENTS.md - ADS1115 Production Embedded Guidelines
 
-## Role
-You are a professional embedded software engineer working on production-grade ESP32 systems.
+## Role and Target
+You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
 
-**Primary goals:**
-- Robustness and stability
-- Deterministic, predictable behavior
-- Portability across projects and boards
-
-**Target:** ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
-
-**These rules are binding.**
+- Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
+- Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
+- These rules are binding.
 
 ---
 
-## Repository Model (Single Library Template)
-
-This repository is a SINGLE reusable library template designed to scale across multiple embedded projects:
-
-### Folder Structure (Mandatory)
+## Repository Model (Single Library)
 
 ```
-include/<libname>/   - Public API headers ONLY (Doxygen documented)
-  ├── Status.h       - Error types
-  ├── Config.h       - Configuration struct
-  └── <Lib>.h        - Main library class
-src/                 - Implementation (.cpp files)
+include/ADS1115/         - Public API headers only (Doxygen)
+  CommandTable.h         - Register addresses and bit masks
+  Status.h
+  Config.h
+  ADS1115.h
+  Version.h              - Auto-generated (do not edit)
+src/                     - Implementation (.cpp)
 examples/
-  ├── 00_name/       - Example applications
-  ├── 01_name/
-  └── common/        - Example-only helpers (Log.h, BoardPins.h)
-platformio.ini       - Build environments (uses build_src_filter)
-library.json         - PlatformIO metadata
-README.md           - Full documentation
-CHANGELOG.md        - Keep a Changelog format
-AGENTS.md           - This file
+  00_*/
+  01_*/
+  common/                - Example-only helpers (Log.h, BoardConfig.h, I2cTransport.h,
+                           I2cScanner.h, CommandHandler.h)
+platformio.ini
+library.json
+README.md
+CHANGELOG.md
+AGENTS.md
 ```
 
-**Rules:**
-- Public headers go in `include/<libname>/` - these define the API contract
-- Board-specific values (pins, etc.) NEVER in library code - only in `Config`
-- Examples demonstrate usage - they may use `examples/common/BoardPins.h`
-- Keep structure boring and predictable - no clever layouts
+Rules:
+- `examples/common/` is NOT part of the library. It simulates project glue and keeps examples self-contained.
+- No board-specific pins/bus in library code; only in `Config`.
+- Public headers only in `include/ADS1115/`.
+- Examples demonstrate usage and may use `examples/common/BoardConfig.h`.
+- Keep the layout boring and predictable.
 
 ---
 
-## Core Architecture Principles (Non-Negotiable)
+## Core Engineering Rules (Mandatory)
 
-### 1. Deterministic Behavior Over Convenience
-- Predictable execution time
-- No unbounded loops or waits
-- All timeouts implemented via deadline checking (not delay())
-- State machines preferred over "clever" event-driven code
-
-### 2. Non-Blocking by Default
-
-All libraries MUST expose:
-```cpp
-Status begin(const Config& config);  // Initialize
-void tick(uint32_t now_ms);       // Cooperative update (non-blocking)
-void end();                        // Cleanup
-```
-
-- `tick()` returns immediately after bounded work
-- Long operations split into state machine steps
-- Example: 120-second timeout → check `now_ms >= deadline_ms` each tick
-
-### 3. Explicit Configuration (No Hidden Globals)
-- Hardware resources (pins, buses, UARTs) passed via `Config` struct
-- No hardcoded pins or interfaces in library code
-- Libraries are board-agnostic by design
-- Examples may provide board-specific defaults in `examples/common/BoardPins.h`
-
-### 4. No Silent NVS / Storage Side Effects
-- Persistent storage is OPTIONAL and DISABLED by default.
-- Storage MUST be explicitly enabled by the user:
-  - via compile-time flag and/or runtime `Config` (opt-in).
-- When enabled:
-  - all storage operations MUST be fallible (return `Status`);
-  - write frequency MUST be controlled (no frequent commits in steady state);
-  - failures MUST not block or brick the system (safe defaults).
-- Storage usage (keys, namespace, timing) MUST be documented in README and Doxygen.
-- Default behavior: zero storage access, zero side effects.
-
-### 5. No Repeated Heap Allocations in Steady State
-- Allocate resources in `begin()` if needed
-- Zero allocations in `tick()` and normal operation
-- Use fixed-size buffers and ring buffers
-- If allocation is unavoidable, document it clearly
-
-### 6. Boring, Predictable Code
-- Prefer verbose over clever
-- Explicit state machines over callback chains
-- Simple control flow over complex abstractions
-- If uncertain, choose the simplest deterministic solution
+- Deterministic: no unbounded loops/waits; all timeouts via deadlines, never `delay()` in library code.
+- Non-blocking lifecycle: `Status begin(const Config&)`, `void tick(uint32_t nowMs)`, `void end()`.
+- Any I/O that can exceed ~1-2 ms must be split into state machine steps driven by `tick()`.
+- No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
+- No logging in library code; examples may log.
+- No macros for constants; use `static constexpr`. Macros only for conditional compile or logging helpers.
 
 ---
 
-## FreeRTOS Tasks: When and How
+## I2C Manager + Transport (Required)
 
-**Default: NO TASKS.** Use non-blocking `tick()` pattern.
+- The library MUST NOT own I2C. It never touches `Wire` directly.
+- `Config` MUST accept a transport adapter (function pointers or abstract interface).
+- Transport errors MUST map to `Status` (no leaking `Wire`, `esp_err_t`, etc.).
+- The library MUST NOT configure bus timeouts or pins.
 
-**Use FreeRTOS tasks ONLY when:**
-1. **Continuous streaming required** (ADC sampling, audio, SD logging)
-2. **Blocking I/O simplifies correctness** (UART RX drain, socket reads)
-3. **Hardware requires dedicated service** (high-frequency PWM generation)
+---
 
-### Task Design Rules
+## Status / Error Handling (Mandatory)
 
-When tasks are necessary:
+All fallible APIs return `Status`:
 
 ```cpp
-// Task is a THIN ADAPTER that calls library tick() or handles blocking I/O
-void task_function(void* arg) {
-  MyLib* lib = static_cast<MyLib*>(arg);
-  while (true) {
-    lib->tick_from_task();  // or handle blocking I/O
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
-}
-```
-
-**Requirements:**
-- Define stack size explicitly
-- Document priority and rationale
-- Document ownership: who creates/destroys the task?
-- Provide both task-based AND non-blocking APIs when possible
-- Document threading contract in Doxygen (`@note Thread-safe: ...`)
-
-**Example Config:**
-```cpp
-struct Config {
-  bool use_task = false;       // Opt-in to task mode
-  uint16_t task_stack = 4096;  // Stack size in bytes
-  uint8_t task_priority = 1;   // FreeRTOS priority
+struct Status {
+  Err code;
+  int32_t detail;
+  const char* msg;  // static string only
 };
 ```
 
----
-
-## Device-Specific Guidance
-
-### RS485 / Modbus / Serial Protocols
-- **Architecture:** Transaction-based state machine
-- **Pattern:** Non-blocking by default, optional RX drain task
-- **Timeouts:** Inter-character and frame timeouts via deadlines
-- **Example states:** Idle → TxRequest → Waiting → RxFrame → Done/Timeout
-
-### GSM Modems / AT-Based Devices
-- **Architecture:** Command/response state machine
-- **Commands:** Queue of pending AT commands with retry logic
-- **Timeouts:** Per-command deadlines (some commands take 30+ seconds)
-- **Unsolicited:** Handle asynchronous events (e.g., +CMT SMS arrival)
-
-### High-Rate ADC / Audio Streaming
-- **Architecture:** ISR + ring buffer + optional processing task
-- **ISR:** Minimal - just copy samples to buffer
-- **Task:** Drains buffer, processes data, writes to SD/network
-- **Config:** Buffer size, sample rate, task priority
-
-### Stepper Motors / Actuators
-- **Architecture:** Non-blocking position/velocity tracking
-- **Hardware:** Use ESP32 hardware timers or RMT for pulse generation
-- **API:** `move_to(position, speed) -> Status`, `tick()` updates state
-- **Never:** Block waiting for motion to complete
-
-### I2C/SPI Sensors
-- **Architecture:** Short transactions in `tick()`
-- **Shared bus:** Abstract bus ownership if multiple devices
-- **Timeouts:** Hardware timeout + software deadline
-- **Error handling:** Retry logic with exponential backoff
-
-### SD Card Logging
-- **Architecture:** Buffered writes + periodic flush
-- **Pattern:** Queue writes in RAM, task flushes to SD
-- **Safety:** Flush on critical events, not every write
-- **Error handling:** Retry on failure, report unrecoverable errors
-
-### LED Control / WS2812 / Patterns
-- **Architecture:** Non-blocking pattern state machine
-- **Output:** RMT peripheral preferred (DMA-based, CPU-free)
-- **API:** `set_pattern(Pattern)`, `tick()` advances animation
-- **Patterns:** Stored as const arrays, no dynamic allocation
+- Silent failure is unacceptable.
+- No exceptions.
 
 ---
 
-## Error Handling
+## ADS1115 Driver Requirements
 
-### Status/Err Type (Mandatory)
-- Library APIs return `Status` struct:
-  ```cpp
-  struct Status {
-    Err code;           // Category (OK, INVALID_CONFIG, TIMEOUT, ...)
-    int32_t detail;     // Vendor/third-party error code
-    const char* msg;    // STATIC STRING ONLY (never heap-allocated)
-  };
-  ```
-- When wrapping third-party libraries, translate errors at boundary
-- Store original error code in `detail` field
-- Silent failure is unacceptable - always return Status
-
-### Error Propagation
-- Errors must be checkable: `if (!status.ok()) { /* handle */ }`
-- Log errors in examples, not in library code
-- Document error conditions in Doxygen (`@return INVALID_CONFIG if ...`)
+- I2C address configurable: 0x48 (ADDR→GND), 0x49 (ADDR→VDD), 0x4A (ADDR→SDA), 0x4B (ADDR→SCL).
+- Check device presence in `begin()` by reading config register.
+- Support input multiplexer configurations:
+  - 4 single-ended inputs (AIN0-AIN3 vs GND)
+  - 3 differential pairs (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
+- Configurable PGA (gain): ±6.144V, ±4.096V, ±2.048V, ±1.024V, ±0.512V, ±0.256V
+- Configurable data rate: 8, 16, 32, 64, 128, 250, 475, 860 SPS
+- Support operating modes:
+  - **Single-shot mode**: One conversion on demand, then power down
+  - **Continuous mode**: Continuous conversions at configured data rate
+- Comparator support (optional): window/traditional mode, latching, active high/low, queue depth
+- Conversion ready detection via:
+  - Polling OS bit in config register
+  - ALERT/RDY pin (comparator mode with thresholds set appropriately)
+- Proper 16-bit signed result handling (two's complement)
+- Voltage calculation from raw ADC value and gain setting
 
 ---
 
-## Configuration Rules
+## Driver Architecture: Managed Synchronous Driver
 
-### Config Struct Design
+The driver follows a **managed synchronous** model with health tracking:
+
+- All public I2C operations are **blocking** (no complex async - ADS1115 has no EEPROM/NVM writes).
+- `tick()` may be used for single-shot conversion wait or continuous mode polling.
+- Health is tracked via **tracked transport wrappers** — public API never calls `_updateHealth()` directly.
+- Recovery is **manual** via `recover()` - the application controls retry strategy.
+
+### DriverState (4 states only)
+
 ```cpp
-struct Config {
-  // Hardware
-  int pin_tx = -1;           // -1 = disabled/not used
-  int pin_rx = -1;
-  uint32_t baud = 115200;
-
-  // Behavior
-  uint32_t timeout_ms = 5000;
-  bool enable_feature = false;
-
-  // Optional: task mode
-  bool use_task = false;
-  uint16_t task_stack = 4096;
+enum class DriverState : uint8_t {
+  UNINIT,    // begin() not called or end() called
+  READY,     // Operational, consecutiveFailures == 0
+  DEGRADED,  // 1 <= consecutiveFailures < offlineThreshold
+  OFFLINE    // consecutiveFailures >= offlineThreshold
 };
 ```
 
+State transitions:
+- `begin()` success → READY
+- Any I2C failure in READY → DEGRADED
+- Success in DEGRADED/OFFLINE → READY
+- Failures reach `offlineThreshold` → OFFLINE
+- `end()` → UNINIT
+
+### Transport Wrapper Architecture
+
+All I2C goes through layered wrappers:
+
+```
+Public API (readAdc, startConversion, etc.)
+    ↓
+Register helpers (readRegs, writeRegs)
+    ↓
+TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
+    ↓  ← _updateHealth() called here ONLY
+RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
+    ↓
+Transport callbacks (Config::i2cWrite, i2cWriteRead)
+```
+
 **Rules:**
-- All pins default to -1 (disabled)
-- All timeouts in milliseconds (uint32_t)
-- Boolean flags for optional features
-- Validate in `begin()`, return `INVALID_CONFIG` on error
-- Document valid ranges in Doxygen
+- Public API methods NEVER call `_updateHealth()` directly
+- `readRegs()`/`writeRegs()` use TRACKED wrappers → health updated automatically
+- `probe()` uses RAW wrappers → no health tracking (diagnostic only)
+- `recover()` tracks probe failures (driver is initialized, so failures count)
+
+### Health Tracking Rules
+
+- `_updateHealth()` called ONLY inside tracked transport wrappers.
+- State transitions guarded by `_initialized` (no DEGRADED/OFFLINE before `begin()` succeeds).
+- NOT called for config/param validation errors (INVALID_CONFIG, INVALID_PARAM).
+- NOT called for precondition errors (NOT_INITIALIZED).
+- `probe()` uses raw I2C and does NOT update health (diagnostic only).
+
+### Health Tracking Fields
+
+- `_lastOkMs` - timestamp of last successful I2C operation
+- `_lastErrorMs` - timestamp of last failed I2C operation
+- `_lastError` - most recent error Status
+- `_consecutiveFailures` - failures since last success (resets on success)
+- `_totalFailures` / `_totalSuccess` - lifetime counters (wrap at max)
 
 ---
 
-## Versioning and Release Process
+## Versioning and Releases
 
-### When to Update Version
+Single source of truth: `library.json`. `Version.h` is auto-generated and must never be edited.
 
-Follow [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH):
+SemVer:
+- MAJOR: breaking API/Config/enum changes.
+- MINOR: new backward-compatible features or error codes (append only).
+- PATCH: bug fixes, refactors, docs.
 
-- **MAJOR** (1.0.0 → 2.0.0): Breaking API changes
-  - Changed function signatures
-  - Removed public methods
-  - Changed Config struct fields (name or type)
-  - Changed enum values or error codes
-
-- **MINOR** (1.0.0 → 1.1.0): New features, backward compatible
-  - New public methods
-  - New Config fields with defaults
-  - New error codes (append only)
-  - New optional features
-
-- **PATCH** (1.0.0 → 1.0.1): Bug fixes, no API changes
-  - Fixed bugs
-  - Performance improvements
-  - Documentation updates
-  - Internal refactoring
-
-### Release Checklist (MANDATORY)
-
-**Before ANY version change, complete ALL steps:**
-
-#### 1. Update [library.json](library.json)
-```json
-{
-  "version": "X.Y.Z"  // ← Change this first
-}
-```
-
-#### 2. Update [CHANGELOG.md](CHANGELOG.md)
-Add new version section at the top:
-```markdown
-## [X.Y.Z] - YYYY-MM-DD
-
-### Added
-- List new features
-
-### Changed
-- List API changes (breaking or non-breaking)
-
-### Fixed
-- List bug fixes
-
-### Removed
-- List removed features (breaking)
-```
-
-**Ask:** "What changed in this release? List all Added/Changed/Fixed/Removed items."
-
-#### 3. Update [README.md](README.md) (if needed)
-Check if any of these sections need updates:
-- **API table** - new methods? changed signatures?
-- **Config struct** - new fields? changed defaults?
-- **Examples** - does example code reflect new API?
-- **Error codes** - new Err enum values?
-- **Pin mappings** - changed default pins?
-
-**Ask:** "Do any README sections need updates based on the changes?"
-
-#### 4. Update [SECURITY.md](SECURITY.md) (if needed)
-- Update "Supported Versions" table if dropping old version support
-- Update contact information if changed
-
-**Ask:** "Are we dropping support for any old versions? Has security contact changed?"
-
-#### 5. Review [AGENTS.md](AGENTS.md) (this file)
-- Add new device patterns if implementing new hardware support
-- Update architecture rules if design patterns changed
-- Add new examples to naming conventions if needed
-
-**Ask:** "Do any coding guidelines need updates based on new patterns introduced?"
-
-#### 6. Commit and Tag
-```bash
-git add library.json CHANGELOG.md README.md
-git commit -m "Release vX.Y.Z"
-git tag vX.Y.Z
-git push origin main --tags
-```
-
-### Version.h Auto-Generation
-
-**Single source of truth:** [library.json](library.json)
-
-**Automatic generation:** [scripts/generate_version.py](scripts/generate_version.py) creates `include/YourLibrary/Version.h` before each build.
-
-**Generated constants:**
-- `VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_PATCH` (uint16_t)
-- `VERSION` (string) - e.g., "1.2.3"
-- `VERSION_CODE` (uint32_t) - encoded for comparison (e.g., 10203)
-- `BUILD_DATE`, `BUILD_TIME`, `BUILD_TIMESTAMP` (strings)
-- `GIT_COMMIT` (string) - short hash (e.g., "a1b2c3d")
-- `GIT_STATUS` (string) - "clean" or "dirty"
-- `VERSION_FULL` (string) - complete version with build info
-
-**Never edit Version.h manually** - it's regenerated on every build.
+Release steps:
+1. Update `library.json`.
+2. Update `CHANGELOG.md` (Added/Changed/Fixed/Removed).
+3. Update `README.md` if API or examples changed.
+4. Commit and tag: `Release vX.Y.Z`.
 
 ---
 
-## Naming Conventions (Mandatory)
+## Naming Conventions
 
-Arduino/PlatformIO/ESP-IDF style:
-
-| Item                | Convention   | Example                   |
-| ------------------- | ------------ | ------------------------- |
-| Member variables    | `_camelCase` | `_config`, `_initialized` |
-| Methods/Functions   | `camelCase`  | `isReady()`, `getData()`  |
-| Constants           | `CAPS_CASE`  | `LED_PIN`, `MAX_RETRIES`  |
-| Enum values         | `CAPS_CASE`  | `OK`, `TIMEOUT`           |
-| Local vars/params   | `camelCase`  | `startTime`, `timeoutMs`  |
-| Config fields       | `camelCase`  | `ledPin`, `timeoutMs`     |
-
----
-
-## Macros and Constants
-
-**Forbidden:** Macros for constants
-```cpp
-// NO:
-#define LED_PIN 48
-#define BUFFER_SIZE 256
-
-// YES:
-static constexpr int LED_PIN = 48;
-static constexpr size_t BUFFER_SIZE = 256;
-```
-
-**Allowed:** Macros for conditional compilation and logging
-```cpp
-#ifdef DEBUG_MODE
-  // debug code
-#endif
-
-#define LOGD(fmt, ...) do { /* ... */ } while(0)
-```
-
----
-
-## Memory and Determinism
-
-### Allocation Rules
-1. **In `begin()`:** Allocate buffers, create tasks if needed
-2. **In `tick()`:** ZERO allocations (no malloc, no String, no std::vector)
-3. **In `end()`:** Free resources allocated in `begin()`
-
-### Preferred Patterns
-- Fixed-size arrays over dynamic allocation
-- Ring buffers for streaming data
-- Static const arrays for lookup tables
-- Preallocated buffers passed via Config
-
----
-
-## Logging
-
-- **Library code:** NO logging (not even optional)
-- **Examples:** May use `examples/common/Log.h` macros
-- **Never:** Log from ISRs
-- **Production:** Libraries must work without Serial/logging
-
----
-
-## Doxygen Documentation (Mandatory for Public API)
-
-All public headers in `include/<libname>/` require:
-
-**File:** `@file` + `@brief` (one line) + optional detail paragraph
-
-**Class:** `@brief` (what it does) + usage notes + threading/ISR constraints
-
-**Function:** `@brief` + `@param` (name + meaning) + `@return` (what codes mean) + `@note` (side effects, validation, timing)
-
-**Config field:** `/// @brief` (purpose, units, valid range) + `@note` if pin is application-provided
-
-**Examples:**
-```cpp
-/// @brief I2C SDA pin. Set to -1 to disable.
-/// @note Application-provided. Library does not define pin defaults.
-int pin_sda = -1;
-
-/**
- * @brief Initialize hardware with given config.
- * @param config Pin and timing parameters.
- * @return Ok on success, INVALID_CONFIG if config.timeout_ms == 0.
- * @note Allocates buffers. Call end() to release.
- */
-Status begin(const Config& config);
-```
-
-**Keep it dense:** State what matters (constraints, units, side effects). Omit obvious explanations.
-
----
-
-## README Behavioral Contracts (Required Sections)
-
-When adding/modifying functionality, update README with:
-
-1. **Threading Model:** "Single-threaded by default. Optional task mode via Config."
-2. **Timing:** "tick() completes in <1ms. Long operations split across calls."
-3. **Resource Ownership:** "UART pins passed via Config. No hardcoded resources."
-4. **Memory:** "All allocation in begin(). Zero allocation in tick()."
-5. **Error Handling:** "All errors returned as Status. No silent failures."
-
----
-
-## Modification Process
-
-**Before making changes, ask:**
-> "Does this increase predictability and portability across projects?"
-
-**If no, do not proceed.**
-
-**When adding features:**
-1. Output intended file tree changes (short summary)
-2. Apply edits (prefer additive changes over refactors)
-3. Update documentation (README + Doxygen)
-4. Summarize in ≤10 bullets
-
-**Prefer:**
-- Additive changes over breaking changes
-- Optional features (Config flags) over mandatory changes
-- Explicit behavior over implicit magic
-
----
-
-## Final Checklist
-
-Before committing:
-- [ ] Public API has Doxygen comments
-- [ ] README documents threading and timing model
-- [ ] Config struct has no hardcoded pins
-- [ ] `tick()` is non-blocking and bounded
-- [ ] Errors return Status, never silent
-- [ ] No heap allocation in steady state
-- [ ] No logging in library code
-- [ ] Examples demonstrate correct usage
-- [ ] CHANGELOG.md updated
-
-**If any item fails, fix before proceeding.**
+- Member variables: `_camelCase`
+- Methods/Functions: `camelCase`
+- Constants: `CAPS_CASE`
+- Enum values: `CAPS_CASE` or short forms (e.g., `AIN0_GND`)
+- Locals/params: `camelCase`
+- Config fields: `camelCase`
