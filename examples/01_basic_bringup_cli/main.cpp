@@ -84,17 +84,17 @@ void printHelp() {
   Serial.println("  voltage           - Read as voltage");
   Serial.println();
   Serial.println("Channel/Gain:");
-  Serial.println("  ch 0|1|2|3        - Set single-ended channel (AINx vs GND)");
-  Serial.println("  diff 0|1|2|3      - Set differential pair");
-  Serial.println("  gain 0..5         - Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
-  Serial.println("  rate 0..7         - Set data rate");
-  Serial.println("  mode single|cont  - Set operating mode");
+  Serial.println("  ch [0|1|2|3]      - Set single-ended channel (AINx vs GND)");
+  Serial.println("  diff [0|1|2|3]    - Set differential pair");
+  Serial.println("  gain [0..5]       - Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
+  Serial.println("  rate [0..7]       - Set data rate");
+  Serial.println("  mode [single|cont] - Set operating mode");
   Serial.println();
   Serial.println("Driver Debugging:");
   Serial.println("  drv               - Show driver state and health");
   Serial.println("  probe             - Probe device (no health tracking)");
   Serial.println("  recover           - Manual recovery attempt");
-  Serial.println("  verbose 0|1       - Enable/disable verbose output");
+  Serial.println("  verbose [0|1]     - Enable/disable verbose output");
   Serial.println("  stress [N]        - Run N conversion cycles");
   Serial.println("  config            - Dump config register");
   Serial.println("  scan              - Scan I2C bus");
@@ -118,6 +118,106 @@ ADS1115::Mux diffToMux(int index) {
     case 3: return ADS1115::Mux::AIN2_AIN3;
     default: return ADS1115::Mux::AIN0_AIN1;
   }
+}
+
+const char* muxToStr(ADS1115::Mux mux) {
+  using ADS1115::Mux;
+  switch (mux) {
+    case Mux::AIN0_AIN1: return "AIN0_AIN1";
+    case Mux::AIN0_AIN3: return "AIN0_AIN3";
+    case Mux::AIN1_AIN3: return "AIN1_AIN3";
+    case Mux::AIN2_AIN3: return "AIN2_AIN3";
+    case Mux::AIN0_GND:  return "AIN0_GND";
+    case Mux::AIN1_GND:  return "AIN1_GND";
+    case Mux::AIN2_GND:  return "AIN2_GND";
+    case Mux::AIN3_GND:  return "AIN3_GND";
+    default:             return "UNKNOWN";
+  }
+}
+
+const char* gainToStr(ADS1115::Gain gain) {
+  using ADS1115::Gain;
+  switch (gain) {
+    case Gain::FSR_6_144V: return "FSR_6_144V";
+    case Gain::FSR_4_096V: return "FSR_4_096V";
+    case Gain::FSR_2_048V: return "FSR_2_048V";
+    case Gain::FSR_1_024V: return "FSR_1_024V";
+    case Gain::FSR_0_512V: return "FSR_0_512V";
+    case Gain::FSR_0_256V: return "FSR_0_256V";
+    default:               return "UNKNOWN";
+  }
+}
+
+const char* rateToStr(ADS1115::DataRate rate) {
+  using ADS1115::DataRate;
+  switch (rate) {
+    case DataRate::SPS_8:   return "SPS_8";
+    case DataRate::SPS_16:  return "SPS_16";
+    case DataRate::SPS_32:  return "SPS_32";
+    case DataRate::SPS_64:  return "SPS_64";
+    case DataRate::SPS_128: return "SPS_128";
+    case DataRate::SPS_250: return "SPS_250";
+    case DataRate::SPS_475: return "SPS_475";
+    case DataRate::SPS_860: return "SPS_860";
+    default:                return "UNKNOWN";
+  }
+}
+
+const char* modeToStr(ADS1115::Mode mode) {
+  using ADS1115::Mode;
+  switch (mode) {
+    case Mode::SINGLE_SHOT: return "SINGLE_SHOT";
+    case Mode::CONTINUOUS:  return "CONTINUOUS";
+    default:                return "UNKNOWN";
+  }
+}
+
+bool muxToChannel(ADS1115::Mux mux, int& channel) {
+  switch (mux) {
+    case ADS1115::Mux::AIN0_GND: channel = 0; return true;
+    case ADS1115::Mux::AIN1_GND: channel = 1; return true;
+    case ADS1115::Mux::AIN2_GND: channel = 2; return true;
+    case ADS1115::Mux::AIN3_GND: channel = 3; return true;
+    default: channel = -1; return false;
+  }
+}
+
+bool muxToDiffIndex(ADS1115::Mux mux, int& index) {
+  switch (mux) {
+    case ADS1115::Mux::AIN0_AIN1: index = 0; return true;
+    case ADS1115::Mux::AIN0_AIN3: index = 1; return true;
+    case ADS1115::Mux::AIN1_AIN3: index = 2; return true;
+    case ADS1115::Mux::AIN2_AIN3: index = 3; return true;
+    default: index = -1; return false;
+  }
+}
+
+void printCurrentMux() {
+  ADS1115::Mux mux = device.getMux();
+  int channel = -1;
+  int diff = -1;
+  if (muxToChannel(mux, channel)) {
+    Serial.printf("  Mux: %s (ch %d)\n", muxToStr(mux), channel);
+  } else if (muxToDiffIndex(mux, diff)) {
+    Serial.printf("  Mux: %s (diff %d)\n", muxToStr(mux), diff);
+  } else {
+    Serial.printf("  Mux: %s\n", muxToStr(mux));
+  }
+}
+
+void printCurrentGain() {
+  ADS1115::Gain gain = device.getGain();
+  Serial.printf("  Gain: %u (%s)\n", static_cast<unsigned>(gain), gainToStr(gain));
+}
+
+void printCurrentRate() {
+  ADS1115::DataRate rate = device.getDataRate();
+  Serial.printf("  Rate: %u (%s)\n", static_cast<unsigned>(rate), rateToStr(rate));
+}
+
+void printCurrentMode() {
+  ADS1115::Mode mode = device.getMode();
+  Serial.printf("  Mode: %s\n", modeToStr(mode));
 }
 
 void printConfig() {
@@ -157,6 +257,8 @@ void processCommand(const String& cmdLine) {
     auto st = device.recover();
     printStatus(st);
     printDriverHealth();
+  } else if (cmd == "verbose") {
+    LOGI("Verbose mode: %s", verboseMode ? "ON" : "OFF");
   } else if (cmd.startsWith("verbose ")) {
     int val = cmd.substring(8).toInt();
     verboseMode = (val != 0);
@@ -206,10 +308,10 @@ void processCommand(const String& cmdLine) {
         printStatus(st);
         break;
       }
-      if (verboseMode) {
-        Serial.printf("  %d: %d (%.6f V)\n", i + 1, raw, device.rawToVoltage(raw));
-      }
+      Serial.printf("  %d: %d (%.6f V)\n", i + 1, raw, device.rawToVoltage(raw));
     }
+  } else if (cmd == "ch") {
+    printCurrentMux();
   } else if (cmd.startsWith("ch ")) {
     int channel = cmd.substring(3).toInt();
     if (channel < 0 || channel > 3) {
@@ -218,6 +320,8 @@ void processCommand(const String& cmdLine) {
     }
     auto st = device.setMux(channelToMux(channel));
     printStatus(st);
+  } else if (cmd == "diff") {
+    printCurrentMux();
   } else if (cmd.startsWith("diff ")) {
     int idx = cmd.substring(5).toInt();
     if (idx < 0 || idx > 3) {
@@ -226,6 +330,8 @@ void processCommand(const String& cmdLine) {
     }
     auto st = device.setMux(diffToMux(idx));
     printStatus(st);
+  } else if (cmd == "gain") {
+    printCurrentGain();
   } else if (cmd.startsWith("gain ")) {
     int gain = cmd.substring(5).toInt();
     if (gain < 0 || gain > 5) {
@@ -234,6 +340,8 @@ void processCommand(const String& cmdLine) {
     }
     auto st = device.setGain(static_cast<ADS1115::Gain>(gain));
     printStatus(st);
+  } else if (cmd == "rate") {
+    printCurrentRate();
   } else if (cmd.startsWith("rate ")) {
     int rate = cmd.substring(5).toInt();
     if (rate < 0 || rate > 7) {
@@ -242,6 +350,8 @@ void processCommand(const String& cmdLine) {
     }
     auto st = device.setDataRate(static_cast<ADS1115::DataRate>(rate));
     printStatus(st);
+  } else if (cmd == "mode") {
+    printCurrentMode();
   } else if (cmd.startsWith("mode ")) {
     String mode = cmd.substring(5);
     mode.trim();
