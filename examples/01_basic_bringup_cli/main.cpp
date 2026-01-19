@@ -412,6 +412,8 @@ void setup() {
   }
   LOGI("I2C initialized (SDA=%d, SCL=%d)", board::I2C_SDA, board::I2C_SCL);
 
+  board::initAlertRdyPin();
+
   i2c::scan();
 
   ADS1115::Config cfg;
@@ -420,6 +422,10 @@ void setup() {
   cfg.i2cAddress = 0x48;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.offlineThreshold = 5;
+  if (board::ALERT_RDY_PIN >= 0) {
+    cfg.alertRdyPin = board::ALERT_RDY_PIN;
+    cfg.gpioRead = board::readAlertRdyPin;
+  }
 
   auto st = device.begin(cfg);
   if (!st.ok()) {

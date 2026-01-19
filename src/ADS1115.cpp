@@ -45,6 +45,35 @@ bool isValidCompQueue(ComparatorQueue queue) {
   return static_cast<uint8_t>(queue) <= static_cast<uint8_t>(ComparatorQueue::DISABLE);
 }
 
+bool isAlertRdyModeConfigured(const Config& cfg) {
+  constexpr int16_t kAlertRdyLow = static_cast<int16_t>(0x0000);
+  constexpr int16_t kAlertRdyHigh = static_cast<int16_t>(0x8000);
+  return cfg.compThresholdLow == kAlertRdyLow &&
+         cfg.compThresholdHigh == kAlertRdyHigh &&
+         cfg.compQueue == ComparatorQueue::ASSERT_1 &&
+         cfg.compMode == ComparatorMode::TRADITIONAL &&
+         cfg.compLatch == ComparatorLatch::NON_LATCHING;
+}
+
+bool isAlertRdyPinConfigured(const Config& cfg) {
+  return cfg.alertRdyPin >= 0 && cfg.gpioRead != nullptr;
+}
+
+bool useAlertRdyPin(const Config& cfg) {
+  return isAlertRdyPinConfigured(cfg) && isAlertRdyModeConfigured(cfg);
+}
+
+bool isAlertRdyAsserted(const Config& cfg) {
+  if (!useAlertRdyPin(cfg)) {
+    return false;
+  }
+  bool level = cfg.gpioRead(cfg.alertRdyPin, cfg.gpioUser);
+  if (cfg.compPolarity == ComparatorPolarity::ACTIVE_HIGH) {
+    return level;
+  }
+  return !level;
+}
+
 bool isValidConfigValue(uint16_t config) {
   uint8_t mux = static_cast<uint8_t>((config & cmd::MASK_MUX) >> cmd::BIT_MUX);
   uint8_t pga = static_cast<uint8_t>((config & cmd::MASK_PGA) >> cmd::BIT_PGA);
@@ -96,6 +125,12 @@ Status ADS1115::begin(const Config& config) {
       !isValidCompLatch(_config.compLatch) || !isValidCompQueue(_config.compQueue)) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid config enum value");
   }
+  if (_config.alertRdyPin < -1) {
+    return Status::Error(Err::INVALID_CONFIG, "Invalid ALERT/RDY pin");
+  }
+  if (_config.alertRdyPin >= 0 && _config.gpioRead == nullptr) {
+    return Status::Error(Err::INVALID_CONFIG, "ALERT/RDY gpioRead required");
+  }
 
   if (_config.offlineThreshold == 0) {
     _config.offlineThreshold = 1;
@@ -123,11 +158,18 @@ void ADS1115::tick(uint32_t nowMs) {
 
   if (_config.mode == Mode::SINGLE_SHOT && _conversionStarted && !_conversionReady) {
     if ((nowMs - _conversionStartMs) >= getConversionTimeMs()) {
-      uint16_t configReg = 0;
-      Status st = readRegister16(cmd::REG_CONFIG, configReg);
-      if (st.ok() && ((configReg & cmd::MASK_OS) == cmd::OS_IDLE)) {
-        _conversionStarted = false;
-        _conversionReady = true;
+      if (useAlertRdyPin(_config)) {
+        if (isAlertRdyAsserted(_config)) {
+          _conversionStarted = false;
+          _conversionReady = true;
+        }
+      } else {
+        uint16_t configReg = 0;
+        Status st = readRegister16(cmd::REG_CONFIG, configReg);
+        if (st.ok() && ((configReg & cmd::MASK_OS) == cmd::OS_IDLE)) {
+          _conversionStarted = false;
+          _conversionReady = true;
+        }
       }
     }
   }
@@ -236,11 +278,23 @@ bool ADS1115::conversionReady() {
     return false;
   }
 
+  if (useAlertRdyPin(_config)) {
+    uint32_t nowMs = millis();
+    if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
+      return false;
+    }
+    if (isAlertRdyAsserted(_config)) {
+      _conversionStarted = false;
+      _conversionReady = true;
+      return true;
+    }
+    return false;
+  }
+
   uint32_t nowMs = millis();
   if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
     return false;
   }
-
   uint16_t configReg = 0;
   Status st = readRegister16(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
@@ -263,16 +317,30 @@ Status ADS1115::readRaw(int16_t& out) {
 
   if (_config.mode == Mode::SINGLE_SHOT) {
     if (!_conversionReady) {
-      uint16_t configReg = 0;
-      Status st = readRegister16(cmd::REG_CONFIG, configReg);
-      if (!st.ok()) {
-        return st;
+      if (_conversionStarted) {
+        uint32_t nowMs = millis();
+        if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
+          return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
+        }
       }
-      if ((configReg & cmd::MASK_OS) != cmd::OS_IDLE) {
-        return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
+      if (useAlertRdyPin(_config)) {
+        if (!isAlertRdyAsserted(_config)) {
+          return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
+        }
+        _conversionStarted = false;
+        _conversionReady = true;
+      } else {
+        uint16_t configReg = 0;
+        Status st = readRegister16(cmd::REG_CONFIG, configReg);
+        if (!st.ok()) {
+          return st;
+        }
+        if ((configReg & cmd::MASK_OS) != cmd::OS_IDLE) {
+          return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
+        }
+        _conversionStarted = false;
+        _conversionReady = true;
       }
-      _conversionStarted = false;
-      _conversionReady = true;
     }
   }
 
@@ -478,6 +546,50 @@ Status ADS1115::getThresholds(int16_t& low, int16_t& high) {
   _config.compThresholdLow = low;
   _config.compThresholdHigh = high;
   return Status::Ok();
+}
+
+Status ADS1115::setComparatorMode(ComparatorMode mode) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (!isValidCompMode(mode)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid comparator mode");
+  }
+  _config.compMode = mode;
+  return _applyConfig();
+}
+
+Status ADS1115::setComparatorPolarity(ComparatorPolarity polarity) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (!isValidCompPolarity(polarity)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid comparator polarity");
+  }
+  _config.compPolarity = polarity;
+  return _applyConfig();
+}
+
+Status ADS1115::setComparatorLatch(ComparatorLatch latch) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (!isValidCompLatch(latch)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid comparator latch");
+  }
+  _config.compLatch = latch;
+  return _applyConfig();
+}
+
+Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (!isValidCompQueue(queue)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid comparator queue");
+  }
+  _config.compQueue = queue;
+  return _applyConfig();
 }
 
 Status ADS1115::enableConversionReadyPin() {

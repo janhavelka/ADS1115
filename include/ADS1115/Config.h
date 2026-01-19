@@ -31,6 +31,12 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
 
+/// GPIO read callback signature (for ALERT/RDY pin)
+/// @param pin      GPIO pin number
+/// @param user     User context pointer passed through from Config
+/// @return true if pin level is HIGH, false if LOW
+using GpioReadFn = bool (*)(int pin, void* user);
+
 /// Input multiplexer configuration
 enum class Mux : uint8_t {
   AIN0_AIN1 = 0,  ///< Differential: AIN0 - AIN1 (default)
@@ -121,6 +127,11 @@ struct Config {
   ComparatorQueue compQueue = ComparatorQueue::DISABLE;
   int16_t compThresholdHigh = 0x7FFF;  ///< High threshold (default: max)
   int16_t compThresholdLow = 0x8000;   ///< Low threshold (default: min)
+
+  // === ALERT/RDY Pin (optional) ===
+  int alertRdyPin = -1;        ///< GPIO pin for ALERT/RDY; -1 means not used
+  GpioReadFn gpioRead = nullptr;
+  void* gpioUser = nullptr;
 
   // === Health Tracking ===
   uint8_t offlineThreshold = 5;    ///< Consecutive failures before OFFLINE

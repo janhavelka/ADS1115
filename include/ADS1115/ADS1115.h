@@ -75,6 +75,19 @@ public:
   // === Comparator ===
   Status setThresholds(int16_t low, int16_t high);
   Status getThresholds(int16_t& low, int16_t& high);
+
+  Status setComparatorMode(ComparatorMode mode);
+  ComparatorMode getComparatorMode() const { return _config.compMode; }
+
+  Status setComparatorPolarity(ComparatorPolarity polarity);
+  ComparatorPolarity getComparatorPolarity() const { return _config.compPolarity; }
+
+  Status setComparatorLatch(ComparatorLatch latch);
+  ComparatorLatch getComparatorLatch() const { return _config.compLatch; }
+
+  Status setComparatorQueue(ComparatorQueue queue);
+  ComparatorQueue getComparatorQueue() const { return _config.compQueue; }
+
   Status enableConversionReadyPin();
   Status disableComparator();
 

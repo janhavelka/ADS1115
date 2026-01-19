@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <Arduino.h>
 #include <stdint.h>
 
 #include "examples/common/I2cTransport.h"
@@ -41,9 +42,26 @@ static constexpr uint16_t I2C_TIMEOUT_MS = 50;
 /// Set to -1 to disable.
 static constexpr int LED = 48;
 
+/// @brief ALERT/RDY pin from ADS1115 (open-drain).
+/// Set to -1 to disable.
+static constexpr int ALERT_RDY_PIN = -1;
+
 /// @brief Initialize I2C for examples using the default config.
 inline bool initI2c() {
   return transport::initWire(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS);
+}
+
+/// @brief Initialize ALERT/RDY pin for examples.
+inline void initAlertRdyPin() {
+  if (ALERT_RDY_PIN >= 0) {
+    pinMode(ALERT_RDY_PIN, INPUT_PULLUP);
+  }
+}
+
+/// @brief Read ALERT/RDY pin level (true = HIGH, false = LOW).
+inline bool readAlertRdyPin(int pin, void* user) {
+  (void)user;
+  return digitalRead(pin) != 0;
 }
 
 /// @brief Initialize Serial for examples.
