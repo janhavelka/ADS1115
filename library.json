@@ -1,6 +1,6 @@
 {
   "name": "ADS1115",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Production-grade ADS1115 16-bit ADC driver",
   "keywords": [
     "ads1115",
@@ -11,7 +11,7 @@
   ],
   "authors": [
     {
-      "name": "Jan Havelka",
+      "name": "Thymos Solution s.r.o",
       "email": "info@thymos.cz",
       "url": "https://www.thymos.cz",
       "maintainer": true

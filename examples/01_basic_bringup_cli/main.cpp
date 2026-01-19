@@ -172,6 +172,8 @@ const char* modeToStr(ADS1115::Mode mode) {
   }
 }
 
+bool readConfigFromDevice(uint16_t& config);
+
 bool muxToChannel(ADS1115::Mux mux, int& channel) {
   switch (mux) {
     case ADS1115::Mux::AIN0_GND: channel = 0; return true;
@@ -193,7 +195,12 @@ bool muxToDiffIndex(ADS1115::Mux mux, int& index) {
 }
 
 void printCurrentMux() {
-  ADS1115::Mux mux = device.getMux();
+  uint16_t config = 0;
+  if (!readConfigFromDevice(config)) {
+    return;
+  }
+  ADS1115::Mux mux =
+      static_cast<ADS1115::Mux>((config & ADS1115::cmd::MASK_MUX) >> ADS1115::cmd::BIT_MUX);
   int channel = -1;
   int diff = -1;
   if (muxToChannel(mux, channel)) {
@@ -206,17 +213,32 @@ void printCurrentMux() {
 }
 
 void printCurrentGain() {
-  ADS1115::Gain gain = device.getGain();
+  uint16_t config = 0;
+  if (!readConfigFromDevice(config)) {
+    return;
+  }
+  ADS1115::Gain gain =
+      static_cast<ADS1115::Gain>((config & ADS1115::cmd::MASK_PGA) >> ADS1115::cmd::BIT_PGA);
   Serial.printf("  Gain: %u (%s)\n", static_cast<unsigned>(gain), gainToStr(gain));
 }
 
 void printCurrentRate() {
-  ADS1115::DataRate rate = device.getDataRate();
+  uint16_t config = 0;
+  if (!readConfigFromDevice(config)) {
+    return;
+  }
+  ADS1115::DataRate rate =
+      static_cast<ADS1115::DataRate>((config & ADS1115::cmd::MASK_DR) >> ADS1115::cmd::BIT_DR);
   Serial.printf("  Rate: %u (%s)\n", static_cast<unsigned>(rate), rateToStr(rate));
 }
 
 void printCurrentMode() {
-  ADS1115::Mode mode = device.getMode();
+  uint16_t config = 0;
+  if (!readConfigFromDevice(config)) {
+    return;
+  }
+  ADS1115::Mode mode =
+      static_cast<ADS1115::Mode>((config & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE);
   Serial.printf("  Mode: %s\n", modeToStr(mode));
 }
 
@@ -228,6 +250,15 @@ void printConfig() {
     return;
   }
   Serial.printf("  Config: 0x%04X\n", config);
+}
+
+bool readConfigFromDevice(uint16_t& config) {
+  ADS1115::Status st = device.readConfig(config);
+  if (!st.ok()) {
+    printStatus(st);
+    return false;
+  }
+  return true;
 }
 
 // ============================================================================

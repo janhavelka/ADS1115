@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - None
 
-## [1.0.0] - 2026-01-19
+## [0.1.0] - 2026-01-19
 
 ### Added
 - ADS1115 driver with injected I2C transport and health tracking
@@ -34,4 +34,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
 [Unreleased]: https://www.thymos.cz
-[1.0.0]: https://www.thymos.cz
+[0.1.0]: https://www.thymos.cz
