@@ -46,4 +46,9 @@ inline bool initI2c() {
   return transport::initWire(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS);
 }
 
+/// @brief Initialize Serial for examples.
+inline void initSerial(uint32_t baud = 115200) {
+  Serial.begin(baud);
+}
+
 }  // namespace board

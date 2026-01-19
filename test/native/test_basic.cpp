@@ -1,5 +1,5 @@
 /// @file test_basic.cpp
-/// @brief Basic unit tests for {DEVICE_NAME} driver
+/// @brief Basic unit tests for ADS1115 driver
 
 #include <cstdio>
 #include <cassert>
@@ -13,10 +13,10 @@ SerialClass Serial;
 TwoWire Wire;
 
 // Include driver
-#include "{NAMESPACE}/Status.h"
-#include "{NAMESPACE}/Config.h"
+#include "ADS1115/Status.h"
+#include "ADS1115/Config.h"
 
-using namespace {NAMESPACE};
+using namespace ADS1115;
 
 // ============================================================================
 // Test Helpers
@@ -68,7 +68,15 @@ TEST(config_defaults) {
   Config cfg;
   ASSERT_EQ(cfg.i2cWrite, nullptr);
   ASSERT_EQ(cfg.i2cWriteRead, nullptr);
+  ASSERT_EQ(cfg.i2cAddress, 0x48);
   ASSERT_EQ(cfg.i2cTimeoutMs, 50);
+  ASSERT_EQ(static_cast<uint8_t>(cfg.mux), static_cast<uint8_t>(Mux::AIN0_GND));
+  ASSERT_EQ(static_cast<uint8_t>(cfg.gain), static_cast<uint8_t>(Gain::FSR_2_048V));
+  ASSERT_EQ(static_cast<uint8_t>(cfg.dataRate), static_cast<uint8_t>(DataRate::SPS_128));
+  ASSERT_EQ(static_cast<uint8_t>(cfg.mode), static_cast<uint8_t>(Mode::SINGLE_SHOT));
+  ASSERT_EQ(static_cast<uint8_t>(cfg.compQueue), static_cast<uint8_t>(ComparatorQueue::DISABLE));
+  ASSERT_EQ(cfg.compThresholdHigh, 0x7FFF);
+  ASSERT_EQ(cfg.compThresholdLow, static_cast<int16_t>(0x8000));
   ASSERT_EQ(cfg.offlineThreshold, 5);
 }
 
@@ -77,7 +85,7 @@ TEST(config_defaults) {
 // ============================================================================
 
 int main() {
-  printf("\n=== {DEVICE_NAME} Unit Tests ===\n\n");
+  printf("\n=== ADS1115 Unit Tests ===\n\n");
   
   RUN_TEST(status_ok);
   RUN_TEST(status_error);

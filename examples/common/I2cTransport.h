@@ -5,12 +5,20 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include "{NAMESPACE}/Status.h"
+#include "ADS1115/Status.h"
 
 namespace transport {
 
-using {NAMESPACE}::Status;
-using {NAMESPACE}::Err;
+using ADS1115::Status;
+using ADS1115::Err;
+
+/// Initialize Wire for example usage
+inline bool initWire(int sda, int scl, uint32_t freqHz, uint16_t timeoutMs) {
+  Wire.begin(sda, scl);
+  Wire.setClock(freqHz);
+  Wire.setTimeOut(timeoutMs);
+  return true;
+}
 
 /// I2C write callback using Wire library
 /// @param addr I2C device address (7-bit)
@@ -22,7 +30,7 @@ using {NAMESPACE}::Err;
 inline Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                         uint32_t timeoutMs, void* user) {
   (void)user;
-  (void)timeoutMs;
+  Wire.setTimeOut(static_cast<uint16_t>(timeoutMs));
   
   Wire.beginTransmission(addr);
   size_t written = Wire.write(data, len);
@@ -52,7 +60,7 @@ inline Status wireWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
                             uint8_t* rxData, size_t rxLen,
                             uint32_t timeoutMs, void* user) {
   (void)user;
-  (void)timeoutMs;
+  Wire.setTimeOut(static_cast<uint16_t>(timeoutMs));
   
   // Write phase
   Wire.beginTransmission(addr);

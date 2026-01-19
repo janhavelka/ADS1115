@@ -8,35 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial library template structure
-- `begin(Config) -> Status`, `tick(now_ms)`, `end()` API pattern
-- Status/Err type with static error messages
-- Config injection pattern (no hardcoded pins)
-- Basic CLI example (`01_basic_bringup_cli`)
-- Compile-only skeleton example (`00_compile_only`)
-- GitHub Actions CI for ESP32-S2 and ESP32-S3
-- Doxygen-style documentation in public headers
+- None
 
 ### Changed
-- Nothing yet
+- None
 
 ### Deprecated
-- Nothing yet
+- None
 
 ### Removed
-- Nothing yet
+- None
 
 ### Fixed
-- Nothing yet
+- None
 
 ### Security
-- Nothing yet
+- None
 
-## [0.1.0] - 2026-01-10
+## [1.0.0] - 2026-01-19
 
 ### Added
-- Initial release with template structure
-- ESP32-S2 and ESP32-S3 support
+- ADS1115 driver with injected I2C transport and health tracking
+- Single-shot and continuous conversion APIs with voltage helpers
+- Comparator configuration and ALERT/RDY support
+- Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/YOUR_USERNAME/esp32-platformio-library-template/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/YOUR_USERNAME/esp32-platformio-library-template/releases/tag/v0.1.0
+[Unreleased]: https://www.thymos.cz
+[1.0.0]: https://www.thymos.cz
