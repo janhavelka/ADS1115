@@ -25,6 +25,10 @@ struct Status {
   Err code = Err::OK;
   int32_t detail = 0;        ///< Implementation-specific detail (e.g., I2C error code)
   const char* msg = "";      ///< Static string describing the error
+
+  constexpr Status() = default;
+  constexpr Status(Err codeIn, int32_t detailIn, const char* msgIn)
+      : code(codeIn), detail(detailIn), msg(msgIn) {}
   
   /// @return true if operation succeeded
   constexpr bool ok() const { return code == Err::OK; }
