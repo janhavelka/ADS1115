@@ -126,7 +126,7 @@ struct Config {
   ComparatorLatch compLatch = ComparatorLatch::NON_LATCHING;
   ComparatorQueue compQueue = ComparatorQueue::DISABLE;
   int16_t compThresholdHigh = 0x7FFF;  ///< High threshold (default: max)
-  int16_t compThresholdLow = 0x8000;   ///< Low threshold (default: min)
+  int16_t compThresholdLow = -32768;   ///< Low threshold (default: min, 0x8000)
 
   // === ALERT/RDY Pin (optional) ===
   int alertRdyPin = -1;        ///< GPIO pin for ALERT/RDY; -1 means not used

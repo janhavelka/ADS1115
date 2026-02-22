@@ -46,8 +46,8 @@ bool isValidCompQueue(ComparatorQueue queue) {
 }
 
 bool isAlertRdyModeConfigured(const Config& cfg) {
-  constexpr int16_t kAlertRdyLow = static_cast<int16_t>(0x0000);
-  constexpr int16_t kAlertRdyHigh = static_cast<int16_t>(0x8000);
+  constexpr int16_t kAlertRdyLow = 0;
+  constexpr int16_t kAlertRdyHigh = -32768;  // 0x8000 as int16_t
   return cfg.compThresholdLow == kAlertRdyLow &&
          cfg.compThresholdHigh == kAlertRdyHigh &&
          cfg.compQueue == ComparatorQueue::ASSERT_1 &&
@@ -379,17 +379,26 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
   }
 
   Status st = startConversion();
-  if (!(st.code == Err::IN_PROGRESS || st.code == Err::BUSY)) {
+  if (st.code != Err::IN_PROGRESS && st.code != Err::BUSY) {
     return st;
   }
 
-  uint32_t startMs = (st.code == Err::BUSY) ? _conversionStartMs : millis();
-  uint32_t deadlineMs = startMs + timeoutMs;
-  uint32_t readyAtMs = startMs + getConversionTimeMs();
+  const uint32_t nowMs = millis();
+  const uint32_t convTimeMs = getConversionTimeMs();
+  const uint32_t deadlineMs = nowMs + timeoutMs;
+
+  // Calculate expected ready time, accounting for existing conversion
+  uint32_t readyAtMs;
+  if (st.code == Err::BUSY) {
+    const uint32_t elapsed = nowMs - _conversionStartMs;
+    readyAtMs = (elapsed >= convTimeMs) ? nowMs : (nowMs + convTimeMs - elapsed);
+  } else {
+    readyAtMs = nowMs + convTimeMs;
+  }
 
   while (static_cast<int32_t>(millis() - deadlineMs) < 0) {
-    uint32_t nowMs = millis();
-    if (static_cast<int32_t>(nowMs - readyAtMs) < 0) {
+    if (static_cast<int32_t>(millis() - readyAtMs) < 0) {
+      yield();  // Feed watchdog, let other FreeRTOS tasks run
       continue;
     }
 
@@ -402,6 +411,10 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     }
   }
 
+  // Timeout: clean up stale conversion state so startConversion() doesn't
+  // permanently return BUSY on subsequent calls.
+  _conversionStarted = false;
+  _conversionReady = false;
   return Status::Error(Err::TIMEOUT, "Conversion timeout");
 }
 
@@ -597,8 +610,8 @@ Status ADS1115::enableConversionReadyPin() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
-  _config.compThresholdLow = 0x0000;
-  _config.compThresholdHigh = 0x8000;
+  _config.compThresholdLow = 0;
+  _config.compThresholdHigh = -32768;  // 0x8000 as int16_t
   _config.compQueue = ComparatorQueue::ASSERT_1;
   _config.compMode = ComparatorMode::TRADITIONAL;
   _config.compLatch = ComparatorLatch::NON_LATCHING;

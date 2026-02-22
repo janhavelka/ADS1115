@@ -12,12 +12,17 @@ public:
   void setTimeOut(uint32_t timeoutMs) { (void)timeoutMs; }
   
   void beginTransmission(uint8_t addr) { _addr = addr; _txLen = 0; }
-  size_t write(uint8_t data) { _txBuf[_txLen++] = data; return 1; }
+  size_t write(uint8_t data) {
+    if (_txLen < sizeof(_txBuf)) { _txBuf[_txLen++] = data; return 1; }
+    return 0;
+  }
   size_t write(const uint8_t* data, size_t len) { 
+    size_t written = 0;
     for (size_t i = 0; i < len && _txLen < sizeof(_txBuf); i++) {
       _txBuf[_txLen++] = data[i];
+      written++;
     }
-    return len;
+    return written;
   }
   uint8_t endTransmission(bool stop = true) { (void)stop; return 0; }
   
@@ -28,7 +33,9 @@ public:
     return len;
   }
   
-  int available() { return _rxLen - _rxIdx; }
+  int available() {
+    return (_rxIdx < _rxLen) ? static_cast<int>(_rxLen - _rxIdx) : 0;
+  }
   int read() { 
     if (_rxIdx < _rxLen) {
       return _rxBuf[_rxIdx++];

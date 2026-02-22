@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <string>
 
 // Basic types
 using byte = uint8_t;
@@ -14,6 +15,7 @@ inline uint32_t millis() { return 0; }
 inline uint32_t micros() { return 0; }
 inline void delay(uint32_t ms) { (void)ms; }
 inline void delayMicroseconds(uint32_t us) { (void)us; }
+inline void yield() {}
 
 // Serial stub
 class SerialClass {

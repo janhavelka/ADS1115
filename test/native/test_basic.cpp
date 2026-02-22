@@ -2,7 +2,7 @@
 /// @brief Basic unit tests for ADS1115 driver
 
 #include <cstdio>
-#include <cassert>
+#include <stdexcept>
 
 // Include stubs first
 #include "Arduino.h"
@@ -25,21 +25,39 @@ using namespace ADS1115;
 static int testsPassed = 0;
 static int testsFailed = 0;
 
+struct TestFailure {};
+
 #define TEST(name) void test_##name()
 #define RUN_TEST(name) do { \
   printf("Running %s... ", #name); \
-  test_##name(); \
-  printf("PASSED\n"); \
-  testsPassed++; \
-} catch (...) { \
-  printf("FAILED\n"); \
-  testsFailed++; \
-}
+  try { \
+    test_##name(); \
+    printf("PASSED\n"); \
+    testsPassed++; \
+  } catch (const TestFailure&) { \
+    printf("FAILED\n"); \
+    testsFailed++; \
+  } catch (...) { \
+    printf("FAILED (unexpected exception)\n"); \
+    testsFailed++; \
+  } \
+} while(0)
 
-#define ASSERT_TRUE(x) assert(x)
-#define ASSERT_FALSE(x) assert(!(x))
-#define ASSERT_EQ(a, b) assert((a) == (b))
-#define ASSERT_NE(a, b) assert((a) != (b))
+#define ASSERT_TRUE(x) do { if (!(x)) { \
+  printf("  ASSERT_TRUE(%s) failed at %s:%d\n", #x, __FILE__, __LINE__); \
+  throw TestFailure{}; } } while(0)
+
+#define ASSERT_FALSE(x) do { if (x) { \
+  printf("  ASSERT_FALSE(%s) failed at %s:%d\n", #x, __FILE__, __LINE__); \
+  throw TestFailure{}; } } while(0)
+
+#define ASSERT_EQ(a, b) do { if (!((a) == (b))) { \
+  printf("  ASSERT_EQ(%s, %s) failed at %s:%d\n", #a, #b, __FILE__, __LINE__); \
+  throw TestFailure{}; } } while(0)
+
+#define ASSERT_NE(a, b) do { if (!((a) != (b))) { \
+  printf("  ASSERT_NE(%s, %s) failed at %s:%d\n", #a, #b, __FILE__, __LINE__); \
+  throw TestFailure{}; } } while(0)
 
 // ============================================================================
 // Tests

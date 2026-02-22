@@ -328,8 +328,8 @@ void processCommand(const String& cmdLine) {
     }
   } else if (cmd.startsWith("read ")) {
     int count = cmd.substring(5).toInt();
-    if (count <= 0) {
-      LOGW("Invalid count");
+    if (count <= 0 || count > 10000) {
+      LOGW("Invalid count (1-10000)");
       return;
     }
     for (int i = 0; i < count; ++i) {
@@ -400,8 +400,8 @@ void processCommand(const String& cmdLine) {
     if (cmd.length() > 6) {
       count = cmd.substring(7).toInt();
     }
-    if (count <= 0) {
-      LOGW("Invalid count");
+    if (count <= 0 || count > 100000) {
+      LOGW("Invalid count (1-100000)");
       return;
     }
     int ok = 0;
@@ -476,6 +476,7 @@ void loop() {
   device.tick(millis());
 
   static String inputBuffer;
+  static constexpr size_t kMaxInputLen = 128;
   while (Serial.available()) {
     char c = static_cast<char>(Serial.read());
     if (c == '\n' || c == '\r') {
@@ -484,7 +485,7 @@ void loop() {
         inputBuffer = "";
         Serial.print("> ");
       }
-    } else {
+    } else if (inputBuffer.length() < kMaxInputLen) {
       inputBuffer += c;
     }
   }
