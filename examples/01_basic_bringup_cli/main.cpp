@@ -172,6 +172,7 @@ void printHelp() {
   Serial.printf("%s=== ADS1115 CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
   helpSection("Common");
   helpItem("help / ?", "Show this help");
+  helpItem("version / ver", "Print firmware and library version info");
   helpItem("scan", "Scan I2C bus");
   helpItem("read", "Read single conversion (blocking)");
   helpItem("readv", "Read single conversion as voltage (blocking)");
@@ -208,6 +209,17 @@ void printHelp() {
   helpItem("stress [N]", "Run N conversion cycles");
   helpItem("stress_mix [N]", "Run N mixed-operation stress cycles");
   helpItem("selftest", "Run safe command self-test report");
+}
+
+void printVersionInfo() {
+  Serial.println("=== Version Info ===");
+  Serial.printf("  Example firmware build: %s %s\n", __DATE__, __TIME__);
+  Serial.printf("  ADS1115 library version: %s\n", ADS1115::VERSION);
+  Serial.printf("  ADS1115 version code: %d (major=%d minor=%d patch=%d)\n",
+                ADS1115::VERSION_INT,
+                ADS1115::VERSION_MAJOR,
+                ADS1115::VERSION_MINOR,
+                ADS1115::VERSION_PATCH);
 }
 
 ADS1115::Mux channelToMux(int channel) {
@@ -723,6 +735,8 @@ void processCommand(const String& cmdLine) {
 
   if (cmd == "help" || cmd == "?") {
     printHelp();
+  } else if (cmd == "version" || cmd == "ver") {
+    printVersionInfo();
   } else if (cmd == "scan") {
     i2c::scan();
   } else if (cmd == "probe") {
