@@ -92,6 +92,14 @@ void loop() {
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
 
+## Documentation
+
+- `CHANGELOG.md` - full release history
+- `docs/UNIFICATION_STANDARD.md` - shared API/CLI/test conventions
+- `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `release_notes.md` - latest release summary
+- `docs/DOXYGEN.md` - how to build and browse API docs
+
 ## License
 
 MIT License. See `LICENSE`.
