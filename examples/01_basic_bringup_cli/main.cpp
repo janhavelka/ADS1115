@@ -3,6 +3,7 @@
 /// @note This is an EXAMPLE, not part of the library
 
 #include <Arduino.h>
+#include <cstdlib>
 
 #include "examples/common/BoardConfig.h"
 #include "examples/common/I2cScanner.h"
@@ -50,54 +51,163 @@ const char* stateToStr(ADS1115::DriverState st) {
   }
 }
 
+const char* stateColor(ADS1115::DriverState st, bool online, uint8_t consecutiveFailures) {
+  if (st == ADS1115::DriverState::UNINIT) {
+    return LOG_COLOR_RESET;
+  }
+  return LOG_COLOR_STATE(online, consecutiveFailures);
+}
+
+const char* goodIfZeroColor(uint32_t value) {
+  return (value == 0U) ? LOG_COLOR_GREEN : LOG_COLOR_RED;
+}
+
+const char* goodIfNonZeroColor(uint32_t value) {
+  return (value > 0U) ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
+}
+
+const char* onOffColor(bool enabled) {
+  return enabled ? LOG_COLOR_GREEN : LOG_COLOR_RESET;
+}
+
+const char* skipCountColor(uint32_t value) {
+  return (value > 0U) ? LOG_COLOR_YELLOW : LOG_COLOR_RESET;
+}
+
+const char* successRateColor(float pct) {
+  if (pct >= 99.9f) return LOG_COLOR_GREEN;
+  if (pct >= 80.0f) return LOG_COLOR_YELLOW;
+  return LOG_COLOR_RED;
+}
+
 void printStatus(const ADS1115::Status& st) {
-  Serial.printf("  Status: %s (code=%u, detail=%ld)\n",
+  Serial.printf("  Status: %s%s%s (code=%u, detail=%ld)\n",
+                LOG_COLOR_RESULT(st.ok()),
                 errToStr(st.code),
+                LOG_COLOR_RESET,
                 static_cast<unsigned>(st.code),
                 static_cast<long>(st.detail));
   if (st.msg && st.msg[0]) {
-    Serial.printf("  Message: %s\n", st.msg);
+    Serial.printf("  Message: %s%s%s\n", LOG_COLOR_YELLOW, st.msg, LOG_COLOR_RESET);
   }
 }
 
 void printDriverHealth() {
-  Serial.println("=== Driver State ===");
-  Serial.printf("  State: %s\n", stateToStr(device.state()));
-  Serial.printf("  Consecutive failures: %u\n", device.consecutiveFailures());
-  Serial.printf("  Total failures: %lu\n", static_cast<unsigned long>(device.totalFailures()));
-  Serial.printf("  Total success: %lu\n", static_cast<unsigned long>(device.totalSuccess()));
-  Serial.printf("  Last OK at: %lu ms\n", static_cast<unsigned long>(device.lastOkMs()));
-  Serial.printf("  Last error at: %lu ms\n", static_cast<unsigned long>(device.lastErrorMs()));
-  if (device.lastError().code != ADS1115::Err::OK) {
-    Serial.printf("  Last error: %s\n", errToStr(device.lastError().code));
+  const uint32_t now = millis();
+  const uint32_t totalOk = device.totalSuccess();
+  const uint32_t totalFail = device.totalFailures();
+  const uint32_t total = totalOk + totalFail;
+  const float successRate = (total > 0U)
+                                ? (100.0f * static_cast<float>(totalOk) / static_cast<float>(total))
+                                : 0.0f;
+  const ADS1115::Status lastErr = device.lastError();
+  const ADS1115::DriverState st = device.state();
+  const bool online = device.isOnline();
+
+  Serial.println("=== Driver Health ===");
+  Serial.printf("  State: %s%s%s\n",
+                stateColor(st, online, device.consecutiveFailures()),
+                stateToStr(st),
+                LOG_COLOR_RESET);
+  Serial.printf("  Online: %s%s%s\n",
+                online ? LOG_COLOR_GREEN : LOG_COLOR_RED,
+                log_bool_str(online),
+                LOG_COLOR_RESET);
+  Serial.printf("  Consecutive failures: %s%u%s\n",
+                goodIfZeroColor(device.consecutiveFailures()),
+                device.consecutiveFailures(),
+                LOG_COLOR_RESET);
+  Serial.printf("  Total success: %s%lu%s\n",
+                goodIfNonZeroColor(totalOk),
+                static_cast<unsigned long>(totalOk),
+                LOG_COLOR_RESET);
+  Serial.printf("  Total failures: %s%lu%s\n",
+                goodIfZeroColor(totalFail),
+                static_cast<unsigned long>(totalFail),
+                LOG_COLOR_RESET);
+  Serial.printf("  Success rate: %s%.1f%%%s\n",
+                successRateColor(successRate),
+                successRate,
+                LOG_COLOR_RESET);
+
+  const uint32_t lastOkMs = device.lastOkMs();
+  if (lastOkMs > 0U) {
+    Serial.printf("  Last OK: %lu ms ago (at %lu ms)\n",
+                  static_cast<unsigned long>(now - lastOkMs),
+                  static_cast<unsigned long>(lastOkMs));
+  } else {
+    Serial.println("  Last OK: never");
+  }
+
+  const uint32_t lastErrorMs = device.lastErrorMs();
+  if (lastErrorMs > 0U) {
+    Serial.printf("  Last error: %lu ms ago (at %lu ms)\n",
+                  static_cast<unsigned long>(now - lastErrorMs),
+                  static_cast<unsigned long>(lastErrorMs));
+  } else {
+    Serial.println("  Last error: never");
+  }
+
+  if (!lastErr.ok()) {
+    Serial.printf("  Error code: %s%s%s\n",
+                  LOG_COLOR_RED,
+                  errToStr(lastErr.code),
+                  LOG_COLOR_RESET);
+    Serial.printf("  Error detail: %ld\n", static_cast<long>(lastErr.detail));
+    if (lastErr.msg && lastErr.msg[0]) {
+      Serial.printf("  Error msg: %s\n", lastErr.msg);
+    }
   }
 }
 
 void printHelp() {
-  Serial.println("Commands:");
-  Serial.println("  help              - Show this help");
-  Serial.println("  read              - Read single conversion (blocking)");
-  Serial.println("  read N            - Read N conversions");
-  Serial.println("  start             - Start single-shot conversion");
-  Serial.println("  poll              - Check if conversion ready");
-  Serial.println("  raw               - Read raw value");
-  Serial.println("  voltage           - Read as voltage");
+  auto helpSection = [](const char* title) {
+    Serial.printf("\n%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
+  };
+  auto helpItem = [](const char* cmd, const char* desc) {
+    Serial.printf("  %s%-32s%s - %s\n", LOG_COLOR_CYAN, cmd, LOG_COLOR_RESET, desc);
+  };
+
   Serial.println();
-  Serial.println("Channel/Gain:");
-  Serial.println("  ch [0|1|2|3]      - Set single-ended channel (AINx vs GND)");
-  Serial.println("  diff [0|1|2|3]    - Set differential pair");
-  Serial.println("  gain [0..5]       - Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
-  Serial.println("  rate [0..7]       - Set data rate");
-  Serial.println("  mode [single|cont] - Set operating mode");
-  Serial.println();
-  Serial.println("Driver Debugging:");
-  Serial.println("  drv               - Show driver state and health");
-  Serial.println("  probe             - Probe device (no health tracking)");
-  Serial.println("  recover           - Manual recovery attempt");
-  Serial.println("  verbose [0|1]     - Enable/disable verbose output");
-  Serial.println("  stress [N]        - Run N conversion cycles");
-  Serial.println("  config            - Dump config register");
-  Serial.println("  scan              - Scan I2C bus");
+  Serial.printf("%s=== ADS1115 CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
+  helpSection("Common");
+  helpItem("help / ?", "Show this help");
+  helpItem("scan", "Scan I2C bus");
+  helpItem("read", "Read single conversion (blocking)");
+  helpItem("readv", "Read single conversion as voltage (blocking)");
+  helpItem("read N", "Read N conversions");
+  helpItem("start", "Start single-shot conversion");
+  helpItem("poll", "Check if conversion ready");
+  helpItem("raw", "Read raw value");
+  helpItem("voltage", "Read as voltage");
+  helpItem("timing", "Print conversion time and LSB voltage");
+
+  helpSection("Configuration");
+  helpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
+  helpItem("diff [0|1|2|3]", "Set differential pair");
+  helpItem("gain [0..5]", "Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
+  helpItem("rate [0..7]", "Set data rate");
+  helpItem("mode [single|cont]", "Set operating mode");
+  helpItem("comp", "Show comparator config");
+  helpItem("comp mode [trad|window]", "Set comparator mode");
+  helpItem("comp pol [low|high]", "Set comparator polarity");
+  helpItem("comp latch [0|1]", "Set comparator latch");
+  helpItem("comp queue [1|2|4|disable]", "Set comparator queue");
+  helpItem("comp th <low> <high>", "Set comparator thresholds");
+  helpItem("comp rdy", "Enable conversion-ready pin mode");
+  helpItem("comp disable", "Disable comparator");
+  helpItem("config", "Dump config register");
+  helpItem("config write <hex>", "Write full config register value");
+
+  helpSection("Diagnostics");
+  helpItem("drv", "Show driver state and health");
+  helpItem("probe", "Probe device (no health tracking)");
+  helpItem("recover", "Manual recovery attempt");
+  helpItem("cfg / settings", "Print active configuration snapshot");
+  helpItem("verbose [0|1]", "Enable/disable verbose output");
+  helpItem("stress [N]", "Run N conversion cycles");
+  helpItem("stress_mix [N]", "Run N mixed-operation stress cycles");
+  helpItem("selftest", "Run safe command self-test report");
 }
 
 ADS1115::Mux channelToMux(int channel) {
@@ -172,6 +282,87 @@ const char* modeToStr(ADS1115::Mode mode) {
   }
 }
 
+const char* compModeToStr(ADS1115::ComparatorMode mode) {
+  using ADS1115::ComparatorMode;
+  switch (mode) {
+    case ComparatorMode::TRADITIONAL: return "TRADITIONAL";
+    case ComparatorMode::WINDOW:      return "WINDOW";
+    default:                          return "UNKNOWN";
+  }
+}
+
+const char* compPolToStr(ADS1115::ComparatorPolarity polarity) {
+  using ADS1115::ComparatorPolarity;
+  switch (polarity) {
+    case ComparatorPolarity::ACTIVE_LOW:  return "ACTIVE_LOW";
+    case ComparatorPolarity::ACTIVE_HIGH: return "ACTIVE_HIGH";
+    default:                              return "UNKNOWN";
+  }
+}
+
+const char* compLatchToStr(ADS1115::ComparatorLatch latch) {
+  using ADS1115::ComparatorLatch;
+  switch (latch) {
+    case ComparatorLatch::NON_LATCHING: return "NON_LATCHING";
+    case ComparatorLatch::LATCHING:     return "LATCHING";
+    default:                            return "UNKNOWN";
+  }
+}
+
+const char* compQueueToStr(ADS1115::ComparatorQueue queue) {
+  using ADS1115::ComparatorQueue;
+  switch (queue) {
+    case ComparatorQueue::ASSERT_1: return "ASSERT_1";
+    case ComparatorQueue::ASSERT_2: return "ASSERT_2";
+    case ComparatorQueue::ASSERT_4: return "ASSERT_4";
+    case ComparatorQueue::DISABLE:  return "DISABLE";
+    default:                        return "UNKNOWN";
+  }
+}
+
+bool parseI32(const String& token, int32_t& out) {
+  char* end = nullptr;
+  const long value = strtol(token.c_str(), &end, 0);
+  if (end == token.c_str() || *end != '\0') {
+    return false;
+  }
+  out = static_cast<int32_t>(value);
+  return true;
+}
+
+bool parseU32(const String& token, uint32_t& out) {
+  char* end = nullptr;
+  const unsigned long value = strtoul(token.c_str(), &end, 0);
+  if (end == token.c_str() || *end != '\0') {
+    return false;
+  }
+  out = static_cast<uint32_t>(value);
+  return true;
+}
+
+void printComparatorSettings() {
+  int16_t low = 0;
+  int16_t high = 0;
+  ADS1115::Status st = device.getThresholds(low, high);
+  if (!st.ok()) {
+    printStatus(st);
+    return;
+  }
+  Serial.println("=== Comparator ===");
+  Serial.printf("  Mode: %s\n", compModeToStr(device.getComparatorMode()));
+  Serial.printf("  Polarity: %s\n", compPolToStr(device.getComparatorPolarity()));
+  Serial.printf("  Latch: %s\n", compLatchToStr(device.getComparatorLatch()));
+  Serial.printf("  Queue: %s\n", compQueueToStr(device.getComparatorQueue()));
+  Serial.printf("  Threshold low/high: %d / %d\n", static_cast<int>(low), static_cast<int>(high));
+}
+
+void printTimingInfo() {
+  Serial.println("=== Timing/Scale ===");
+  Serial.printf("  Conversion time: %lu ms\n",
+                static_cast<unsigned long>(device.getConversionTimeMs()));
+  Serial.printf("  LSB voltage: %.9f V\n", device.getLsbVoltage());
+}
+
 bool readConfigFromDevice(uint16_t& config);
 
 bool muxToChannel(ADS1115::Mux mux, int& channel) {
@@ -195,12 +386,7 @@ bool muxToDiffIndex(ADS1115::Mux mux, int& index) {
 }
 
 void printCurrentMux() {
-  uint16_t config = 0;
-  if (!readConfigFromDevice(config)) {
-    return;
-  }
-  ADS1115::Mux mux =
-      static_cast<ADS1115::Mux>((config & ADS1115::cmd::MASK_MUX) >> ADS1115::cmd::BIT_MUX);
+  ADS1115::Mux mux = device.getMux();
   int channel = -1;
   int diff = -1;
   if (muxToChannel(mux, channel)) {
@@ -213,32 +399,17 @@ void printCurrentMux() {
 }
 
 void printCurrentGain() {
-  uint16_t config = 0;
-  if (!readConfigFromDevice(config)) {
-    return;
-  }
-  ADS1115::Gain gain =
-      static_cast<ADS1115::Gain>((config & ADS1115::cmd::MASK_PGA) >> ADS1115::cmd::BIT_PGA);
+  ADS1115::Gain gain = device.getGain();
   Serial.printf("  Gain: %u (%s)\n", static_cast<unsigned>(gain), gainToStr(gain));
 }
 
 void printCurrentRate() {
-  uint16_t config = 0;
-  if (!readConfigFromDevice(config)) {
-    return;
-  }
-  ADS1115::DataRate rate =
-      static_cast<ADS1115::DataRate>((config & ADS1115::cmd::MASK_DR) >> ADS1115::cmd::BIT_DR);
+  ADS1115::DataRate rate = device.getDataRate();
   Serial.printf("  Rate: %u (%s)\n", static_cast<unsigned>(rate), rateToStr(rate));
 }
 
 void printCurrentMode() {
-  uint16_t config = 0;
-  if (!readConfigFromDevice(config)) {
-    return;
-  }
-  ADS1115::Mode mode =
-      static_cast<ADS1115::Mode>((config & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE);
+  ADS1115::Mode mode = device.getMode();
   Serial.printf("  Mode: %s\n", modeToStr(mode));
 }
 
@@ -259,6 +430,283 @@ bool readConfigFromDevice(uint16_t& config) {
     return false;
   }
   return true;
+}
+
+void runStressMix(int count) {
+  struct OpStats {
+    const char* name;
+    uint32_t ok;
+    uint32_t fail;
+  };
+
+  OpStats stats[] = {
+      {"readBlocking", 0, 0},
+      {"readVoltage", 0, 0},
+      {"start+readRaw", 0, 0},
+      {"readConfig", 0, 0},
+      {"setGain", 0, 0},
+      {"setRate", 0, 0},
+  };
+  const int opCount = static_cast<int>(sizeof(stats) / sizeof(stats[0]));
+
+  const uint32_t successBefore = device.totalSuccess();
+  const uint32_t failBefore = device.totalFailures();
+  const uint32_t startMs = millis();
+
+  for (int i = 0; i < count; ++i) {
+    ADS1115::Status st = ADS1115::Status::Ok();
+    const int op = i % opCount;
+
+    switch (op) {
+      case 0: {
+        int16_t raw = 0;
+        st = device.readBlocking(raw);
+        break;
+      }
+      case 1: {
+        float volts = 0.0f;
+        st = device.readVoltage(volts);
+        break;
+      }
+      case 2: {
+        st = device.startConversion();
+        if (st.ok()) {
+          delay(10);
+          int16_t raw = 0;
+          st = device.readRaw(raw);
+        }
+        break;
+      }
+      case 3: {
+        uint16_t cfg = 0;
+        st = device.readConfig(cfg);
+        break;
+      }
+      case 4: {
+        const ADS1115::Gain gain = static_cast<ADS1115::Gain>(i % 6);
+        st = device.setGain(gain);
+        break;
+      }
+      case 5: {
+        const ADS1115::DataRate rate = static_cast<ADS1115::DataRate>(i % 8);
+        st = device.setDataRate(rate);
+        break;
+      }
+      default:
+        break;
+    }
+
+    if (st.ok()) {
+      stats[op].ok++;
+    } else {
+      stats[op].fail++;
+      LOGV(verboseMode, "[%d] %s failed: %s", i, stats[op].name, errToStr(st.code));
+    }
+
+    if ((i + 1) % 50 == 0) {
+      device.tick(millis());
+    }
+  }
+
+  const uint32_t elapsed = millis() - startMs;
+  uint32_t okTotal = 0;
+  uint32_t failTotal = 0;
+  for (int i = 0; i < opCount; ++i) {
+    okTotal += stats[i].ok;
+    failTotal += stats[i].fail;
+  }
+
+  Serial.println("=== stress_mix summary ===");
+  const float successPct =
+      (count > 0) ? (100.0f * static_cast<float>(okTotal) / static_cast<float>(count)) : 0.0f;
+  Serial.printf("  Total: %sok=%lu%s %sfail=%lu%s (%s%.2f%%%s)\n",
+                goodIfNonZeroColor(okTotal),
+                static_cast<unsigned long>(okTotal),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failTotal),
+                static_cast<unsigned long>(failTotal),
+                LOG_COLOR_RESET,
+                successRateColor(successPct),
+                successPct,
+                LOG_COLOR_RESET);
+  Serial.printf("  Duration: %lu ms\n", static_cast<unsigned long>(elapsed));
+  if (elapsed > 0) {
+    Serial.printf("  Rate: %.2f ops/s\n", (1000.0f * static_cast<float>(count)) / elapsed);
+  }
+  for (int i = 0; i < opCount; ++i) {
+    Serial.printf("  %-12s %sok=%lu%s %sfail=%lu%s\n",
+                  stats[i].name,
+                  goodIfNonZeroColor(stats[i].ok),
+                  static_cast<unsigned long>(stats[i].ok),
+                  LOG_COLOR_RESET,
+                  goodIfZeroColor(stats[i].fail),
+                  static_cast<unsigned long>(stats[i].fail),
+                  LOG_COLOR_RESET);
+  }
+  const uint32_t successDelta = device.totalSuccess() - successBefore;
+  const uint32_t failDelta = device.totalFailures() - failBefore;
+  Serial.printf("  Health delta: %ssuccess +%lu%s, %sfailures +%lu%s\n",
+                goodIfNonZeroColor(successDelta),
+                static_cast<unsigned long>(successDelta),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failDelta),
+                static_cast<unsigned long>(failDelta),
+                LOG_COLOR_RESET);
+}
+
+void runSelfTest() {
+  struct TestStats {
+    uint32_t pass = 0;
+    uint32_t fail = 0;
+    uint32_t skip = 0;
+  } stats;
+
+  enum class SelftestOutcome : uint8_t { PASS, FAIL, SKIP };
+  auto report = [&](const char* name, SelftestOutcome outcome, const char* note) {
+    const bool passed = (outcome == SelftestOutcome::PASS);
+    const bool skipped = (outcome == SelftestOutcome::SKIP);
+    const char* color = skipped ? LOG_COLOR_YELLOW : LOG_COLOR_RESULT(passed);
+    const char* tag = skipped ? "SKIP" : (passed ? "PASS" : "FAIL");
+    Serial.printf("  [%s%s%s] %s", color, tag, LOG_COLOR_RESET, name);
+    if (note && note[0]) {
+      Serial.printf(" - %s", note);
+    }
+    Serial.println();
+    if (skipped) {
+      stats.skip++;
+    } else if (passed) {
+      stats.pass++;
+    } else {
+      stats.fail++;
+    }
+  };
+  auto reportCheck = [&](const char* name, bool passed, const char* note) {
+    report(name, passed ? SelftestOutcome::PASS : SelftestOutcome::FAIL, note);
+  };
+  auto reportSkip = [&](const char* name, const char* note) {
+    report(name, SelftestOutcome::SKIP, note);
+  };
+
+  Serial.println("=== ADS1115 selftest (safe commands) ===");
+
+  const uint32_t succBefore = device.totalSuccess();
+  const uint32_t failBefore = device.totalFailures();
+  const uint8_t consBefore = device.consecutiveFailures();
+
+  const ADS1115::Status pst = device.probe();
+  if (pst.code == ADS1115::Err::NOT_INITIALIZED) {
+    reportSkip("probe responds", "driver not initialized");
+    reportSkip("remaining checks", "selftest aborted");
+    Serial.printf("Selftest result: pass=%s%lu%s fail=%s%lu%s skip=%s%lu%s\n",
+                  goodIfNonZeroColor(stats.pass), static_cast<unsigned long>(stats.pass), LOG_COLOR_RESET,
+                  goodIfZeroColor(stats.fail), static_cast<unsigned long>(stats.fail), LOG_COLOR_RESET,
+                  skipCountColor(stats.skip), static_cast<unsigned long>(stats.skip), LOG_COLOR_RESET);
+    return;
+  }
+  const bool probeHealthUnchanged =
+      device.totalSuccess() == succBefore &&
+      device.totalFailures() == failBefore &&
+      device.consecutiveFailures() == consBefore;
+  reportCheck("probe responds", pst.ok(), pst.ok() ? "" : errToStr(pst.code));
+  reportCheck("probe no-health-side-effects", probeHealthUnchanged, "");
+
+  uint16_t cfg = 0;
+  ADS1115::Status st = device.readConfig(cfg);
+  reportCheck("readConfig", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+  reportCheck("setMode(single)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  if (st.ok() && device.readConfig(cfg).ok()) {
+    const uint16_t modeBits =
+        (cfg & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE;
+    reportCheck("verify mode single", modeBits == static_cast<uint16_t>(ADS1115::Mode::SINGLE_SHOT), "");
+  } else {
+    reportCheck("verify mode single", false, "readConfig failed");
+  }
+
+  st = device.setMode(ADS1115::Mode::CONTINUOUS);
+  reportCheck("setMode(continuous)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  if (st.ok() && device.readConfig(cfg).ok()) {
+    const uint16_t modeBits =
+        (cfg & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE;
+    reportCheck("verify mode continuous", modeBits == static_cast<uint16_t>(ADS1115::Mode::CONTINUOUS), "");
+  } else {
+    reportCheck("verify mode continuous", false, "readConfig failed");
+  }
+
+  st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+  reportCheck("restore mode(single)", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  st = device.setGain(ADS1115::Gain::FSR_2_048V);
+  reportCheck("setGain(2.048V)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  if (st.ok() && device.readConfig(cfg).ok()) {
+    const uint16_t gainBits =
+        (cfg & ADS1115::cmd::MASK_PGA) >> ADS1115::cmd::BIT_PGA;
+    reportCheck("verify gain bits", gainBits == static_cast<uint16_t>(ADS1115::Gain::FSR_2_048V), "");
+  } else {
+    reportCheck("verify gain bits", false, "readConfig failed");
+  }
+
+  st = device.setDataRate(ADS1115::DataRate::SPS_128);
+  reportCheck("setRate(128sps)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  if (st.ok() && device.readConfig(cfg).ok()) {
+    const uint16_t rateBits =
+        (cfg & ADS1115::cmd::MASK_DR) >> ADS1115::cmd::BIT_DR;
+    reportCheck("verify rate bits", rateBits == static_cast<uint16_t>(ADS1115::DataRate::SPS_128), "");
+  } else {
+    reportCheck("verify rate bits", false, "readConfig failed");
+  }
+
+  st = device.setMux(ADS1115::Mux::AIN0_GND);
+  reportCheck("setMux(AIN0_GND)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  if (st.ok() && device.readConfig(cfg).ok()) {
+    const uint16_t muxBits =
+        (cfg & ADS1115::cmd::MASK_MUX) >> ADS1115::cmd::BIT_MUX;
+    reportCheck("verify mux bits", muxBits == static_cast<uint16_t>(ADS1115::Mux::AIN0_GND), "");
+  } else {
+    reportCheck("verify mux bits", false, "readConfig failed");
+  }
+
+  st = device.startConversion();
+  reportCheck("startConversion", st.ok(), st.ok() ? "" : errToStr(st.code));
+  if (st.ok()) {
+    delay(10);
+    int16_t raw = 0;
+    ADS1115::Status rs = device.readRaw(raw);
+    reportCheck("readRaw(after start)", rs.ok(), rs.ok() ? "" : errToStr(rs.code));
+  } else {
+    reportCheck("readRaw(after start)", false, "conversion not started");
+  }
+
+  float volts = 0.0f;
+  st = device.readVoltage(volts);
+  reportCheck("readVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  st = device.readBlockingVoltage(volts);
+  reportCheck("readBlockingVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  st = device.setComparatorMode(ADS1115::ComparatorMode::TRADITIONAL);
+  reportCheck("setComparatorMode", st.ok(), st.ok() ? "" : errToStr(st.code));
+  st = device.setComparatorPolarity(ADS1115::ComparatorPolarity::ACTIVE_LOW);
+  reportCheck("setComparatorPolarity", st.ok(), st.ok() ? "" : errToStr(st.code));
+  st = device.setComparatorLatch(ADS1115::ComparatorLatch::NON_LATCHING);
+  reportCheck("setComparatorLatch", st.ok(), st.ok() ? "" : errToStr(st.code));
+  st = device.setComparatorQueue(ADS1115::ComparatorQueue::DISABLE);
+  reportCheck("setComparatorQueue", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  int16_t low = 0;
+  int16_t high = 0;
+  st = device.getThresholds(low, high);
+  reportCheck("getThresholds", st.ok(), st.ok() ? "" : errToStr(st.code));
+
+  st = device.recover();
+  reportCheck("recover", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportCheck("isOnline", device.isOnline(), "");
+
+  Serial.printf("Selftest result: pass=%s%lu%s fail=%s%lu%s skip=%s%lu%s\n",
+                goodIfNonZeroColor(stats.pass), static_cast<unsigned long>(stats.pass), LOG_COLOR_RESET,
+                goodIfZeroColor(stats.fail), static_cast<unsigned long>(stats.fail), LOG_COLOR_RESET,
+                skipCountColor(stats.skip), static_cast<unsigned long>(stats.skip), LOG_COLOR_RESET);
 }
 
 // ============================================================================
@@ -289,11 +737,11 @@ void processCommand(const String& cmdLine) {
     printStatus(st);
     printDriverHealth();
   } else if (cmd == "verbose") {
-    LOGI("Verbose mode: %s", verboseMode ? "ON" : "OFF");
+    LOGI("Verbose mode: %s%s%s", onOffColor(verboseMode), verboseMode ? "ON" : "OFF", LOG_COLOR_RESET);
   } else if (cmd.startsWith("verbose ")) {
     int val = cmd.substring(8).toInt();
     verboseMode = (val != 0);
-    LOGI("Verbose mode: %s", verboseMode ? "ON" : "OFF");
+    LOGI("Verbose mode: %s%s%s", onOffColor(verboseMode), verboseMode ? "ON" : "OFF", LOG_COLOR_RESET);
   } else if (cmd == "start") {
     auto st = device.startConversion();
     printStatus(st);
@@ -314,6 +762,14 @@ void processCommand(const String& cmdLine) {
     auto st = device.readVoltage(volts);
     if (st.ok()) {
       Serial.printf("  Voltage: %.6f V\n", volts);
+    } else {
+      printStatus(st);
+    }
+  } else if (cmd == "readv") {
+    float volts = 0.0f;
+    auto st = device.readBlockingVoltage(volts);
+    if (st.ok()) {
+      Serial.printf("  Blocking voltage: %.6f V\n", volts);
     } else {
       printStatus(st);
     }
@@ -395,6 +851,111 @@ void processCommand(const String& cmdLine) {
     } else {
       LOGW("Invalid mode");
     }
+  } else if (cmd == "timing") {
+    printTimingInfo();
+  } else if (cmd == "comp") {
+    printComparatorSettings();
+  } else if (cmd.startsWith("comp mode ")) {
+    String token = cmd.substring(10);
+    token.trim();
+    ADS1115::ComparatorMode mode = ADS1115::ComparatorMode::TRADITIONAL;
+    if (token == "trad" || token == "traditional") {
+      mode = ADS1115::ComparatorMode::TRADITIONAL;
+    } else if (token == "window") {
+      mode = ADS1115::ComparatorMode::WINDOW;
+    } else {
+      LOGW("Usage: comp mode [trad|window]");
+      return;
+    }
+    printStatus(device.setComparatorMode(mode));
+  } else if (cmd.startsWith("comp pol ")) {
+    String token = cmd.substring(9);
+    token.trim();
+    ADS1115::ComparatorPolarity polarity = ADS1115::ComparatorPolarity::ACTIVE_LOW;
+    if (token == "low" || token == "active_low") {
+      polarity = ADS1115::ComparatorPolarity::ACTIVE_LOW;
+    } else if (token == "high" || token == "active_high") {
+      polarity = ADS1115::ComparatorPolarity::ACTIVE_HIGH;
+    } else {
+      LOGW("Usage: comp pol [low|high]");
+      return;
+    }
+    printStatus(device.setComparatorPolarity(polarity));
+  } else if (cmd.startsWith("comp latch ")) {
+    int val = cmd.substring(11).toInt();
+    if (val != 0 && val != 1) {
+      LOGW("Usage: comp latch [0|1]");
+      return;
+    }
+    const ADS1115::ComparatorLatch latch =
+        (val == 0) ? ADS1115::ComparatorLatch::NON_LATCHING
+                   : ADS1115::ComparatorLatch::LATCHING;
+    printStatus(device.setComparatorLatch(latch));
+  } else if (cmd.startsWith("comp queue ")) {
+    String token = cmd.substring(11);
+    token.trim();
+    ADS1115::ComparatorQueue queue = ADS1115::ComparatorQueue::DISABLE;
+    if (token == "1") {
+      queue = ADS1115::ComparatorQueue::ASSERT_1;
+    } else if (token == "2") {
+      queue = ADS1115::ComparatorQueue::ASSERT_2;
+    } else if (token == "4") {
+      queue = ADS1115::ComparatorQueue::ASSERT_4;
+    } else if (token == "disable" || token == "off") {
+      queue = ADS1115::ComparatorQueue::DISABLE;
+    } else {
+      LOGW("Usage: comp queue [1|2|4|disable]");
+      return;
+    }
+    printStatus(device.setComparatorQueue(queue));
+  } else if (cmd.startsWith("comp th ")) {
+    String args = cmd.substring(8);
+    args.trim();
+    const int split = args.indexOf(' ');
+    if (split < 0) {
+      LOGW("Usage: comp th <low> <high>");
+      return;
+    }
+    String lowTok = args.substring(0, split);
+    String highTok = args.substring(split + 1);
+    lowTok.trim();
+    highTok.trim();
+    int32_t low = 0;
+    int32_t high = 0;
+    if (!parseI32(lowTok, low) || !parseI32(highTok, high) ||
+        low < -32768 || low > 32767 || high < -32768 || high > 32767) {
+      LOGW("Thresholds must be in int16 range");
+      return;
+    }
+    printStatus(device.setThresholds(static_cast<int16_t>(low), static_cast<int16_t>(high)));
+  } else if (cmd == "comp rdy") {
+    printStatus(device.enableConversionReadyPin());
+  } else if (cmd == "comp disable") {
+    printStatus(device.disableComparator());
+  } else if (cmd.startsWith("config write ")) {
+    uint32_t value = 0;
+    String token = cmd.substring(13);
+    token.trim();
+    if (!parseU32(token, value) || value > 0xFFFFu) {
+      LOGW("Usage: config write <0..0xFFFF>");
+      return;
+    }
+    ADS1115::Status st = device.writeConfig(static_cast<uint16_t>(value));
+    printStatus(st);
+    if (st.ok()) {
+      printConfig();
+    }
+  } else if (cmd == "selftest") {
+    runSelfTest();
+  } else if (cmd == "stress_mix") {
+    runStressMix(50);
+  } else if (cmd.startsWith("stress_mix ")) {
+    int count = cmd.substring(11).toInt();
+    if (count <= 0 || count > 100000) {
+      LOGW("Invalid count (1-100000)");
+      return;
+    }
+    runStressMix(count);
   } else if (cmd.startsWith("stress")) {
     int count = 10;
     if (cmd.length() > 6) {
@@ -406,6 +967,9 @@ void processCommand(const String& cmdLine) {
     }
     int ok = 0;
     int fail = 0;
+    bool hasFailure = false;
+    ADS1115::Status firstFailure = ADS1115::Status::Ok();
+    ADS1115::Status lastFailure = ADS1115::Status::Ok();
     for (int i = 0; i < count; ++i) {
       int16_t raw = 0;
       auto st = device.readBlocking(raw);
@@ -414,13 +978,37 @@ void processCommand(const String& cmdLine) {
         LOGV(verboseMode, "  %d: %d (%.6f V)", i + 1, raw, device.rawToVoltage(raw));
       } else {
         fail++;
+        if (!hasFailure) {
+          firstFailure = st;
+          hasFailure = true;
+        }
+        lastFailure = st;
         if (verboseMode) {
           printStatus(st);
         }
       }
     }
-    Serial.printf("  Stress results: %d ok, %d failed\n", ok, fail);
-  } else if (cmd == "config") {
+    const float pct = (count > 0) ? (100.0f * static_cast<float>(ok) / static_cast<float>(count)) : 0.0f;
+    Serial.printf("  Stress results: %s%d ok%s, %s%d failed%s (%s%.2f%%%s)\n",
+                  goodIfNonZeroColor(static_cast<uint32_t>(ok)),
+                  ok,
+                  LOG_COLOR_RESET,
+                  goodIfZeroColor(static_cast<uint32_t>(fail)),
+                  fail,
+                  LOG_COLOR_RESET,
+                  successRateColor(pct),
+                  pct,
+                  LOG_COLOR_RESET);
+    if (hasFailure) {
+      Serial.println("  Failure details:");
+      Serial.println("  First failure:");
+      printStatus(firstFailure);
+      if (fail > 1) {
+        Serial.println("  Last failure:");
+        printStatus(lastFailure);
+      }
+    }
+  } else if (cmd == "config" || cmd == "cfg" || cmd == "settings") {
     printConfig();
   } else {
     LOGW("Unknown command: %s", cmd.c_str());

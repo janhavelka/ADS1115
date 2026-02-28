@@ -230,7 +230,7 @@ Status ADS1115::startConversion() {
 
   _conversionStarted = true;
   _conversionReady = false;
-  _conversionStartMs = millis();
+  _conversionStartMs = _nowMs();
   return Status{Err::IN_PROGRESS, 0, "Conversion started"};
 }
 
@@ -260,7 +260,7 @@ Status ADS1115::startConversion(Mux mux) {
 
   _conversionStarted = true;
   _conversionReady = false;
-  _conversionStartMs = millis();
+  _conversionStartMs = _nowMs();
   return Status{Err::IN_PROGRESS, 0, "Conversion started"};
 }
 
@@ -279,7 +279,7 @@ bool ADS1115::conversionReady() {
   }
 
   if (useAlertRdyPin(_config)) {
-    uint32_t nowMs = millis();
+    uint32_t nowMs = _nowMs();
     if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
       return false;
     }
@@ -291,7 +291,7 @@ bool ADS1115::conversionReady() {
     return false;
   }
 
-  uint32_t nowMs = millis();
+  uint32_t nowMs = _nowMs();
   if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
     return false;
   }
@@ -318,7 +318,7 @@ Status ADS1115::readRaw(int16_t& out) {
   if (_config.mode == Mode::SINGLE_SHOT) {
     if (!_conversionReady) {
       if (_conversionStarted) {
-        uint32_t nowMs = millis();
+        uint32_t nowMs = _nowMs();
         if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
           return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
         }
@@ -383,7 +383,7 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     return st;
   }
 
-  const uint32_t nowMs = millis();
+  const uint32_t nowMs = _nowMs();
   const uint32_t convTimeMs = getConversionTimeMs();
   const uint32_t deadlineMs = nowMs + timeoutMs;
 
@@ -396,9 +396,9 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     readyAtMs = nowMs + convTimeMs;
   }
 
-  while (static_cast<int32_t>(millis() - deadlineMs) < 0) {
-    if (static_cast<int32_t>(millis() - readyAtMs) < 0) {
-      yield();  // Feed watchdog, let other FreeRTOS tasks run
+  while (static_cast<int32_t>(_nowMs() - deadlineMs) < 0) {
+    if (static_cast<int32_t>(_nowMs() - readyAtMs) < 0) {
+      _cooperativeYield();  // Feed watchdog, let other FreeRTOS tasks run
       continue;
     }
 
@@ -510,7 +510,7 @@ Status ADS1115::writeConfig(uint16_t config) {
   if (_config.mode == Mode::SINGLE_SHOT && ((config & cmd::MASK_OS) == cmd::OS_START)) {
     _conversionStarted = true;
     _conversionReady = false;
-    _conversionStartMs = millis();
+    _conversionStartMs = _nowMs();
   } else {
     _conversionStarted = false;
     _conversionReady = false;
@@ -762,7 +762,7 @@ Status ADS1115::_readRegister16Raw(uint8_t reg, uint16_t& value) {
 // ============================================================================
 
 Status ADS1115::_updateHealth(const Status& st) {
-  uint32_t nowMs = millis();
+  uint32_t nowMs = _nowMs();
 
   if (st.ok() || st.inProgress()) {
     _lastOkMs = nowMs;
@@ -833,6 +833,21 @@ uint16_t ADS1115::_buildConfigRegister() const {
   config |= (static_cast<uint16_t>(_config.compLatch) << cmd::BIT_COMP_LAT) & cmd::MASK_COMP_LAT;
   config |= (static_cast<uint16_t>(_config.compQueue) << cmd::BIT_COMP_QUE) & cmd::MASK_COMP_QUE;
   return config;
+}
+
+uint32_t ADS1115::_nowMs() const {
+  if (_config.nowMs != nullptr) {
+    return _config.nowMs(_config.timeUser);
+  }
+  return millis();
+}
+
+void ADS1115::_cooperativeYield() const {
+  if (_config.cooperativeYield != nullptr) {
+    _config.cooperativeYield(_config.timeUser);
+    return;
+  }
+  yield();
 }
 
 } // namespace ADS1115

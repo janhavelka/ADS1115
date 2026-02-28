@@ -116,6 +116,8 @@ private:
   // === Internal ===
   Status _applyConfig();
   uint16_t _buildConfigRegister() const;
+  uint32_t _nowMs() const;
+  void _cooperativeYield() const;
 
   // === State ===
   Config _config;

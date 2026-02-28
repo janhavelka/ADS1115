@@ -1,4 +1,4 @@
-# Codex Prompt: Production-Grade ADS1115 I2C Driver Library (ESP32 Arduino / PlatformIO)
+﻿# Codex Prompt: Production-Grade ADS1115 I2C Driver Library (ESP32 Arduino / PlatformIO)
 
 You are an expert embedded engineer. Implement a **production-grade, reusable ADS1115 16-bit ADC driver library** for **ESP32-S2 / ESP32-S3** using **Arduino framework** under **PlatformIO**.
 
@@ -32,7 +32,7 @@ All types in `namespace ADS1115 { }`.
 
 ---
 
-## Status.h — Error Codes
+## Status.h -- Error Codes
 
 ```cpp
 enum class Err : uint8_t {
@@ -61,7 +61,7 @@ struct Status {
 
 ---
 
-## Config.h — Configuration
+## Config.h -- Configuration
 
 ```cpp
 /// I2C write callback signature
@@ -87,12 +87,12 @@ enum class Mux : uint8_t {
 
 /// Programmable Gain Amplifier (full-scale range)
 enum class Gain : uint8_t {
-  FSR_6_144V = 0,  ///< ±6.144V (LSB = 187.5µV)
-  FSR_4_096V = 1,  ///< ±4.096V (LSB = 125µV)
-  FSR_2_048V = 2,  ///< ±2.048V (LSB = 62.5µV) - default
-  FSR_1_024V = 3,  ///< ±1.024V (LSB = 31.25µV)
-  FSR_0_512V = 4,  ///< ±0.512V (LSB = 15.625µV)
-  FSR_0_256V = 5   ///< ±0.256V (LSB = 7.8125µV)
+  FSR_6_144V = 0,  ///< +/-6.144V (LSB = 187.5uV)
+  FSR_4_096V = 1,  ///< +/-4.096V (LSB = 125uV)
+  FSR_2_048V = 2,  ///< +/-2.048V (LSB = 62.5uV) - default
+  FSR_1_024V = 3,  ///< +/-1.024V (LSB = 31.25uV)
+  FSR_0_512V = 4,  ///< +/-0.512V (LSB = 15.625uV)
+  FSR_0_256V = 5   ///< +/-0.256V (LSB = 7.8125uV)
 };
 
 /// Data rate (samples per second)
@@ -170,7 +170,7 @@ struct Config {
 
 ---
 
-## CommandTable.h — Register Definitions
+## CommandTable.h -- Register Definitions
 
 ```cpp
 namespace cmd {
@@ -213,7 +213,7 @@ namespace cmd {
 
 ---
 
-## ADS1115.h — Main Driver Class
+## ADS1115.h -- Main Driver Class
 
 ### DriverState (same pattern)
 
@@ -380,7 +380,7 @@ Public API (readRaw, startConversion, etc.)
 Register helpers (readRegister16, writeRegister16)
     ↓
 TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
-    ↓  ← _updateHealth() called here ONLY
+    ↓  <- _updateHealth() called here ONLY
 RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
     ↓
 Transport callbacks (Config::i2cWrite, i2cWriteRead)
@@ -392,8 +392,8 @@ Transport callbacks (Config::i2cWrite, i2cWriteRead)
 2. Set `_initialized = false`, `_driverState = UNINIT`
 3. Validate config (callbacks not null, timeout > 0, address in range)
 4. Clamp `offlineThreshold` to minimum 1
-5. `probe()` — verify device responds (raw path, no health tracking)
-6. `_applyConfig()` — write config register with all settings
+5. `probe()` -- verify device responds (raw path, no health tracking)
+6. `_applyConfig()` -- write config register with all settings
 7. Set `_initialized = true`, `_driverState = READY`
 
 ### Voltage Calculation

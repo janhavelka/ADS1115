@@ -1,4 +1,4 @@
-ADS1115 Example C Code
+﻿ADS1115 Example C Code
 =====================
 
 The ADS1115 example code can be used for all devices in the family including ADS1114, ADS1113, ADS1015, ADS1014, ADS1013, and TLA2024 variants.  To assist in expediting the code development process, this example code is intended to show how to initialize and communicate with the ADS1115 at a high-level.
@@ -80,7 +80,7 @@ Copy and paste the example code into your project, and update the files as neede
 
  5. Include a reference to *ads1115.h* in your application (from *main.c* or wherever ADC communication is handled). You should now be able to begin calling the `ADS1115` module functions in your code.
 
-> **DISCLAIMER**: This code was tested on an MSP432E401Y 32-bit ARM® Cortex®-M4F based MCU using TI Code Composer Studio's <use current 18.1.3.LTS version> ARM compiler. This code is provided as example to aid in the creation of your own software implementation and should not be considered to be fully verified and production ready. This example code was written for readability and has not been optimized for performance.
+> **DISCLAIMER**: This code was tested on an MSP432E401Y 32-bit ARM(R) Cortex(R)-M4F based MCU using TI Code Composer Studio's <use current 18.1.3.LTS version> ARM compiler. This code is provided as example to aid in the creation of your own software implementation and should not be considered to be fully verified and production ready. This example code was written for readability and has not been optimized for performance.
 
 Support
 -------

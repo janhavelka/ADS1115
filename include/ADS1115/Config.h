@@ -37,6 +37,15 @@ using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t tx
 /// @return true if pin level is HIGH, false if LOW
 using GpioReadFn = bool (*)(int pin, void* user);
 
+/// Millisecond timestamp callback.
+/// @param user User context pointer passed through from Config
+/// @return Current monotonic milliseconds
+using NowMsFn = uint32_t (*)(void* user);
+
+/// Cooperative yield callback.
+/// @param user User context pointer passed through from Config
+using YieldFn = void (*)(void* user);
+
 /// Input multiplexer configuration
 enum class Mux : uint8_t {
   AIN0_AIN1 = 0,  ///< Differential: AIN0 - AIN1 (default)
@@ -109,6 +118,11 @@ struct Config {
   I2cWriteFn i2cWrite = nullptr;
   I2cWriteReadFn i2cWriteRead = nullptr;
   void* i2cUser = nullptr;
+
+  // === Timing Hooks (optional) ===
+  NowMsFn nowMs = nullptr;                 ///< Monotonic millisecond source
+  YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
+  void* timeUser = nullptr;                ///< User context for timing hooks
 
   // === Device Settings ===
   uint8_t i2cAddress = 0x48;       ///< 0x48-0x4B based on ADDR pin

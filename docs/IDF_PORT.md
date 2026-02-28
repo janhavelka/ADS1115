@@ -1,10 +1,10 @@
-# ADS1115 — ESP-IDF Migration Prompt
+﻿# ADS1115 -- ESP-IDF Migration Prompt
 
 > **Library**: ADS1115 (Texas Instruments 16-bit ADC)
-> **Current version**: 0.1.1 → **Target**: 2.0.0
+> **Current version**: 0.1.1 -> **Target**: 2.0.0
 > **Namespace**: `ADS1115`
 > **Include path**: `#include "ADS1115/ADS1115.h"`
-> **Difficulty**: Easy — `millis()`/`yield()` replacement in .cpp only, I2C already callback-based
+> **Difficulty**: Easy -- `millis()`/`yield()` replacement in .cpp only, I2C already callback-based
 
 ---
 
@@ -16,7 +16,7 @@ git tag v0.1.1   # freeze Arduino-era version
 
 ---
 
-## Current State — Arduino Dependencies (exact)
+## Current State -- Arduino Dependencies (exact)
 
 | API | Count | Locations |
 |-----|-------|-----------|
@@ -48,14 +48,14 @@ static inline uint32_t nowMs() {
 }
 ```
 
-### 3. Replace all 10× `millis()` → `nowMs()`
+### 3. Replace all 10x `millis()` -> `nowMs()`
 
-### 4. Replace 1× `yield()` → `taskYIELD()`
+### 4. Replace 1x `yield()` -> `taskYIELD()`
 
 ```cpp
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-// yield() → taskYIELD();
+// yield() -> taskYIELD();
 ```
 
 ### 5. Add `CMakeLists.txt` (library root)
@@ -82,8 +82,8 @@ dependencies:
 
 ### 7. Version bump
 
-- `library.json` → `2.0.0`
-- `Version.h` (if present) → `2.0.0`
+- `library.json` -> `2.0.0`
+- `Version.h` (if present) -> `2.0.0`
 
 ### 8. Replace Arduino example with ESP-IDF example
 

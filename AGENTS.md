@@ -1,4 +1,4 @@
-# AGENTS.md - ADS1115 Production Embedded Guidelines
+﻿# AGENTS.md - ADS1115 Production Embedded Guidelines
 
 ## Role and Target
 You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
@@ -79,12 +79,12 @@ struct Status {
 
 ## ADS1115 Driver Requirements
 
-- I2C address configurable: 0x48 (ADDR→GND), 0x49 (ADDR→VDD), 0x4A (ADDR→SDA), 0x4B (ADDR→SCL).
+- I2C address configurable: 0x48 (ADDR->GND), 0x49 (ADDR->VDD), 0x4A (ADDR->SDA), 0x4B (ADDR->SCL).
 - Check device presence in `begin()` by reading config register.
 - Support input multiplexer configurations:
   - 4 single-ended inputs (AIN0-AIN3 vs GND)
   - 3 differential pairs (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
-- Configurable PGA (gain): ±6.144V, ±4.096V, ±2.048V, ±1.024V, ±0.512V, ±0.256V
+- Configurable PGA (gain): +/-6.144V, +/-4.096V, +/-2.048V, +/-1.024V, +/-0.512V, +/-0.256V
 - Configurable data rate: 8, 16, 32, 64, 128, 250, 475, 860 SPS
 - Support operating modes:
   - **Single-shot mode**: One conversion on demand, then power down
@@ -104,7 +104,7 @@ The driver follows a **managed synchronous** model with health tracking:
 
 - All public I2C operations are **blocking** (no complex async - ADS1115 has no EEPROM/NVM writes).
 - `tick()` may be used for single-shot conversion wait or continuous mode polling.
-- Health is tracked via **tracked transport wrappers** — public API never calls `_updateHealth()` directly.
+- Health is tracked via **tracked transport wrappers** -- public API never calls `_updateHealth()` directly.
 - Recovery is **manual** via `recover()` - the application controls retry strategy.
 
 ### DriverState (4 states only)
@@ -119,11 +119,11 @@ enum class DriverState : uint8_t {
 ```
 
 State transitions:
-- `begin()` success → READY
-- Any I2C failure in READY → DEGRADED
-- Success in DEGRADED/OFFLINE → READY
-- Failures reach `offlineThreshold` → OFFLINE
-- `end()` → UNINIT
+- `begin()` success -> READY
+- Any I2C failure in READY -> DEGRADED
+- Success in DEGRADED/OFFLINE -> READY
+- Failures reach `offlineThreshold` -> OFFLINE
+- `end()` -> UNINIT
 
 ### Transport Wrapper Architecture
 
@@ -135,7 +135,7 @@ Public API (readAdc, startConversion, etc.)
 Register helpers (readRegs, writeRegs)
     ↓
 TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
-    ↓  ← _updateHealth() called here ONLY
+    ↓  <- _updateHealth() called here ONLY
 RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
     ↓
 Transport callbacks (Config::i2cWrite, i2cWriteRead)
@@ -143,8 +143,8 @@ Transport callbacks (Config::i2cWrite, i2cWriteRead)
 
 **Rules:**
 - Public API methods NEVER call `_updateHealth()` directly
-- `readRegs()`/`writeRegs()` use TRACKED wrappers → health updated automatically
-- `probe()` uses RAW wrappers → no health tracking (diagnostic only)
+- `readRegs()`/`writeRegs()` use TRACKED wrappers -> health updated automatically
+- `probe()` uses RAW wrappers -> no health tracking (diagnostic only)
 - `recover()` tracks probe failures (driver is initialized, so failures count)
 
 ### Health Tracking Rules
