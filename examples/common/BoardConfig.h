@@ -67,6 +67,11 @@ inline bool readAlertRdyPin(int pin, void* user) {
 /// @brief Initialize Serial for examples.
 inline void initSerial(uint32_t baud = 115200) {
   Serial.begin(baud);
+  // Allow native USB CDC targets (ESP32-S2/S3) to enumerate before first log.
+  const uint32_t startMs = millis();
+  while (!Serial && (millis() - startMs) < 3000U) {
+    delay(10);
+  }
 }
 
 }  // namespace board
