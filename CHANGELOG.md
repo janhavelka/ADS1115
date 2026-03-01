@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - CLI reporting consistency for probe/stress/health paths in the bringup example.
 
+## [0.1.2] - 2026-02-28
+
+### Added
+- Unified example framework helpers under `examples/common/*` (`BuildConfig`, `BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
+- `docs/IDF_PORT.md` and `docs/UNIFICATION_STANDARD.md` for standardized porting and unification guidance.
+- CLI/timing contract checks via `tools/check_cli_contract.py` and `tools/check_core_timing_guard.py`.
+
+### Changed
+- Consolidated example workflow to canonical `examples/01_basic_bringup_cli`.
+- Aligned CI/test layout to the shared unification profile (`test/test_basic.cpp`, platform and workflow updates).
+
 ## [0.1.1] - 2026-02-22
 
 ### Fixed
@@ -43,5 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/janhavelka/ADS1115/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/janhavelka/ADS1115/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/janhavelka/ADS1115/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/janhavelka/ADS1115/releases/tag/v0.1.0
