@@ -1,6 +1,6 @@
 {
   "name": "ADS1115",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Production-grade ADS1115 16-bit ADC driver",
   "keywords": [
     "ads1115",
@@ -23,9 +23,15 @@
   },
   "license": "MIT",
   "homepage": "https://www.thymos.cz",
-  "frameworks": ["arduino"],
-  "platforms": ["espressif32"],
-  "headers": ["ADS1115/ADS1115.h"],
+  "frameworks": [
+    "arduino"
+  ],
+  "platforms": [
+    "espressif32"
+  ],
+  "headers": [
+    "ADS1115/ADS1115.h"
+  ],
   "build": {
     "includeDir": "include",
     "srcDir": "src"

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-01
+
+### Changed
+- Unified `01_basic_bringup_cli` command behavior and operator-facing output clarity.
+- Updated `docs/IDF_PORT.md` to reflect current timing-hook architecture and no direct core timing calls in driver core.
+
+### Fixed
+- CLI reporting consistency for probe/stress/health paths in the bringup example.
+
 ## [0.1.1] - 2026-02-22
 
 ### Fixed
@@ -32,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/janhavelka/ADS1115/compare/v0.1.2...v0.2.0
 [0.1.1]: https://github.com/janhavelka/ADS1115/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/janhavelka/ADS1115/releases/tag/v0.1.0

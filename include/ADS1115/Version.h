@@ -6,14 +6,14 @@
 namespace ADS1115 {
 
 /// Library version string
-static constexpr const char* VERSION = "0.1.1";
+static constexpr const char* VERSION = "0.2.0";
 
 /// Version components
 static constexpr int VERSION_MAJOR = 0;
-static constexpr int VERSION_MINOR = 1;
-static constexpr int VERSION_PATCH = 1;
+static constexpr int VERSION_MINOR = 2;
+static constexpr int VERSION_PATCH = 0;
 
 /// Version as single integer (major * 10000 + minor * 100 + patch)
-static constexpr int VERSION_INT = 101;
+static constexpr int VERSION_INT = 200;
 
 } // namespace ADS1115

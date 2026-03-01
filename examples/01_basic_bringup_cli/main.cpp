@@ -53,7 +53,7 @@ const char* stateToStr(ADS1115::DriverState st) {
 
 const char* stateColor(ADS1115::DriverState st, bool online, uint8_t consecutiveFailures) {
   if (st == ADS1115::DriverState::UNINIT) {
-    return LOG_COLOR_RESET;
+    return LOG_COLOR_YELLOW;
   }
   return LOG_COLOR_STATE(online, consecutiveFailures);
 }
@@ -70,6 +70,10 @@ const char* onOffColor(bool enabled) {
   return enabled ? LOG_COLOR_GREEN : LOG_COLOR_RESET;
 }
 
+const char* yesNoColor(bool value) {
+  return value ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
+}
+
 const char* skipCountColor(uint32_t value) {
   return (value > 0U) ? LOG_COLOR_YELLOW : LOG_COLOR_RESET;
 }
@@ -78,6 +82,12 @@ const char* successRateColor(float pct) {
   if (pct >= 99.9f) return LOG_COLOR_GREEN;
   if (pct >= 80.0f) return LOG_COLOR_YELLOW;
   return LOG_COLOR_RED;
+}
+
+const char* staleTimeColor(bool isErrorTimestamp) {
+  // "never" for last error means no failures yet (good), while
+  // "never" for last OK usually means no successful operation so far.
+  return isErrorTimestamp ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
 }
 
 void printStatus(const ADS1115::Status& st) {
@@ -132,20 +142,24 @@ void printDriverHealth() {
 
   const uint32_t lastOkMs = device.lastOkMs();
   if (lastOkMs > 0U) {
-    Serial.printf("  Last OK: %lu ms ago (at %lu ms)\n",
+    Serial.printf("  Last OK: %s%lu ms ago (at %lu ms)%s\n",
+                  LOG_COLOR_GREEN,
                   static_cast<unsigned long>(now - lastOkMs),
-                  static_cast<unsigned long>(lastOkMs));
+                  static_cast<unsigned long>(lastOkMs),
+                  LOG_COLOR_RESET);
   } else {
-    Serial.println("  Last OK: never");
+    Serial.printf("  Last OK: %snever%s\n", staleTimeColor(false), LOG_COLOR_RESET);
   }
 
   const uint32_t lastErrorMs = device.lastErrorMs();
   if (lastErrorMs > 0U) {
-    Serial.printf("  Last error: %lu ms ago (at %lu ms)\n",
+    Serial.printf("  Last error: %s%lu ms ago (at %lu ms)%s\n",
+                  LOG_COLOR_RED,
                   static_cast<unsigned long>(now - lastErrorMs),
-                  static_cast<unsigned long>(lastErrorMs));
+                  static_cast<unsigned long>(lastErrorMs),
+                  LOG_COLOR_RESET);
   } else {
-    Serial.println("  Last error: never");
+    Serial.printf("  Last error: %snever%s\n", staleTimeColor(true), LOG_COLOR_RESET);
   }
 
   if (!lastErr.ok()) {
@@ -155,7 +169,7 @@ void printDriverHealth() {
                   LOG_COLOR_RESET);
     Serial.printf("  Error detail: %ld\n", static_cast<long>(lastErr.detail));
     if (lastErr.msg && lastErr.msg[0]) {
-      Serial.printf("  Error msg: %s\n", lastErr.msg);
+      Serial.printf("  Error msg: %s%s%s\n", LOG_COLOR_YELLOW, lastErr.msg, LOG_COLOR_RESET);
     }
   }
 }
@@ -761,7 +775,7 @@ void processCommand(const String& cmdLine) {
     printStatus(st);
   } else if (cmd == "poll") {
     bool ready = device.conversionReady();
-    LOGI("Conversion ready: %s", ready ? "YES" : "NO");
+    LOGI("Conversion ready: %s%s%s", yesNoColor(ready), ready ? "YES" : "NO", LOG_COLOR_RESET);
   } else if (cmd == "raw") {
     int16_t raw = 0;
     auto st = device.readRaw(raw);
