@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `_i2cWriteRaw()` and `_i2cWriteReadRaw()` now reject null and zero-length transactions before calling the injected transport.
 
-## [0.2.1] - 2026-04-02
+## [0.2.1] - 2026-04-03
 
 ### Added
 - `CommandHandler.h` example helper for serial command parsing (`cmd::readLine`, `cmd::match`, `cmd::parseInt`).
