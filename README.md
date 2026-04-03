@@ -126,7 +126,6 @@ Not part of the library. These simulate project-level glue and keep examples sel
 ## Documentation
 
 - `CHANGELOG.md` - full release history
-- `release_notes.md` - latest release summary
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/ads1115.pdf` - TI datasheet copy used for driver verification
 - `docs/TI_registry_reference/README.md` - TI reference-driver extraction notes
