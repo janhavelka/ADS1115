@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 #ifndef ADS1115_VERSION_STRING
-#define ADS1115_VERSION_STRING "0.2.0"
+#define ADS1115_VERSION_STRING "0.3.0"
 #endif
 
 #ifndef ADS1115_BUILD_DATE
@@ -45,7 +45,7 @@ namespace ADS1115 {
 static constexpr uint16_t VERSION_MAJOR = 0;
 
 /// @brief Minor version (backward-compatible features).
-static constexpr uint16_t VERSION_MINOR = 2;
+static constexpr uint16_t VERSION_MINOR = 3;
 
 /// @brief Patch version (backward-compatible fixes).
 static constexpr uint16_t VERSION_PATCH = 0;
@@ -54,10 +54,10 @@ static constexpr uint16_t VERSION_PATCH = 0;
 static constexpr const char* VERSION = ADS1115_VERSION_STRING;
 
 /// @brief Encoded version for numeric comparison: MAJOR*10000 + MINOR*100 + PATCH.
-static constexpr uint32_t VERSION_CODE = 200;
+static constexpr uint32_t VERSION_CODE = 300;
 
 /// @brief Backward-compatible alias used by older repositories.
-static constexpr int VERSION_INT = 200;
+static constexpr int VERSION_INT = 300;
 
 /// @brief Build date string.
 static constexpr const char* BUILD_DATE = ADS1115_BUILD_DATE;

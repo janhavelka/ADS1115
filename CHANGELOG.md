@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-03
+
+### Added
+- Granular I2C transport status codes: `I2C_NACK_ADDR`, `I2C_NACK_DATA`, `I2C_TIMEOUT`, and `I2C_BUS`.
+
 ### Changed
 - Documented the newer transport contract in the README, including granular `I2C_*` status mapping, `i2cUser` usage, and manager-owned timeout guidance.
-- Added changelog coverage for the latest transport-validation and documentation cleanup pass.
+- `examples/common/I2cTransport.h` now uses `TwoWire*` via `i2cUser`, validates buffer parameters, and treats per-call `timeoutMs` as advisory.
+- Added native coverage for raw transport parameter validation.
+
+### Fixed
+- `_i2cWriteRaw()` and `_i2cWriteReadRaw()` now reject null and zero-length transactions before calling the injected transport.
 
 ## [0.2.1] - 2026-04-02
 
@@ -70,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/janhavelka/ADS1115/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/janhavelka/ADS1115/compare/v0.1.1...v0.1.2
