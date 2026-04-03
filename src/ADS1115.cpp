@@ -694,6 +694,9 @@ Status ADS1115::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
   if (_config.i2cWriteRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C read callback missing");
   }
+  if (txBuf == nullptr || txLen == 0 || rxBuf == nullptr || rxLen == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid I2C read parameters");
+  }
   return _config.i2cWriteRead(_config.i2cAddress, txBuf, txLen,
                               rxBuf, rxLen, _config.i2cTimeoutMs,
                               _config.i2cUser);
@@ -702,6 +705,9 @@ Status ADS1115::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
 Status ADS1115::_i2cWriteRaw(const uint8_t* buf, size_t len) {
   if (_config.i2cWrite == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C write callback missing");
+  }
+  if (buf == nullptr || len == 0) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid I2C write parameters");
   }
   return _config.i2cWrite(_config.i2cAddress, buf, len,
                           _config.i2cTimeoutMs, _config.i2cUser);

@@ -35,30 +35,42 @@ Copy `include/ADS1115/` and `src/` into your project.
 // Transport callbacks
 ADS1115::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
                          uint32_t timeoutMs, void* user) {
-  (void)user;
-  Wire.setTimeOut(static_cast<uint16_t>(timeoutMs));
-  Wire.beginTransmission(addr);
-  Wire.write(data, len);
-  return Wire.endTransmission() == 0
-    ? ADS1115::Status::Ok()
-    : ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "Write failed");
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  (void)timeoutMs;  // Manager-owned in shared-bus setups.
+  wire->beginTransmission(addr);
+  wire->write(data, len);
+  switch (wire->endTransmission(true)) {
+    case 0: return ADS1115::Status::Ok();
+    case 2: return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_ADDR, "Address NACK");
+    case 3: return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_DATA, "Data NACK");
+    case 5: return ADS1115::Status::Error(ADS1115::Err::I2C_TIMEOUT, "I2C timeout");
+    case 4: return ADS1115::Status::Error(ADS1115::Err::I2C_BUS, "I2C bus error");
+    default: return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "Write failed");
+  }
 }
 
 ADS1115::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
                              uint8_t* rx, size_t rxLen,
                              uint32_t timeoutMs, void* user) {
-  (void)user;
-  Wire.setTimeOut(static_cast<uint16_t>(timeoutMs));
-  Wire.beginTransmission(addr);
-  Wire.write(tx, txLen);
-  if (Wire.endTransmission(false) != 0) {
-    return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "Write failed");
+  TwoWire* wire = static_cast<TwoWire*>(user);
+  (void)timeoutMs;  // Manager-owned in shared-bus setups.
+  wire->beginTransmission(addr);
+  wire->write(tx, txLen);
+  uint8_t result = wire->endTransmission(false);
+  if (result != 0) {
+    return ADS1115::Status::Error(
+      result == 2 ? ADS1115::Err::I2C_NACK_ADDR :
+      result == 3 ? ADS1115::Err::I2C_NACK_DATA :
+      result == 5 ? ADS1115::Err::I2C_TIMEOUT :
+      result == 4 ? ADS1115::Err::I2C_BUS :
+                    ADS1115::Err::I2C_ERROR,
+      "Write phase failed");
   }
-  if (Wire.requestFrom(addr, rxLen) != rxLen) {
+  if (wire->requestFrom(addr, rxLen) != rxLen) {
     return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "Read failed");
   }
   for (size_t i = 0; i < rxLen; ++i) {
-    rx[i] = Wire.read();
+    rx[i] = wire->read();
   }
   return ADS1115::Status::Ok();
 }
@@ -72,6 +84,7 @@ void setup() {
   ADS1115::Config cfg;
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
+  cfg.i2cUser = &Wire;
   cfg.i2cAddress = 0x48;
 
   auto status = device.begin(cfg);
@@ -113,10 +126,9 @@ Not part of the library. These simulate project-level glue and keep examples sel
 ## Documentation
 
 - `CHANGELOG.md` - full release history
-- `docs/UNIFICATION_STANDARD.md` - shared API/CLI/test conventions
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
-- `release_notes.md` - latest release summary
-- `docs/DOXYGEN.md` - how to build and browse API docs
+- `docs/ads1115.pdf` - TI datasheet copy used for driver verification
+- `docs/TI_registry_reference/README.md` - TI reference-driver extraction notes
 
 ## License
 

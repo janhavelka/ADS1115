@@ -17,7 +17,11 @@ enum class Err : uint8_t {
   DEVICE_NOT_FOUND,          ///< ADS1115 not responding on I2C bus
   CONVERSION_NOT_READY,      ///< Conversion not yet complete
   BUSY,                      ///< Device is busy with conversion
-  IN_PROGRESS                ///< Operation scheduled; call tick() to complete
+  IN_PROGRESS,               ///< Operation scheduled; call tick() to complete
+  I2C_NACK_ADDR,             ///< I2C address phase was not acknowledged
+  I2C_NACK_DATA,             ///< I2C data phase was not acknowledged
+  I2C_TIMEOUT,               ///< I2C transaction timed out
+  I2C_BUS                    ///< I2C bus or arbitration error
 };
 
 /// Status structure returned by all fallible operations

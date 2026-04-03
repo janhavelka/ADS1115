@@ -26,7 +26,7 @@ namespace transport {
  * @param addr I2C 7-bit address
  * @param data Data buffer to send
  * @param len Number of bytes
- * @param timeoutMs Timeout (used to set Wire timeout if supported)
+ * @param timeoutMs Timeout requested by the driver (bus-manager owned in shared buses)
  * @param user Pointer to TwoWire instance
  * @return Status OK on success, I2C error on failure
  */
@@ -46,11 +46,7 @@ inline ADS1115::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                                   static_cast<int32_t>(len));
   }
 
-#if defined(ARDUINO_ARCH_ESP32)
-  wire->setTimeOut(static_cast<uint16_t>(timeoutMs));
-#else
   (void)timeoutMs;
-#endif
 
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
@@ -64,15 +60,15 @@ inline ADS1115::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
     case 0:
       return ADS1115::Status::Ok();
     case 1:
-      return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C data too long", result);
+      return ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM, "I2C data too long", result);
     case 2:
-      return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C address NACK", result);
+      return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_ADDR, "I2C address NACK", result);
     case 3:
-      return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C data NACK", result);
+      return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_DATA, "I2C data NACK", result);
     case 4:
-      return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C bus error", result);
+      return ADS1115::Status::Error(ADS1115::Err::I2C_BUS, "I2C bus error", result);
     case 5:
-      return ADS1115::Status::Error(ADS1115::Err::TIMEOUT, "I2C timeout", result);
+      return ADS1115::Status::Error(ADS1115::Err::I2C_TIMEOUT, "I2C timeout", result);
     default:
       return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C unknown error", result);
   }
@@ -88,7 +84,7 @@ inline ADS1115::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
  * @param txLen TX length
  * @param rx RX buffer for readback
  * @param rxLen RX length
- * @param timeoutMs Timeout (used to set Wire timeout if supported)
+ * @param timeoutMs Timeout requested by the driver (bus-manager owned in shared buses)
  * @param user Pointer to TwoWire instance
  * @return Status OK on success, I2C error on failure
  */
@@ -109,11 +105,7 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
     return ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM, "I2C read exceeds buffer");
   }
 
-#if defined(ARDUINO_ARCH_ESP32)
-  wire->setTimeOut(static_cast<uint16_t>(timeoutMs));
-#else
   (void)timeoutMs;
-#endif
 
   wire->beginTransmission(addr);
   size_t written = wire->write(tx, txLen);
@@ -123,8 +115,21 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
   }
 
   uint8_t result = wire->endTransmission(false);  // Repeated start
-  if (result != 0) {
-    return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C write failed", result);
+  switch (result) {
+    case 0:
+      break;
+    case 1:
+      return ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM, "I2C data too long", result);
+    case 2:
+      return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_ADDR, "I2C address NACK", result);
+    case 3:
+      return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_DATA, "I2C data NACK", result);
+    case 4:
+      return ADS1115::Status::Error(ADS1115::Err::I2C_BUS, "I2C bus error", result);
+    case 5:
+      return ADS1115::Status::Error(ADS1115::Err::I2C_TIMEOUT, "I2C timeout", result);
+    default:
+      return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "I2C write failed", result);
   }
 
   size_t read = wire->requestFrom(addr, static_cast<uint8_t>(rxLen));

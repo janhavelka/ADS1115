@@ -9,7 +9,9 @@
 SerialClass Serial;
 TwoWire Wire;
 
+#define private public
 #include "ADS1115/ADS1115.h"
+#undef private
 
 using namespace ADS1115;
 
@@ -229,6 +231,33 @@ void test_single_shot_timing_wraparound_reaches_ready() {
   TEST_ASSERT_TRUE(st.ok());
 }
 
+void test_raw_transport_rejects_invalid_buffers() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+
+  uint8_t byte = 0;
+  uint8_t rx = 0;
+
+  Status st = dev._i2cWriteRaw(nullptr, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
+
+  st = dev._i2cWriteRaw(&byte, 0);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
+
+  st = dev._i2cWriteReadRaw(nullptr, 1, &rx, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
+
+  st = dev._i2cWriteReadRaw(&byte, 0, &rx, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
+
+  st = dev._i2cWriteReadRaw(&byte, 1, nullptr, 1);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
+
+  st = dev._i2cWriteReadRaw(&byte, 1, &rx, 0);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_status_ok);
@@ -242,5 +271,6 @@ int main() {
   RUN_TEST(test_recover_success_returns_ready);
   RUN_TEST(test_recover_reaches_offline_when_threshold_is_one);
   RUN_TEST(test_single_shot_timing_wraparound_reaches_ready);
+  RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   return UNITY_END();
 }
