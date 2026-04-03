@@ -6,6 +6,7 @@
 #include <cstdlib>
 
 #include "examples/common/BoardConfig.h"
+#include "examples/common/BusDiag.h"
 #include "examples/common/I2cScanner.h"
 #include "examples/common/I2cTransport.h"
 #include "examples/common/Log.h"
@@ -752,7 +753,7 @@ void processCommand(const String& cmdLine) {
   } else if (cmd == "version" || cmd == "ver") {
     printVersionInfo();
   } else if (cmd == "scan") {
-    i2c::scan();
+    bus_diag::scan();
   } else if (cmd == "probe") {
     LOGI("Probing device (no health tracking)...");
     auto st = device.probe();
@@ -1061,11 +1062,12 @@ void setup() {
 
   board::initAlertRdyPin();
 
-  i2c::scan();
+  bus_diag::scan();
 
   ADS1115::Config cfg;
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
+  cfg.i2cUser = &Wire;
   cfg.i2cAddress = 0x48;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.offlineThreshold = 5;

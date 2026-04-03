@@ -34,8 +34,16 @@
 
 inline const char* log_bool_str(bool value) { return value ? "yes" : "no"; }
 
+/**
+ * @brief Initialize serial for logging.
+ * @param baud Baud rate (default: 115200).
+ */
 inline void log_begin(unsigned long baud = 115200) {
   LOG_SERIAL.begin(baud);
+  // Give USB CDC time to initialize on ESP32-S3
+  #if defined(CONFIG_IDF_TARGET_ESP32S3) && ARDUINO_USB_CDC_ON_BOOT
+  delay(100);
+  #endif
 }
 
 // Colorize only the severity tag; keep message text in terminal default color.
