@@ -13,13 +13,18 @@
     {
       "name": "Thymos Solution s.r.o",
       "email": "info@thymos.cz",
+      "url": "https://www.thymos.cz"
+    },
+    {
+      "name": "Jan Havelka",
+      "email": "info@thymos.cz",
       "url": "https://www.thymos.cz",
       "maintainer": true
     }
   ],
   "repository": {
     "type": "git",
-    "url": "https://www.thymos.cz/ADS1115.git"
+    "url": "https://github.com/janhavelka/ADS1115.git"
   },
   "license": "MIT",
   "homepage": "https://www.thymos.cz",

@@ -2,7 +2,7 @@
 # Generated and maintained for unified API documentation.
 
 PROJECT_NAME           = "ADS1115"
-PROJECT_NUMBER         = "0.1.1"
+PROJECT_NUMBER         = "0.3.0"
 PROJECT_BRIEF          = "ADS1115 embedded library API documentation"
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO
