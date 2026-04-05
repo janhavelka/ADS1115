@@ -236,6 +236,33 @@ Status ADS1115::recover() {
   return Status::Ok();
 }
 
+Status ADS1115::getSettings(SettingsSnapshot& out) const {
+  out.initialized = _initialized;
+  out.state = _driverState;
+  out.i2cAddress = _config.i2cAddress;
+  out.i2cTimeoutMs = _config.i2cTimeoutMs;
+  out.offlineThreshold = _config.offlineThreshold;
+  out.hasNowMsHook = (_config.nowMs != nullptr);
+  out.hasGpioReadHook = (_config.gpioRead != nullptr);
+  out.hasCooperativeYieldHook = (_config.cooperativeYield != nullptr);
+  out.alertRdyPin = _config.alertRdyPin;
+  out.mux = _config.mux;
+  out.gain = _config.gain;
+  out.dataRate = _config.dataRate;
+  out.mode = _config.mode;
+  out.compMode = _config.compMode;
+  out.compPolarity = _config.compPolarity;
+  out.compLatch = _config.compLatch;
+  out.compQueue = _config.compQueue;
+  out.compThresholdHigh = _config.compThresholdHigh;
+  out.compThresholdLow = _config.compThresholdLow;
+  out.conversionStarted = _conversionStarted;
+  out.conversionReady = _conversionReady;
+  out.conversionStartMs = _conversionStartMs;
+  out.lastRawValue = _lastRawValue;
+  return Status::Ok();
+}
+
 // ============================================================================
 // Conversion API
 // ============================================================================

@@ -59,6 +59,12 @@ uint32_t fakeNowMs(void* user) {
   return static_cast<FakeBus*>(user)->nowMs;
 }
 
+bool fakeGpioRead(int, void*) {
+  return true;
+}
+
+void fakeYield(void*) {}
+
 Config makeConfig(FakeBus& bus) {
   Config cfg;
   cfg.i2cWrite = fakeWrite;
@@ -79,12 +85,16 @@ void tearDown() {}
 void test_status_ok() {
   Status st = Status::Ok();
   TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(static_cast<bool>(st));
+  TEST_ASSERT_TRUE(st.is(Err::OK));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::OK), static_cast<uint8_t>(st.code));
 }
 
 void test_status_error() {
   Status st = Status::Error(Err::I2C_ERROR, "Test error", 42);
   TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_FALSE(static_cast<bool>(st));
+  TEST_ASSERT_TRUE(st.is(Err::I2C_ERROR));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR), static_cast<uint8_t>(st.code));
   TEST_ASSERT_EQUAL_INT32(42, st.detail);
 }
@@ -92,6 +102,8 @@ void test_status_error() {
 void test_status_in_progress() {
   Status st{Err::IN_PROGRESS, 0, "In progress"};
   TEST_ASSERT_FALSE(st.ok());
+  TEST_ASSERT_FALSE(static_cast<bool>(st));
+  TEST_ASSERT_TRUE(st.is(Err::IN_PROGRESS));
   TEST_ASSERT_TRUE(st.inProgress());
 }
 
@@ -109,6 +121,59 @@ void test_config_defaults() {
   TEST_ASSERT_EQUAL_INT16(0x7FFF, cfg.compThresholdHigh);
   TEST_ASSERT_EQUAL_INT16(static_cast<int16_t>(0x8000), cfg.compThresholdLow);
   TEST_ASSERT_EQUAL_UINT8(5, cfg.offlineThreshold);
+}
+
+void test_get_settings_snapshot() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.i2cAddress = 0x4B;
+  cfg.mux = Mux::AIN1_GND;
+  cfg.gain = Gain::FSR_0_512V;
+  cfg.dataRate = DataRate::SPS_475;
+  cfg.mode = Mode::CONTINUOUS;
+  cfg.compMode = ComparatorMode::WINDOW;
+  cfg.compPolarity = ComparatorPolarity::ACTIVE_HIGH;
+  cfg.compLatch = ComparatorLatch::LATCHING;
+  cfg.compQueue = ComparatorQueue::ASSERT_2;
+  cfg.alertRdyPin = 17;
+  cfg.gpioRead = fakeGpioRead;
+  cfg.cooperativeYield = fakeYield;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  SettingsSnapshot snap;
+  Status st = dev.getSettings(snap);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(snap.initialized);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::READY),
+                          static_cast<uint8_t>(snap.state));
+  TEST_ASSERT_EQUAL_HEX8(0x4B, snap.i2cAddress);
+  TEST_ASSERT_EQUAL_UINT32(10u, snap.i2cTimeoutMs);
+  TEST_ASSERT_EQUAL_UINT8(3u, snap.offlineThreshold);
+  TEST_ASSERT_TRUE(snap.hasNowMsHook);
+  TEST_ASSERT_TRUE(snap.hasGpioReadHook);
+  TEST_ASSERT_TRUE(snap.hasCooperativeYieldHook);
+  TEST_ASSERT_EQUAL(17, snap.alertRdyPin);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mux::AIN1_GND),
+                          static_cast<uint8_t>(snap.mux));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Gain::FSR_0_512V),
+                          static_cast<uint8_t>(snap.gain));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DataRate::SPS_475),
+                          static_cast<uint8_t>(snap.dataRate));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mode::CONTINUOUS),
+                          static_cast<uint8_t>(snap.mode));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ComparatorMode::WINDOW),
+                          static_cast<uint8_t>(snap.compMode));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ComparatorPolarity::ACTIVE_HIGH),
+                          static_cast<uint8_t>(snap.compPolarity));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ComparatorLatch::LATCHING),
+                          static_cast<uint8_t>(snap.compLatch));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ComparatorQueue::ASSERT_2),
+                          static_cast<uint8_t>(snap.compQueue));
+  TEST_ASSERT_FALSE(snap.conversionStarted);
+  TEST_ASSERT_FALSE(snap.conversionReady);
+  TEST_ASSERT_EQUAL_UINT32(0u, snap.conversionStartMs);
+  TEST_ASSERT_EQUAL_INT16(0, snap.lastRawValue);
 }
 
 void test_begin_rejects_missing_callbacks() {
@@ -265,6 +330,7 @@ int main() {
   RUN_TEST(test_status_error);
   RUN_TEST(test_status_in_progress);
   RUN_TEST(test_config_defaults);
+  RUN_TEST(test_get_settings_snapshot);
   RUN_TEST(test_begin_rejects_missing_callbacks);
   RUN_TEST(test_begin_success_sets_ready_and_counters);
   RUN_TEST(test_probe_failure_does_not_update_health);

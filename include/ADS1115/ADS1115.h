@@ -20,6 +20,33 @@ enum class DriverState : uint8_t {
   OFFLINE    ///< consecutiveFailures >= offlineThreshold
 };
 
+/// Snapshot of driver configuration and runtime state without I2C access.
+struct SettingsSnapshot {
+  bool initialized = false;
+  DriverState state = DriverState::UNINIT;
+  uint8_t i2cAddress = 0x48;
+  uint32_t i2cTimeoutMs = 0;
+  uint8_t offlineThreshold = 0;
+  bool hasNowMsHook = false;
+  bool hasGpioReadHook = false;
+  bool hasCooperativeYieldHook = false;
+  int alertRdyPin = -1;
+  Mux mux = Mux::AIN0_GND;
+  Gain gain = Gain::FSR_2_048V;
+  DataRate dataRate = DataRate::SPS_128;
+  Mode mode = Mode::SINGLE_SHOT;
+  ComparatorMode compMode = ComparatorMode::TRADITIONAL;
+  ComparatorPolarity compPolarity = ComparatorPolarity::ACTIVE_LOW;
+  ComparatorLatch compLatch = ComparatorLatch::NON_LATCHING;
+  ComparatorQueue compQueue = ComparatorQueue::DISABLE;
+  int16_t compThresholdHigh = 0x7FFF;
+  int16_t compThresholdLow = static_cast<int16_t>(0x8000);
+  bool conversionStarted = false;
+  bool conversionReady = false;
+  uint32_t conversionStartMs = 0;
+  int16_t lastRawValue = 0;
+};
+
 /// ADS1115 driver class
 class ADS1115 {
 public:
@@ -40,6 +67,7 @@ public:
   // === Diagnostics (no health tracking) ===
   Status probe();
   Status recover();
+  Status getSettings(SettingsSnapshot& out) const;
 
   // === Driver State ===
   DriverState state() const { return _driverState; }
@@ -87,6 +115,12 @@ public:
 
   /// Write a 16-bit register using tracked I2C access.
   Status writeRegister16(uint8_t reg, uint16_t value);
+
+  /// Compatibility alias for readRegister16().
+  Status readRegister(uint8_t reg, uint16_t& value) { return readRegister16(reg, value); }
+
+  /// Compatibility alias for writeRegister16().
+  Status writeRegister(uint8_t reg, uint16_t value) { return writeRegister16(reg, value); }
 
   // === Comparator ===
   Status setThresholds(int16_t low, int16_t high);

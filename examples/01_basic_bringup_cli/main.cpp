@@ -454,6 +454,44 @@ void printConfig() {
   Serial.printf("  Config: 0x%04X\n", config);
 }
 
+void printSettingsSnapshot() {
+  ADS1115::SettingsSnapshot snap;
+  ADS1115::Status st = device.getSettings(snap);
+  if (!st.ok()) {
+    printStatus(st);
+    return;
+  }
+
+  Serial.println("=== Cached Settings ===");
+  Serial.printf("  Initialized: %s\n", snap.initialized ? "YES" : "NO");
+  Serial.printf("  State: %s\n", stateToStr(snap.state));
+  Serial.printf("  Address: 0x%02X\n", snap.i2cAddress);
+  Serial.printf("  Timeout: %lu ms\n", static_cast<unsigned long>(snap.i2cTimeoutMs));
+  Serial.printf("  Offline threshold: %u\n", static_cast<unsigned>(snap.offlineThreshold));
+  Serial.printf("  Hooks: now=%s gpio=%s yield=%s\n",
+                snap.hasNowMsHook ? "YES" : "NO",
+                snap.hasGpioReadHook ? "YES" : "NO",
+                snap.hasCooperativeYieldHook ? "YES" : "NO");
+  Serial.printf("  Alert pin: %d\n", snap.alertRdyPin);
+  Serial.printf("  Mux: %s\n", muxToStr(snap.mux));
+  Serial.printf("  Gain: %s\n", gainToStr(snap.gain));
+  Serial.printf("  Rate: %s\n", rateToStr(snap.dataRate));
+  Serial.printf("  Mode: %s\n", modeToStr(snap.mode));
+  Serial.printf("  Comparator: mode=%s pol=%s latch=%s queue=%s\n",
+                compModeToStr(snap.compMode),
+                compPolToStr(snap.compPolarity),
+                compLatchToStr(snap.compLatch),
+                compQueueToStr(snap.compQueue));
+  Serial.printf("  Thresholds: low=%d high=%d\n",
+                static_cast<int>(snap.compThresholdLow),
+                static_cast<int>(snap.compThresholdHigh));
+  Serial.printf("  Conversion: started=%s ready=%s start=%lu ms lastRaw=%d\n",
+                snap.conversionStarted ? "YES" : "NO",
+                snap.conversionReady ? "YES" : "NO",
+                static_cast<unsigned long>(snap.conversionStartMs),
+                static_cast<int>(snap.lastRawValue));
+}
+
 bool readConfigFromDevice(uint16_t& config) {
   ADS1115::Status st = device.readConfig(config);
   if (!st.ok()) {
@@ -1080,6 +1118,7 @@ void processCommand(const String& cmdLine) {
     }
   } else if (cmd == "config" || cmd == "cfg" || cmd == "settings") {
     printConfig();
+    printSettingsSnapshot();
   } else {
     LOGW("Unknown command: %s", cmd.c_str());
   }

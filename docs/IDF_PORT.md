@@ -45,5 +45,5 @@ cfg.cooperativeYield = idfYield;
 ## Verification Checklist
 - `python tools/check_core_timing_guard.py` passes.
 - Native tests pass (`pio test -e native`).
-- Example build passes (`pio run -e ex_bringup_s3`).
+- Example builds pass (`pio run -e esp32s3dev`, `pio run -e esp32s2dev`).
 - No new direct `millis/micros/yield/delay` calls are added outside portability wrappers.
