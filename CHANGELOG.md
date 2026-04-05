@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-05
+
+### Changed
+- Promoted to v1.0.0 — the library is fully featured and production-ready.
+
 ## [0.4.0] - 2026-04-05
 
 ### Added
@@ -91,7 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...v0.2.1
