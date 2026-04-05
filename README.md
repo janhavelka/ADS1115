@@ -119,8 +119,11 @@ void loop() {
 |--------|-------------|
 | `probe()` | Check device presence without updating health counters |
 | `recover()` | Re-validate comms, clear conversion state, and re-apply cached config |
+| `getSettings(snap)` | Populate a `SettingsSnapshot` with cached config and runtime state (no I2C) |
 | `readRegister16(reg, value)` | Read a raw 16-bit register using tracked I2C |
 | `writeRegister16(reg, value)` | Write a raw 16-bit register using tracked I2C |
+| `readRegister(reg, value)` | Compatibility alias for `readRegister16()` |
+| `writeRegister(reg, value)` | Compatibility alias for `writeRegister16()` |
 
 ## Examples
 

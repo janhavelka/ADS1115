@@ -67,6 +67,10 @@ public:
   // === Diagnostics (no health tracking) ===
   Status probe();
   Status recover();
+
+  /// Populate a snapshot of cached configuration and runtime state without I2C.
+  /// @param[out] out Snapshot to fill
+  /// @return Status::Ok() always
   Status getSettings(SettingsSnapshot& out) const;
 
   // === Driver State ===
