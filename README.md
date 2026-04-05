@@ -101,9 +101,31 @@ void loop() {
 }
 ```
 
+## API Overview
+
+### Lifecycle
+
+| Method | Description |
+|--------|-------------|
+| `begin(config)` | Initialize with injected transport and verify the device is reachable |
+| `tick(nowMs)` | Process bounded conversion polling work |
+| `end()` | Best-effort return the ADC to single-shot idle and clear cached conversion state |
+| `isInitialized()` | True after successful `begin()` until `end()` |
+| `getConfig()` | Return the driver's cached configuration snapshot |
+
+### Diagnostics And Raw Access
+
+| Method | Description |
+|--------|-------------|
+| `probe()` | Check device presence without updating health counters |
+| `recover()` | Re-validate comms, clear conversion state, and re-apply cached config |
+| `readRegister16(reg, value)` | Read a raw 16-bit register using tracked I2C |
+| `writeRegister16(reg, value)` | Write a raw 16-bit register using tracked I2C |
+
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
+- CLI register diagnostics: `reg <addr>` and `wreg <addr> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 ### Example Helpers (`examples/common/`)
 

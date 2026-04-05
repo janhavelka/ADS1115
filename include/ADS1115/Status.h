@@ -16,6 +16,7 @@ enum class Err : uint8_t {
   INVALID_PARAM,             ///< Invalid parameter value
   DEVICE_NOT_FOUND,          ///< ADS1115 not responding on I2C bus
   CONVERSION_NOT_READY,      ///< Conversion not yet complete
+  MEASUREMENT_NOT_READY = CONVERSION_NOT_READY, ///< Alias for cross-library uniformity
   BUSY,                      ///< Device is busy with conversion
   IN_PROGRESS,               ///< Operation scheduled; call tick() to complete
   I2C_NACK_ADDR,             ///< I2C address phase was not acknowledged

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-05
+
+### Added
+- Public lifecycle introspection helpers: `isInitialized()` and `getConfig()`.
+- Public tracked raw-register helpers: `readRegister16()` and `writeRegister16()`.
+- `Err::MEASUREMENT_NOT_READY` alias for cross-library uniformity.
+
+### Changed
+- `end()` now best-effort returns the ADC to single-shot idle and clears cached conversion state.
+- `recover()` now clears conversion state and re-applies cached configuration after the tracked probe succeeds.
+- Bringup CLI now exposes `reg` / `wreg` diagnostics for raw register inspection and service writes.
+
 ## [0.3.0] - 2026-04-03
 
 ### Added
@@ -79,7 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/janhavelka/ADS1115/compare/v0.1.2...v0.2.0

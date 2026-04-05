@@ -215,6 +215,10 @@ void printHelp() {
   helpItem("config", "Dump config register");
   helpItem("config write <hex>", "Write full config register value");
 
+  helpSection("Registers");
+  helpItem("reg <addr>", "Read 16-bit register (hex address)");
+  helpItem("wreg <addr> <val>", "Write 16-bit register (diagnostic only; may desync cached config)");
+
   helpSection("Diagnostics");
   helpItem("drv", "Show driver state and health");
   helpItem("probe", "Probe device (no health tracking)");
@@ -974,6 +978,43 @@ void processCommand(const String& cmdLine) {
     if (st.ok()) {
       printConfig();
     }
+  } else if (cmd.startsWith("wreg ")) {
+    String args = cmd.substring(5);
+    args.trim();
+    const int split = args.indexOf(' ');
+    if (split < 0) {
+      LOGW("Usage: wreg <addr> <val>");
+      return;
+    }
+
+    uint32_t addr = 0;
+    uint32_t value = 0;
+    if (!parseU32(args.substring(0, split), addr) ||
+        !parseU32(args.substring(split + 1), value) ||
+        addr > 0xFFu || value > 0xFFFFu) {
+      LOGW("Usage: wreg <addr> <val>");
+      return;
+    }
+
+    printStatus(device.writeRegister16(static_cast<uint8_t>(addr), static_cast<uint16_t>(value)));
+  } else if (cmd.startsWith("reg ")) {
+    uint32_t addr = 0;
+    if (!parseU32(cmd.substring(4), addr) || addr > 0xFFu) {
+      LOGW("Usage: reg <addr>");
+      return;
+    }
+
+    uint16_t value = 0;
+    ADS1115::Status st = device.readRegister16(static_cast<uint8_t>(addr), value);
+    if (!st.ok()) {
+      printStatus(st);
+      return;
+    }
+
+    Serial.printf("  Reg 0x%02lX = 0x%04X (%u)\n",
+                  static_cast<unsigned long>(addr),
+                  value,
+                  value);
   } else if (cmd == "selftest") {
     runSelfTest();
   } else if (cmd == "stress_mix") {

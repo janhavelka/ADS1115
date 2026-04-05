@@ -24,9 +24,18 @@ enum class DriverState : uint8_t {
 class ADS1115 {
 public:
   // === Lifecycle ===
+  /// Initialize the driver with configuration and verify device presence.
   Status begin(const Config& config);
+  /// Process pending operations (currently bounded polling only).
   void tick(uint32_t nowMs);
+  /// Shut the device down to single-shot idle and clear cached conversion state.
   void end();
+
+  /// Check if begin() completed successfully and end() has not been called.
+  bool isInitialized() const { return _initialized; }
+
+  /// Get the cached configuration snapshot currently owned by the driver.
+  const Config& getConfig() const { return _config; }
 
   // === Diagnostics (no health tracking) ===
   Status probe();
@@ -72,6 +81,13 @@ public:
   Status readConfig(uint16_t& config);
   Status writeConfig(uint16_t config);
 
+  // === Raw Register Access ===
+  /// Read a 16-bit register using tracked I2C access.
+  Status readRegister16(uint8_t reg, uint16_t& value);
+
+  /// Write a 16-bit register using tracked I2C access.
+  Status writeRegister16(uint8_t reg, uint16_t value);
+
   // === Comparator ===
   Status setThresholds(int16_t low, int16_t high);
   Status getThresholds(int16_t& low, int16_t& high);
@@ -106,8 +122,6 @@ private:
   Status _i2cWriteTracked(const uint8_t* buf, size_t len);
 
   // === Register Access ===
-  Status readRegister16(uint8_t reg, uint16_t& value);
-  Status writeRegister16(uint8_t reg, uint16_t value);
   Status _readRegister16Raw(uint8_t reg, uint16_t& value);
 
   // === Health Tracking ===

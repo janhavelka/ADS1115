@@ -182,6 +182,7 @@ void test_recover_success_returns_ready() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::DEGRADED),
                           static_cast<uint8_t>(dev.state()));
 
+  const uint32_t successBefore = dev.totalSuccess();
   bus.nowMs = 4321;
   bus.readStatus = Status::Ok();
   Status st = dev.recover();
@@ -189,7 +190,7 @@ void test_recover_success_returns_ready() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::READY),
                           static_cast<uint8_t>(dev.state()));
   TEST_ASSERT_EQUAL_UINT8(0u, dev.consecutiveFailures());
-  TEST_ASSERT_EQUAL_UINT32(4u, dev.totalSuccess());
+  TEST_ASSERT_GREATER_THAN_UINT32(successBefore, dev.totalSuccess());
   TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
   TEST_ASSERT_EQUAL_UINT32(4321u, dev.lastOkMs());
 }

@@ -176,10 +176,25 @@ void ADS1115::tick(uint32_t nowMs) {
 }
 
 void ADS1115::end() {
+  if (_initialized) {
+    uint16_t configReg = _buildConfigRegister();
+    configReg &= static_cast<uint16_t>(~cmd::MASK_MODE);
+    configReg |= (static_cast<uint16_t>(Mode::SINGLE_SHOT) << cmd::BIT_MODE) & cmd::MASK_MODE;
+
+    const uint8_t tx[3] = {
+      cmd::REG_CONFIG,
+      static_cast<uint8_t>((configReg >> 8) & 0xFF),
+      static_cast<uint8_t>(configReg & 0xFF)
+    };
+    (void)_i2cWriteRaw(tx, sizeof(tx));
+  }
+
   _initialized = false;
   _driverState = DriverState::UNINIT;
   _conversionStarted = false;
   _conversionReady = false;
+  _conversionStartMs = 0;
+  _lastRawValue = 0;
 }
 
 // ============================================================================
@@ -204,7 +219,21 @@ Status ADS1115::recover() {
   }
 
   uint16_t configReg = 0;
-  return readRegister16(cmd::REG_CONFIG, configReg);
+  Status st = readRegister16(cmd::REG_CONFIG, configReg);
+  if (!st.ok()) {
+    return st;
+  }
+
+  _conversionStarted = false;
+  _conversionReady = false;
+  _conversionStartMs = 0;
+
+  st = _applyConfig();
+  if (!st.ok()) {
+    return st;
+  }
+
+  return Status::Ok();
 }
 
 // ============================================================================
