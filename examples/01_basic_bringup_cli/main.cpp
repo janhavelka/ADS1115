@@ -19,6 +19,7 @@
 
 ADS1115::ADS1115 device;
 bool verboseMode = false;
+static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 
 // ============================================================================
 // Helper Functions
@@ -83,6 +84,37 @@ const char* successRateColor(float pct) {
   if (pct >= 99.9f) return LOG_COLOR_GREEN;
   if (pct >= 80.0f) return LOG_COLOR_YELLOW;
   return LOG_COLOR_RED;
+}
+
+uint32_t stressProgressStep(uint32_t total) {
+  if (total == 0U) {
+    return 0U;
+  }
+  const uint32_t step = total / STRESS_PROGRESS_UPDATES;
+  return (step == 0U) ? 1U : step;
+}
+
+void printStressProgress(uint32_t completed, uint32_t total, uint32_t okCount, uint32_t failCount) {
+  if (completed == 0U || total == 0U) {
+    return;
+  }
+  const uint32_t step = stressProgressStep(total);
+  if (step == 0U || (completed != total && (completed % step) != 0U)) {
+    return;
+  }
+  const float pct = (100.0f * static_cast<float>(completed)) / static_cast<float>(total);
+  Serial.printf("  Progress: %lu/%lu (%s%.0f%%%s, ok=%s%lu%s, fail=%s%lu%s)\n",
+                static_cast<unsigned long>(completed),
+                static_cast<unsigned long>(total),
+                successRateColor(pct),
+                pct,
+                LOG_COLOR_RESET,
+                goodIfNonZeroColor(okCount),
+                static_cast<unsigned long>(okCount),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failCount),
+                static_cast<unsigned long>(failCount),
+                LOG_COLOR_RESET);
 }
 
 const char* staleTimeColor(bool isErrorTimestamp) {
@@ -521,6 +553,8 @@ void runStressMix(int count) {
   const uint32_t successBefore = device.totalSuccess();
   const uint32_t failBefore = device.totalFailures();
   const uint32_t startMs = millis();
+  uint32_t okTotal = 0;
+  uint32_t failTotal = 0;
 
   for (int i = 0; i < count; ++i) {
     ADS1115::Status st = ADS1115::Status::Ok();
@@ -567,10 +601,17 @@ void runStressMix(int count) {
 
     if (st.ok()) {
       stats[op].ok++;
+      okTotal++;
     } else {
       stats[op].fail++;
+      failTotal++;
       LOGV(verboseMode, "[%d] %s failed: %s", i, stats[op].name, errToStr(st.code));
     }
+
+    printStressProgress(static_cast<uint32_t>(i + 1),
+                        static_cast<uint32_t>(count),
+                        okTotal,
+                        failTotal);
 
     if ((i + 1) % 50 == 0) {
       device.tick(millis());
@@ -578,12 +619,6 @@ void runStressMix(int count) {
   }
 
   const uint32_t elapsed = millis() - startMs;
-  uint32_t okTotal = 0;
-  uint32_t failTotal = 0;
-  for (int i = 0; i < opCount; ++i) {
-    okTotal += stats[i].ok;
-    failTotal += stats[i].fail;
-  }
 
   Serial.println("=== stress_mix summary ===");
   const float successPct =
@@ -621,6 +656,83 @@ void runStressMix(int count) {
                 goodIfZeroColor(failDelta),
                 static_cast<unsigned long>(failDelta),
                 LOG_COLOR_RESET);
+}
+
+void runStress(int count) {
+  const uint32_t successBefore = device.totalSuccess();
+  const uint32_t failBefore = device.totalFailures();
+  const uint32_t startMs = millis();
+  int ok = 0;
+  int fail = 0;
+  bool hasFailure = false;
+  ADS1115::Status firstFailure = ADS1115::Status::Ok();
+  ADS1115::Status lastFailure = ADS1115::Status::Ok();
+
+  for (int i = 0; i < count; ++i) {
+    int16_t raw = 0;
+    ADS1115::Status st = device.readBlocking(raw);
+    if (st.ok()) {
+      ok++;
+      LOGV(verboseMode, "  %d: %d (%.6f V)", i + 1, raw, device.rawToVoltage(raw));
+    } else {
+      fail++;
+      if (!hasFailure) {
+        firstFailure = st;
+        hasFailure = true;
+      }
+      lastFailure = st;
+      if (verboseMode) {
+        printStatus(st);
+      }
+    }
+
+    printStressProgress(static_cast<uint32_t>(i + 1),
+                        static_cast<uint32_t>(count),
+                        static_cast<uint32_t>(ok),
+                        static_cast<uint32_t>(fail));
+  }
+
+  const uint32_t elapsed = millis() - startMs;
+  const float pct =
+      (count > 0) ? (100.0f * static_cast<float>(ok) / static_cast<float>(count)) : 0.0f;
+  const uint32_t successDelta = device.totalSuccess() - successBefore;
+  const uint32_t failDelta = device.totalFailures() - failBefore;
+
+  Serial.println("=== Stress Summary ===");
+  Serial.printf("  Total: %d\n", count);
+  Serial.printf("  Success: %s%d%s\n",
+                goodIfNonZeroColor(static_cast<uint32_t>(ok)),
+                ok,
+                LOG_COLOR_RESET);
+  Serial.printf("  Errors: %s%d%s\n",
+                goodIfZeroColor(static_cast<uint32_t>(fail)),
+                fail,
+                LOG_COLOR_RESET);
+  Serial.printf("  Success rate: %s%.2f%%%s\n",
+                successRateColor(pct),
+                pct,
+                LOG_COLOR_RESET);
+  Serial.printf("  Duration: %lu ms\n", static_cast<unsigned long>(elapsed));
+  if (elapsed > 0U) {
+    Serial.printf("  Rate: %.2f samples/s\n",
+                  (1000.0f * static_cast<float>(count)) / static_cast<float>(elapsed));
+  }
+  Serial.printf("  Health delta: %ssuccess +%lu%s, %sfailures +%lu%s\n",
+                goodIfNonZeroColor(successDelta),
+                static_cast<unsigned long>(successDelta),
+                LOG_COLOR_RESET,
+                goodIfZeroColor(failDelta),
+                static_cast<unsigned long>(failDelta),
+                LOG_COLOR_RESET);
+  if (hasFailure) {
+    Serial.println("  Failure details:");
+    Serial.println("  First failure:");
+    printStatus(firstFailure);
+    if (fail > 1) {
+      Serial.println("  Last failure:");
+      printStatus(lastFailure);
+    }
+  }
 }
 
 void runSelfTest() {
@@ -1073,49 +1185,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Invalid count (1-100000)");
       return;
     }
-    int ok = 0;
-    int fail = 0;
-    bool hasFailure = false;
-    ADS1115::Status firstFailure = ADS1115::Status::Ok();
-    ADS1115::Status lastFailure = ADS1115::Status::Ok();
-    for (int i = 0; i < count; ++i) {
-      int16_t raw = 0;
-      auto st = device.readBlocking(raw);
-      if (st.ok()) {
-        ok++;
-        LOGV(verboseMode, "  %d: %d (%.6f V)", i + 1, raw, device.rawToVoltage(raw));
-      } else {
-        fail++;
-        if (!hasFailure) {
-          firstFailure = st;
-          hasFailure = true;
-        }
-        lastFailure = st;
-        if (verboseMode) {
-          printStatus(st);
-        }
-      }
-    }
-    const float pct = (count > 0) ? (100.0f * static_cast<float>(ok) / static_cast<float>(count)) : 0.0f;
-    Serial.printf("  Stress results: %s%d ok%s, %s%d failed%s (%s%.2f%%%s)\n",
-                  goodIfNonZeroColor(static_cast<uint32_t>(ok)),
-                  ok,
-                  LOG_COLOR_RESET,
-                  goodIfZeroColor(static_cast<uint32_t>(fail)),
-                  fail,
-                  LOG_COLOR_RESET,
-                  successRateColor(pct),
-                  pct,
-                  LOG_COLOR_RESET);
-    if (hasFailure) {
-      Serial.println("  Failure details:");
-      Serial.println("  First failure:");
-      printStatus(firstFailure);
-      if (fail > 1) {
-        Serial.println("  Last failure:");
-        printStatus(lastFailure);
-      }
-    }
+    runStress(count);
   } else if (cmd == "config" || cmd == "cfg" || cmd == "settings") {
     printConfig();
     printSettingsSnapshot();
