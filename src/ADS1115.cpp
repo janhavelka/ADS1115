@@ -246,6 +246,9 @@ Status ADS1115::getSettings(SettingsSnapshot& out) const {
   out.hasGpioReadHook = (_config.gpioRead != nullptr);
   out.hasCooperativeYieldHook = (_config.cooperativeYield != nullptr);
   out.alertRdyPin = _config.alertRdyPin;
+  out.alertRdyPinConfigured = isAlertRdyPinConfigured();
+  out.conversionReadyModeEnabled = isConversionReadyModeEnabled();
+  out.usesAlertRdyPin = usesAlertRdyPinForConversionReady();
   out.mux = _config.mux;
   out.gain = _config.gain;
   out.dataRate = _config.dataRate;
@@ -261,6 +264,18 @@ Status ADS1115::getSettings(SettingsSnapshot& out) const {
   out.conversionStartMs = _conversionStartMs;
   out.lastRawValue = _lastRawValue;
   return Status::Ok();
+}
+
+bool ADS1115::isAlertRdyPinConfigured() const {
+  return _config.alertRdyPin >= 0 && _config.gpioRead != nullptr;
+}
+
+bool ADS1115::isConversionReadyModeEnabled() const {
+  return isAlertRdyModeConfigured(_config);
+}
+
+bool ADS1115::usesAlertRdyPinForConversionReady() const {
+  return useAlertRdyPin(_config);
 }
 
 // ============================================================================

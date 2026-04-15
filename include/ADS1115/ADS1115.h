@@ -31,6 +31,9 @@ struct SettingsSnapshot {
   bool hasGpioReadHook = false;
   bool hasCooperativeYieldHook = false;
   int alertRdyPin = -1;
+  bool alertRdyPinConfigured = false;
+  bool conversionReadyModeEnabled = false;
+  bool usesAlertRdyPin = false;
   Mux mux = Mux::AIN0_GND;
   Gain gain = Gain::FSR_2_048V;
   DataRate dataRate = DataRate::SPS_128;
@@ -141,6 +144,10 @@ public:
 
   Status setComparatorQueue(ComparatorQueue queue);
   ComparatorQueue getComparatorQueue() const { return _config.compQueue; }
+
+  bool isAlertRdyPinConfigured() const;
+  bool isConversionReadyModeEnabled() const;
+  bool usesAlertRdyPinForConversionReady() const;
 
   Status enableConversionReadyPin();
   Status disableComparator();
