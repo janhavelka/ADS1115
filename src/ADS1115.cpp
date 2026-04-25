@@ -806,6 +806,20 @@ Status ADS1115::_i2cWriteTracked(const uint8_t* buf, size_t len) {
 // ============================================================================
 
 Status ADS1115::readRegister16(uint8_t reg, uint16_t& value) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  return _readRegister16Tracked(reg, value);
+}
+
+Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  return _writeRegister16Tracked(reg, value);
+}
+
+Status ADS1115::_readRegister16Tracked(uint8_t reg, uint16_t& value) {
   uint8_t rx[2] = {0, 0};
   Status st = _i2cWriteReadTracked(&reg, 1, rx, sizeof(rx));
   if (!st.ok()) {
@@ -815,7 +829,7 @@ Status ADS1115::readRegister16(uint8_t reg, uint16_t& value) {
   return Status::Ok();
 }
 
-Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
+Status ADS1115::_writeRegister16Tracked(uint8_t reg, uint16_t value) {
   uint8_t tx[3] = {
     reg,
     static_cast<uint8_t>((value >> 8) & 0xFF),
@@ -879,17 +893,17 @@ Status ADS1115::_updateHealth(const Status& st) {
 // ============================================================================
 
 Status ADS1115::_applyConfig() {
-  Status st = writeRegister16(cmd::REG_LO_THRESH,
-                              static_cast<uint16_t>(_config.compThresholdLow));
+  Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH,
+                                      static_cast<uint16_t>(_config.compThresholdLow));
   if (!st.ok()) {
     return st;
   }
-  st = writeRegister16(cmd::REG_HI_THRESH,
-                       static_cast<uint16_t>(_config.compThresholdHigh));
+  st = _writeRegister16Tracked(cmd::REG_HI_THRESH,
+                               static_cast<uint16_t>(_config.compThresholdHigh));
   if (!st.ok()) {
     return st;
   }
-  st = writeRegister16(cmd::REG_CONFIG, _buildConfigRegister());
+  st = _writeRegister16Tracked(cmd::REG_CONFIG, _buildConfigRegister());
   if (!st.ok()) {
     return st;
   }

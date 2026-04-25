@@ -168,6 +168,8 @@ private:
 
   // === Register Access ===
   Status _readRegister16Raw(uint8_t reg, uint16_t& value);
+  Status _readRegister16Tracked(uint8_t reg, uint16_t& value);
+  Status _writeRegister16Tracked(uint8_t reg, uint16_t value);
 
   // === Health Tracking ===
   Status _updateHealth(const Status& st);

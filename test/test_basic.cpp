@@ -324,6 +324,30 @@ void test_raw_transport_rejects_invalid_buffers() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM), static_cast<uint8_t>(st.code));
 }
 
+void test_register_access_after_end_does_not_touch_bus() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+
+  const uint32_t writesAfterBegin = bus.writeCalls;
+  const uint32_t readsAfterBegin = bus.readCalls;
+
+  dev.end();
+  TEST_ASSERT_EQUAL_UINT32(writesAfterBegin + 1u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(readsAfterBegin, bus.readCalls);
+
+  uint16_t value = 0;
+  Status st = dev.readRegister16(cmd::REG_CONFIG, value);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::NOT_INITIALIZED),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(readsAfterBegin, bus.readCalls);
+
+  st = dev.writeRegister16(cmd::REG_CONFIG, cmd::CONFIG_DEFAULT);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::NOT_INITIALIZED),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesAfterBegin + 1u, bus.writeCalls);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_status_ok);
@@ -339,5 +363,6 @@ int main() {
   RUN_TEST(test_recover_reaches_offline_when_threshold_is_one);
   RUN_TEST(test_single_shot_timing_wraparound_reaches_ready);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
+  RUN_TEST(test_register_access_after_end_does_not_touch_bus);
   return UNITY_END();
 }
