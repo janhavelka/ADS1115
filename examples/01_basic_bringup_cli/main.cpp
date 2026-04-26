@@ -7,6 +7,7 @@
 
 #include "examples/common/BoardConfig.h"
 #include "examples/common/BusDiag.h"
+#include "examples/common/CliStyle.h"
 #include "examples/common/HealthView.h"
 #include "examples/common/I2cScanner.h"
 #include "examples/common/I2cTransport.h"
@@ -62,29 +63,27 @@ const char* stateColor(ADS1115::DriverState st, bool online, uint8_t consecutive
 }
 
 const char* goodIfZeroColor(uint32_t value) {
-  return (value == 0U) ? LOG_COLOR_GREEN : LOG_COLOR_RED;
+  return cli::zeroGoodColor(value);
 }
 
 const char* goodIfNonZeroColor(uint32_t value) {
-  return (value > 0U) ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
+  return cli::nonZeroGoodColor(value);
 }
 
 const char* onOffColor(bool enabled) {
-  return enabled ? LOG_COLOR_GREEN : LOG_COLOR_RESET;
+  return cli::enabledColor(enabled);
 }
 
 const char* yesNoColor(bool value) {
-  return value ? LOG_COLOR_GREEN : LOG_COLOR_YELLOW;
+  return cli::yesNoColor(value);
 }
 
 const char* skipCountColor(uint32_t value) {
-  return (value > 0U) ? LOG_COLOR_YELLOW : LOG_COLOR_RESET;
+  return cli::warningIfNonZeroColor(value);
 }
 
 const char* successRateColor(float pct) {
-  if (pct >= 99.9f) return LOG_COLOR_GREEN;
-  if (pct >= 80.0f) return LOG_COLOR_YELLOW;
-  return LOG_COLOR_RED;
+  return cli::successRateColor(pct);
 }
 
 uint32_t stressProgressStep(uint32_t total) {
@@ -209,59 +208,52 @@ void printDriverHealth() {
 }
 
 void printHelp() {
-  auto helpSection = [](const char* title) {
-    Serial.printf("\n%s[%s]%s\n", LOG_COLOR_GREEN, title, LOG_COLOR_RESET);
-  };
-  auto helpItem = [](const char* cmd, const char* desc) {
-    Serial.printf("  %s%-32s%s - %s\n", LOG_COLOR_CYAN, cmd, LOG_COLOR_RESET, desc);
-  };
-
   Serial.println();
-  Serial.printf("%s=== ADS1115 CLI Help ===%s\n", LOG_COLOR_CYAN, LOG_COLOR_RESET);
-  helpSection("Common");
-  helpItem("help / ?", "Show this help");
-  helpItem("version / ver", "Print firmware and library version info");
-  helpItem("scan", "Scan I2C bus");
-  helpItem("read", "Read single conversion (blocking)");
-  helpItem("readv", "Read single conversion as voltage (blocking)");
-  helpItem("read N", "Read N conversions");
-  helpItem("start", "Start single-shot conversion");
-  helpItem("poll", "Check if conversion ready");
-  helpItem("raw", "Read raw value");
-  helpItem("voltage", "Read as voltage");
-  helpItem("timing", "Print conversion time and LSB voltage");
+  cli::printHelpHeader("ADS1115 CLI Help");
+  cli::printHelpSection("Common");
+  cli::printHelpItem("help / ?", "Show this help");
+  cli::printHelpItem("version / ver", "Print firmware and library version info");
+  cli::printHelpItem("scan", "Scan I2C bus");
+  cli::printHelpItem("read", "Read single conversion (blocking)");
+  cli::printHelpItem("readv", "Read single conversion as voltage (blocking)");
+  cli::printHelpItem("read N", "Read N conversions");
+  cli::printHelpItem("start", "Start single-shot conversion");
+  cli::printHelpItem("poll", "Check if conversion ready");
+  cli::printHelpItem("raw", "Read raw value");
+  cli::printHelpItem("voltage", "Read as voltage");
+  cli::printHelpItem("timing", "Print conversion time and LSB voltage");
 
-  helpSection("Configuration");
-  helpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
-  helpItem("diff [0|1|2|3]", "Set differential pair");
-  helpItem("gain [0..5]", "Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
-  helpItem("rate [0..7]", "Set data rate");
-  helpItem("mode [single|cont]", "Set operating mode");
-  helpItem("comp", "Show comparator config");
-  helpItem("comp mode [trad|window]", "Set comparator mode");
-  helpItem("comp pol [low|high]", "Set comparator polarity");
-  helpItem("comp latch [0|1]", "Set comparator latch");
-  helpItem("comp queue [1|2|4|disable]", "Set comparator queue");
-  helpItem("comp th <low> <high>", "Set comparator thresholds");
-  helpItem("comp rdy", "Enable conversion-ready pin mode");
-  helpItem("comp disable", "Disable comparator");
-  helpItem("config", "Dump config register");
-  helpItem("config write <hex>", "Write full config register value");
+  cli::printHelpSection("Configuration");
+  cli::printHelpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
+  cli::printHelpItem("diff [0|1|2|3]", "Set differential pair");
+  cli::printHelpItem("gain [0..5]", "Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
+  cli::printHelpItem("rate [0..7]", "Set data rate");
+  cli::printHelpItem("mode [single|cont]", "Set operating mode");
+  cli::printHelpItem("comp", "Show comparator config");
+  cli::printHelpItem("comp mode [trad|window]", "Set comparator mode");
+  cli::printHelpItem("comp pol [low|high]", "Set comparator polarity");
+  cli::printHelpItem("comp latch [0|1]", "Set comparator latch");
+  cli::printHelpItem("comp queue [1|2|4|disable]", "Set comparator queue");
+  cli::printHelpItem("comp th <low> <high>", "Set comparator thresholds");
+  cli::printHelpItem("comp rdy", "Enable conversion-ready pin mode");
+  cli::printHelpItem("comp disable", "Disable comparator");
+  cli::printHelpItem("config", "Dump config register");
+  cli::printHelpItem("config write <hex>", "Write full config register value");
 
-  helpSection("Registers");
-  helpItem("reg <addr>", "Read 16-bit register (hex address)");
-  helpItem("wreg <addr> <val>", "Write 16-bit register (diagnostic only; may desync cached config)");
+  cli::printHelpSection("Registers");
+  cli::printHelpItem("reg <addr>", "Read 16-bit register (hex address)");
+  cli::printHelpItem("wreg <addr> <val>", "Write 16-bit register (diagnostic only; may desync cached config)");
 
-  helpSection("Diagnostics");
-  helpItem("drv", "Show driver state and health");
-  helpItem("state", "Show compact one-line health summary");
-  helpItem("probe", "Probe device (no health tracking)");
-  helpItem("recover", "Manual recovery attempt");
-  helpItem("cfg / settings", "Print active configuration snapshot");
-  helpItem("verbose [0|1]", "Enable/disable verbose output");
-  helpItem("stress [N]", "Run N conversion cycles");
-  helpItem("stress_mix [N]", "Run N mixed-operation stress cycles");
-  helpItem("selftest", "Run safe command self-test report");
+  cli::printHelpSection("Diagnostics");
+  cli::printHelpItem("drv", "Show driver state and health");
+  cli::printHelpItem("state", "Show compact one-line health summary");
+  cli::printHelpItem("probe", "Probe device (no health tracking)");
+  cli::printHelpItem("recover", "Manual recovery attempt");
+  cli::printHelpItem("cfg / settings", "Print active configuration snapshot");
+  cli::printHelpItem("verbose [0|1]", "Enable/disable verbose output");
+  cli::printHelpItem("stress [N]", "Run N conversion cycles");
+  cli::printHelpItem("stress_mix [N]", "Run N mixed-operation stress cycles");
+  cli::printHelpItem("selftest", "Run safe command self-test report");
 }
 
 void printVersionInfo() {
@@ -1404,7 +1396,7 @@ void setup() {
   printDriverHealth();
 
   Serial.println("\nType 'help' for commands");
-  Serial.print("> ");
+  cli::printPrompt();
 }
 
 void loop() {
@@ -1418,7 +1410,7 @@ void loop() {
       if (inputBuffer.length() > 0) {
         processCommand(inputBuffer);
         inputBuffer = "";
-        Serial.print("> ");
+        cli::printPrompt();
       }
     } else if (inputBuffer.length() < kMaxInputLen) {
       inputBuffer += c;

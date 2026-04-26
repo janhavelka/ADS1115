@@ -2,13 +2,15 @@
 
 #include <Arduino.h>
 
+#include "CliStyle.h"
+
 namespace health_view {
 
-inline const char* colorGreen() { return "\033[32m"; }
-inline const char* colorYellow() { return "\033[33m"; }
-inline const char* colorRed() { return "\033[31m"; }
-inline const char* colorGray() { return "\033[90m"; }
-inline const char* colorReset() { return "\033[0m"; }
+inline const char* colorGreen() { return LOG_COLOR_GREEN; }
+inline const char* colorYellow() { return LOG_COLOR_YELLOW; }
+inline const char* colorRed() { return LOG_COLOR_RED; }
+inline const char* colorGray() { return LOG_COLOR_GRAY; }
+inline const char* colorReset() { return cli::resetColor(); }
 
 inline const char* boolColor(bool value) {
   return value ? colorGreen() : colorRed();
@@ -29,13 +31,7 @@ inline const char* successColor(uint32_t successes) {
 }
 
 inline const char* successRateColor(float pct) {
-  if (pct >= 99.9f) {
-    return colorGreen();
-  }
-  if (pct >= 80.0f) {
-    return colorYellow();
-  }
-  return colorRed();
+  return cli::successRateColor(pct);
 }
 
 inline const char* stateToString(int state) {
