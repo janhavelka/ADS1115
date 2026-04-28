@@ -88,6 +88,10 @@ bool isValidConfigValue(uint16_t config) {
          compMode <= 1 && compPol <= 1 && compLat <= 1 && compQue <= 3;
 }
 
+bool isValidRegister(uint8_t reg) {
+  return reg <= cmd::REG_HI_THRESH;
+}
+
 } // namespace
 
 // ============================================================================
@@ -156,21 +160,10 @@ void ADS1115::tick(uint32_t nowMs) {
     return;
   }
 
-  if (_config.mode == Mode::SINGLE_SHOT && _conversionStarted && !_conversionReady) {
+  if (_conversionStarted && !_conversionReady) {
     if ((nowMs - _conversionStartMs) >= getConversionTimeMs()) {
-      if (useAlertRdyPin(_config)) {
-        if (isAlertRdyAsserted(_config)) {
-          _conversionStarted = false;
-          _conversionReady = true;
-        }
-      } else {
-        uint16_t configReg = 0;
-        Status st = readRegister16(cmd::REG_CONFIG, configReg);
-        if (st.ok() && ((configReg & cmd::MASK_OS) == cmd::OS_IDLE)) {
-          _conversionStarted = false;
-          _conversionReady = true;
-        }
-      }
+      bool ready = false;
+      (void)_readConversionReadyAt(nowMs, ready);
     }
   }
 }
@@ -336,49 +329,64 @@ Status ADS1115::startConversion(Mux mux) {
 }
 
 bool ADS1115::conversionReady() {
+  bool ready = false;
+  (void)readConversionReady(ready);
+  return ready;
+}
+
+Status ADS1115::readConversionReady(bool& ready) {
+  return _readConversionReadyAt(_nowMs(), ready);
+}
+
+Status ADS1115::_readConversionReadyAt(uint32_t nowMs, bool& ready) {
+  ready = false;
   if (!_initialized) {
-    return false;
-  }
-  if (_config.mode == Mode::CONTINUOUS) {
-    return true;
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
   if (_conversionReady) {
-    return true;
+    ready = true;
+    return Status::Ok();
   }
   if (!_conversionStarted) {
-    return false;
+    if (_config.mode == Mode::CONTINUOUS) {
+      _conversionStarted = true;
+      _conversionStartMs = nowMs;
+    }
+    return Status::Ok();
+  }
+
+  if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
+    return Status::Ok();
   }
 
   if (useAlertRdyPin(_config)) {
-    uint32_t nowMs = _nowMs();
-    if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
-      return false;
-    }
     if (isAlertRdyAsserted(_config)) {
-      _conversionStarted = false;
+      _conversionStarted = (_config.mode == Mode::CONTINUOUS);
       _conversionReady = true;
-      return true;
+      ready = true;
     }
-    return false;
+    return Status::Ok();
   }
 
-  uint32_t nowMs = _nowMs();
-  if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
-    return false;
+  if (_config.mode == Mode::CONTINUOUS) {
+    _conversionReady = true;
+    ready = true;
+    return Status::Ok();
   }
+
   uint16_t configReg = 0;
   Status st = readRegister16(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
-    return false;
+    return st;
   }
 
   if ((configReg & cmd::MASK_OS) == cmd::OS_IDLE) {
     _conversionStarted = false;
     _conversionReady = true;
-    return true;
+    ready = true;
   }
 
-  return false;
+  return Status::Ok();
 }
 
 Status ADS1115::readRaw(int16_t& out) {
@@ -388,29 +396,13 @@ Status ADS1115::readRaw(int16_t& out) {
 
   if (_config.mode == Mode::SINGLE_SHOT) {
     if (!_conversionReady) {
-      if (_conversionStarted) {
-        uint32_t nowMs = _nowMs();
-        if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
-          return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
-        }
+      bool ready = false;
+      Status st = readConversionReady(ready);
+      if (!st.ok()) {
+        return st;
       }
-      if (useAlertRdyPin(_config)) {
-        if (!isAlertRdyAsserted(_config)) {
-          return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
-        }
-        _conversionStarted = false;
-        _conversionReady = true;
-      } else {
-        uint16_t configReg = 0;
-        Status st = readRegister16(cmd::REG_CONFIG, configReg);
-        if (!st.ok()) {
-          return st;
-        }
-        if ((configReg & cmd::MASK_OS) != cmd::OS_IDLE) {
-          return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
-        }
-        _conversionStarted = false;
-        _conversionReady = true;
+      if (!ready) {
+        return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
       }
     }
   }
@@ -426,6 +418,10 @@ Status ADS1115::readRaw(int16_t& out) {
 
   if (_config.mode == Mode::SINGLE_SHOT) {
     _conversionReady = false;
+  } else {
+    _conversionStarted = true;
+    _conversionReady = false;
+    _conversionStartMs = _nowMs();
   }
 
   return Status::Ok();
@@ -467,8 +463,27 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     readyAtMs = nowMs + convTimeMs;
   }
 
+  static constexpr uint32_t kMaxSameTickPolls = 65535U;
+  uint32_t lastObservedMs = _nowMs();
+  uint32_t sameTickPolls = 0;
+
   while (static_cast<int32_t>(_nowMs() - deadlineMs) < 0) {
-    if (static_cast<int32_t>(_nowMs() - readyAtMs) < 0) {
+    uint32_t loopNowMs = _nowMs();
+    if (loopNowMs == lastObservedMs) {
+      if (sameTickPolls < UINT32_MAX) {
+        sameTickPolls++;
+      }
+      if (sameTickPolls > kMaxSameTickPolls) {
+        _conversionStarted = false;
+        _conversionReady = false;
+        return Status::Error(Err::TIMEOUT, "Conversion timeout");
+      }
+    } else {
+      lastObservedMs = loopNowMs;
+      sameTickPolls = 0;
+    }
+
+    if (static_cast<int32_t>(loopNowMs - readyAtMs) < 0) {
       _cooperativeYield();  // Feed watchdog, let other FreeRTOS tasks run
       continue;
     }
@@ -510,8 +525,13 @@ Status ADS1115::setMux(Mux mux) {
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
   }
+  const Mux oldMux = _config.mux;
   _config.mux = mux;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.mux = oldMux;
+  }
+  return st;
 }
 
 Status ADS1115::setGain(Gain gain) {
@@ -521,8 +541,13 @@ Status ADS1115::setGain(Gain gain) {
   if (!isValidGain(gain)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid gain");
   }
+  const Gain oldGain = _config.gain;
   _config.gain = gain;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.gain = oldGain;
+  }
+  return st;
 }
 
 Status ADS1115::setDataRate(DataRate rate) {
@@ -532,8 +557,13 @@ Status ADS1115::setDataRate(DataRate rate) {
   if (!isValidDataRate(rate)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid data rate");
   }
+  const DataRate oldDataRate = _config.dataRate;
   _config.dataRate = rate;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.dataRate = oldDataRate;
+  }
+  return st;
 }
 
 Status ADS1115::setMode(Mode mode) {
@@ -543,10 +573,19 @@ Status ADS1115::setMode(Mode mode) {
   if (!isValidMode(mode)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mode");
   }
+  const Mode oldMode = _config.mode;
+  const bool oldConversionStarted = _conversionStarted;
+  const bool oldConversionReady = _conversionReady;
+  const uint32_t oldConversionStartMs = _conversionStartMs;
   _config.mode = mode;
-  _conversionStarted = false;
-  _conversionReady = false;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.mode = oldMode;
+    _conversionStarted = oldConversionStarted;
+    _conversionReady = oldConversionReady;
+    _conversionStartMs = oldConversionStartMs;
+  }
+  return st;
 }
 
 Status ADS1115::readConfig(uint16_t& config) {
@@ -599,14 +638,18 @@ Status ADS1115::setThresholds(int16_t low, int16_t high) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
-  _config.compThresholdLow = low;
-  _config.compThresholdHigh = high;
-
   Status st = writeRegister16(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
   if (!st.ok()) {
     return st;
   }
-  return writeRegister16(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
+  st = writeRegister16(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
+  if (!st.ok()) {
+    return st;
+  }
+
+  _config.compThresholdLow = low;
+  _config.compThresholdHigh = high;
+  return Status::Ok();
 }
 
 Status ADS1115::getThresholds(int16_t& low, int16_t& high) {
@@ -639,8 +682,13 @@ Status ADS1115::setComparatorMode(ComparatorMode mode) {
   if (!isValidCompMode(mode)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator mode");
   }
+  const ComparatorMode oldMode = _config.compMode;
   _config.compMode = mode;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.compMode = oldMode;
+  }
+  return st;
 }
 
 Status ADS1115::setComparatorPolarity(ComparatorPolarity polarity) {
@@ -650,8 +698,13 @@ Status ADS1115::setComparatorPolarity(ComparatorPolarity polarity) {
   if (!isValidCompPolarity(polarity)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator polarity");
   }
+  const ComparatorPolarity oldPolarity = _config.compPolarity;
   _config.compPolarity = polarity;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.compPolarity = oldPolarity;
+  }
+  return st;
 }
 
 Status ADS1115::setComparatorLatch(ComparatorLatch latch) {
@@ -661,8 +714,13 @@ Status ADS1115::setComparatorLatch(ComparatorLatch latch) {
   if (!isValidCompLatch(latch)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator latch");
   }
+  const ComparatorLatch oldLatch = _config.compLatch;
   _config.compLatch = latch;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.compLatch = oldLatch;
+  }
+  return st;
 }
 
 Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
@@ -672,8 +730,13 @@ Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
   if (!isValidCompQueue(queue)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator queue");
   }
+  const ComparatorQueue oldQueue = _config.compQueue;
   _config.compQueue = queue;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.compQueue = oldQueue;
+  }
+  return st;
 }
 
 Status ADS1115::enableConversionReadyPin() {
@@ -681,13 +744,27 @@ Status ADS1115::enableConversionReadyPin() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
+  const int16_t oldLow = _config.compThresholdLow;
+  const int16_t oldHigh = _config.compThresholdHigh;
+  const ComparatorQueue oldQueue = _config.compQueue;
+  const ComparatorMode oldMode = _config.compMode;
+  const ComparatorLatch oldLatch = _config.compLatch;
+
   _config.compThresholdLow = 0;
   _config.compThresholdHigh = -32768;  // 0x8000 as int16_t
   _config.compQueue = ComparatorQueue::ASSERT_1;
   _config.compMode = ComparatorMode::TRADITIONAL;
   _config.compLatch = ComparatorLatch::NON_LATCHING;
 
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.compThresholdLow = oldLow;
+    _config.compThresholdHigh = oldHigh;
+    _config.compQueue = oldQueue;
+    _config.compMode = oldMode;
+    _config.compLatch = oldLatch;
+  }
+  return st;
 }
 
 Status ADS1115::disableComparator() {
@@ -695,8 +772,13 @@ Status ADS1115::disableComparator() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
+  const ComparatorQueue oldQueue = _config.compQueue;
   _config.compQueue = ComparatorQueue::DISABLE;
-  return _applyConfig();
+  Status st = _applyConfig();
+  if (!st.ok()) {
+    _config.compQueue = oldQueue;
+  }
+  return st;
 }
 
 // ============================================================================
@@ -809,6 +891,9 @@ Status ADS1115::readRegister16(uint8_t reg, uint16_t& value) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (!isValidRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid register");
+  }
   return _readRegister16Tracked(reg, value);
 }
 
@@ -816,10 +901,16 @@ Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (!isValidRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid register");
+  }
   return _writeRegister16Tracked(reg, value);
 }
 
 Status ADS1115::_readRegister16Tracked(uint8_t reg, uint16_t& value) {
+  if (!isValidRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid register");
+  }
   uint8_t rx[2] = {0, 0};
   Status st = _i2cWriteReadTracked(&reg, 1, rx, sizeof(rx));
   if (!st.ok()) {
@@ -830,6 +921,9 @@ Status ADS1115::_readRegister16Tracked(uint8_t reg, uint16_t& value) {
 }
 
 Status ADS1115::_writeRegister16Tracked(uint8_t reg, uint16_t value) {
+  if (!isValidRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid register");
+  }
   uint8_t tx[3] = {
     reg,
     static_cast<uint8_t>((value >> 8) & 0xFF),
@@ -839,6 +933,9 @@ Status ADS1115::_writeRegister16Tracked(uint8_t reg, uint16_t value) {
 }
 
 Status ADS1115::_readRegister16Raw(uint8_t reg, uint16_t& value) {
+  if (!isValidRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid register");
+  }
   uint8_t rx[2] = {0, 0};
   Status st = _i2cWriteReadRaw(&reg, 1, rx, sizeof(rx));
   if (!st.ok()) {
@@ -908,7 +1005,13 @@ Status ADS1115::_applyConfig() {
     return st;
   }
 
-  _conversionStarted = false;
+  if (_config.mode == Mode::CONTINUOUS) {
+    _conversionStarted = true;
+    _conversionStartMs = _nowMs();
+  } else {
+    _conversionStarted = false;
+    _conversionStartMs = 0;
+  }
   _conversionReady = false;
   return Status::Ok();
 }

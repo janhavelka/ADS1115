@@ -9,6 +9,7 @@ Production-grade ADS1115 16-bit ADC I2C driver for ESP32-S2 / ESP32-S3
 - Health monitoring with READY / DEGRADED / OFFLINE states
 - Single-shot and continuous conversion modes
 - Configurable mux, gain, data rate, and comparator settings
+- Conversion readiness through bounded OS-bit polling or ALERT/RDY pin mode
 - Raw and voltage conversion helpers
 
 ## Installation
@@ -98,6 +99,12 @@ void setup() {
 
 void loop() {
   device.tick(millis());
+
+  int16_t raw = 0;
+  ADS1115::Status st = device.readBlocking(raw);
+  if (st.ok()) {
+    Serial.printf("Raw=%d Voltage=%.6f V\n", raw, device.rawToVoltage(raw));
+  }
 }
 ```
 
@@ -125,10 +132,69 @@ void loop() {
 | `readRegister(reg, value)` | Compatibility alias for `readRegister16()` |
 | `writeRegister(reg, value)` | Compatibility alias for `writeRegister16()` |
 
+Raw register helpers accept only ADS1115 registers `0x00..0x03`.
+
+### Conversion
+
+| Method | Description |
+|--------|-------------|
+| `startConversion()` | Start a single-shot conversion with the current mux; returns `Err::IN_PROGRESS` when scheduled |
+| `startConversion(mux)` | Start a single-shot conversion after atomically applying a temporary mux |
+| `readConversionReady(ready)` | Report readiness with explicit I2C error status |
+| `conversionReady()` | Convenience readiness check; returns `false` on transport failure |
+| `readRaw(out)` | Read signed two's-complement conversion data |
+| `readVoltage(volts)` | Read conversion data and scale it using the active gain |
+| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion and wait with a finite deadline |
+| `readBlockingVoltage(volts, timeoutMs)` | Blocking read with voltage scaling |
+
+In single-shot mode, readiness is determined by ALERT/RDY when conversion-ready
+pin mode is configured, otherwise by polling the OS bit after the configured
+conversion time. In continuous mode the driver tracks the configured data-rate
+interval between reads; ALERT/RDY can be used when wired and configured.
+
+### Configuration
+
+| Method | Description |
+|--------|-------------|
+| `setMux(mux)` | Select one of four single-ended inputs or four differential pairs |
+| `setGain(gain)` | Select PGA full-scale range from +/-6.144 V to +/-0.256 V |
+| `setDataRate(rate)` | Select 8, 16, 32, 64, 128, 250, 475, or 860 SPS |
+| `setMode(mode)` | Select single-shot or continuous mode |
+| `readConfig(config)` | Read the CONFIG register |
+| `writeConfig(config)` | Write a validated CONFIG register value and sync the cache |
+
+Typed setters validate enum values and update the cached configuration only
+after the required I2C writes succeed. If a multi-register update is partially
+written and then fails, `recover()` reapplies the cached configuration.
+
+### Comparator And ALERT/RDY
+
+| Method | Description |
+|--------|-------------|
+| `setThresholds(low, high)` | Write signed comparator threshold registers |
+| `getThresholds(low, high)` | Read threshold registers and sync the cache |
+| `setComparatorMode(mode)` | Select traditional or window comparator mode |
+| `setComparatorPolarity(polarity)` | Select active-low or active-high ALERT/RDY polarity |
+| `setComparatorLatch(latch)` | Select latching or non-latching comparator behavior |
+| `setComparatorQueue(queue)` | Select assert-after count or disable comparator |
+| `enableConversionReadyPin()` | Program ADS1115 conversion-ready threshold mode |
+| `disableComparator()` | Disable comparator output |
+
+### Configuration Constraints
+
+| Field | Valid Values |
+|-------|--------------|
+| `i2cWrite`, `i2cWriteRead` | Required transport callbacks |
+| `i2cAddress` | `0x48`, `0x49`, `0x4A`, or `0x4B` |
+| `i2cTimeoutMs` | Must be greater than zero |
+| `alertRdyPin` | `-1` when unused; otherwise requires `gpioRead` |
+| `offlineThreshold` | Zero is normalized to one |
+| enum fields | Must be one of the documented enum values |
+
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
-- CLI register diagnostics: `reg <addr>` and `wreg <addr> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
+- CLI register diagnostics: `reg <0..3>` and `wreg <0..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 ### Example Helpers (`examples/common/`)
 
@@ -142,6 +208,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 | `I2cTransport.h` | Wire-based I2C transport adapter (`wireWrite`, `wireWriteRead`, `initWire`) |
 | `I2cScanner.h` | I2C bus scanner with table output and bus recovery |
 | `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
+| `CliStyle.h` | Shared ANSI colors and CLI formatting helpers |
 | `CliShell.h` | Serial command-line shell with line editing |
 | `CommandHandler.h` | Command parsing helpers (`readLine`, `match`, `parseInt`) |
 | `HealthView.h` | Compact health status display |

@@ -92,35 +92,69 @@ public:
   uint32_t totalSuccess() const { return _totalSuccess; }
 
   // === Conversion API ===
+  /// Start one single-shot conversion using the cached mux.
+  /// @return Err::IN_PROGRESS when the conversion was started.
   Status startConversion();
+
+  /// Start one single-shot conversion after applying the requested mux.
+  /// The cached mux is restored if the CONFIG write fails.
+  /// @return Err::IN_PROGRESS when the conversion was started.
   Status startConversion(Mux mux);
+
+  /// Convenience wrapper around readConversionReady(). Returns false when the
+  /// driver is not initialized or when the underlying CONFIG read fails.
   bool conversionReady();
+
+  /// Check conversion readiness with explicit error reporting.
+  /// Uses ALERT/RDY when configured for conversion-ready mode. Otherwise,
+  /// single-shot mode polls the OS bit after the conversion time and continuous
+  /// mode tracks the configured data-rate interval between fresh samples.
+  /// @param[out] ready true when conversion data can be read
+  /// @return Status from the readiness path
+  Status readConversionReady(bool& ready);
+
+  /// Read the conversion register as a signed two's-complement sample.
   Status readRaw(int16_t& out);
+
+  /// Read a signed sample and scale it using the active gain.
   Status readVoltage(float& volts);
+
+  /// Start or join a single-shot conversion and wait with a finite deadline.
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
+
+  /// Blocking read with voltage scaling.
   Status readBlockingVoltage(float& volts, uint32_t timeoutMs = 200);
 
   // === Configuration ===
+  /// Set the input multiplexer. Cache changes commit only after I2C success.
   Status setMux(Mux mux);
   Mux getMux() const { return _config.mux; }
 
+  /// Set PGA full-scale range. Cache changes commit only after I2C success.
   Status setGain(Gain gain);
   Gain getGain() const { return _config.gain; }
 
+  /// Set output data rate. Cache changes commit only after I2C success.
   Status setDataRate(DataRate rate);
   DataRate getDataRate() const { return _config.dataRate; }
 
+  /// Set operating mode. Cache changes commit only after I2C success.
   Status setMode(Mode mode);
   Mode getMode() const { return _config.mode; }
 
+  /// Read the ADS1115 CONFIG register.
   Status readConfig(uint16_t& config);
+
+  /// Write a validated CONFIG register value and sync the typed cache.
   Status writeConfig(uint16_t config);
 
   // === Raw Register Access ===
   /// Read a 16-bit register using tracked I2C access.
+  /// Valid register pointers are 0x00..0x03.
   Status readRegister16(uint8_t reg, uint16_t& value);
 
   /// Write a 16-bit register using tracked I2C access.
+  /// Valid register pointers are 0x00..0x03.
   Status writeRegister16(uint8_t reg, uint16_t value);
 
   /// Compatibility alias for readRegister16().
@@ -130,18 +164,25 @@ public:
   Status writeRegister(uint8_t reg, uint16_t value) { return writeRegister16(reg, value); }
 
   // === Comparator ===
+  /// Set signed comparator thresholds. Cache changes commit after both writes succeed.
   Status setThresholds(int16_t low, int16_t high);
+
+  /// Read signed comparator thresholds and sync the cache.
   Status getThresholds(int16_t& low, int16_t& high);
 
+  /// Set comparator mode. Cache changes commit only after I2C success.
   Status setComparatorMode(ComparatorMode mode);
   ComparatorMode getComparatorMode() const { return _config.compMode; }
 
+  /// Set ALERT/RDY polarity. Cache changes commit only after I2C success.
   Status setComparatorPolarity(ComparatorPolarity polarity);
   ComparatorPolarity getComparatorPolarity() const { return _config.compPolarity; }
 
+  /// Set comparator latch behavior. Cache changes commit only after I2C success.
   Status setComparatorLatch(ComparatorLatch latch);
   ComparatorLatch getComparatorLatch() const { return _config.compLatch; }
 
+  /// Set comparator queue depth or disable comparator.
   Status setComparatorQueue(ComparatorQueue queue);
   ComparatorQueue getComparatorQueue() const { return _config.compQueue; }
 
@@ -149,7 +190,10 @@ public:
   bool isConversionReadyModeEnabled() const;
   bool usesAlertRdyPinForConversionReady() const;
 
+  /// Program ADS1115 threshold/comparator fields for conversion-ready ALERT/RDY mode.
   Status enableConversionReadyPin();
+
+  /// Disable comparator output by setting queue to DISABLE.
   Status disableComparator();
 
   // === Utility ===
@@ -175,6 +219,7 @@ private:
   Status _updateHealth(const Status& st);
 
   // === Internal ===
+  Status _readConversionReadyAt(uint32_t nowMs, bool& ready);
   Status _applyConfig();
   uint16_t _buildConfigRegister() const;
   uint32_t _nowMs() const;

@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Status::is(Err)` method for type-safe error code comparison.
 - `Status::operator bool()` explicit conversion for concise success checks.
 - `readRegister()` and `writeRegister()` compatibility aliases for `readRegister16()` / `writeRegister16()`.
+- `readConversionReady(bool&)` for conversion readiness checks with explicit transport error reporting.
+- Native coverage for register-modeled conversion reads, readiness failures, ALERT/RDY readiness, setter rollback, register validation, and stalled-clock blocking timeouts.
+
+### Changed
+- Continuous-mode readiness now tracks the configured data-rate interval instead of reporting ready immediately.
+- CLI `poll`, `selftest`, and mixed stress paths now handle `Err::IN_PROGRESS` correctly and preserve readiness I2C errors.
+- README now documents conversion, configuration, comparator, ALERT/RDY, and configuration constraint APIs.
+
+### Fixed
+- Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
+- Raw register helpers now reject register pointers outside the ADS1115 `0x00..0x03` map before touching the bus.
+- Example diagnostic error strings now include granular `I2C_*` status codes.
+- `readBlocking()` now has a finite escape path if an injected clock hook stops advancing.
 
 ## [1.0.0] - 2026-04-05
 

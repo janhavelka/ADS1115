@@ -40,6 +40,10 @@ const char* errToStr(ADS1115::Err err) {
     case Err::CONVERSION_NOT_READY: return "CONVERSION_NOT_READY";
     case Err::BUSY:                 return "BUSY";
     case Err::IN_PROGRESS:          return "IN_PROGRESS";
+    case Err::I2C_NACK_ADDR:        return "I2C_NACK_ADDR";
+    case Err::I2C_NACK_DATA:        return "I2C_NACK_DATA";
+    case Err::I2C_TIMEOUT:          return "I2C_TIMEOUT";
+    case Err::I2C_BUS:              return "I2C_BUS";
     default:                        return "UNKNOWN";
   }
 }
@@ -241,8 +245,8 @@ void printHelp() {
   cli::printHelpItem("config write <hex>", "Write full config register value");
 
   cli::printHelpSection("Registers");
-  cli::printHelpItem("reg <addr>", "Read 16-bit register (hex address)");
-  cli::printHelpItem("wreg <addr> <val>", "Write 16-bit register (diagnostic only; may desync cached config)");
+  cli::printHelpItem("reg <0..3>", "Read 16-bit ADS1115 register");
+  cli::printHelpItem("wreg <0..3> <val>", "Write 16-bit register (diagnostic only; may desync cached config)");
 
   cli::printHelpSection("Diagnostics");
   cli::printHelpItem("drv", "Show driver state and health");
@@ -626,16 +630,25 @@ void runStressMix(int count) {
         }
         case 2: {
           st = device.startConversion();
-          if (st.ok()) {
+          if (st.ok() || st.inProgress()) {
             const uint32_t waitStartMs = millis();
-            while (!device.conversionReady() && (millis() - waitStartMs) < 200U) {
+            bool ready = false;
+            while ((millis() - waitStartMs) < 200U) {
+              st = device.readConversionReady(ready);
+              if (!st.ok()) {
+                break;
+              }
+              if (ready) {
+                break;
+              }
               device.tick(millis());
             }
-            if (!device.conversionReady()) {
+            if (st.ok() && !ready) {
               st = ADS1115::Status::Error(ADS1115::Err::TIMEOUT,
                                           "conversion timeout",
                                           200);
-            } else {
+            }
+            if (st.ok()) {
               int16_t raw = 0;
               st = device.readRaw(raw);
             }
@@ -960,13 +973,25 @@ void runSelfTest() {
   }
 
   st = device.startConversion();
-  reportCheck("startConversion", st.ok(), st.ok() ? "" : errToStr(st.code));
-  if (st.ok()) {
-    delay(10);
+  const bool started = st.ok() || st.inProgress();
+  reportCheck("startConversion", started, started ? "" : errToStr(st.code));
+  if (started) {
+    const uint32_t waitStartMs = millis();
+    bool ready = false;
+    ADS1115::Status rs = ADS1115::Status::Ok();
+    while ((millis() - waitStartMs) < 200U) {
+      rs = device.readConversionReady(ready);
+      if (!rs.ok() || ready) {
+        break;
+      }
+      device.tick(millis());
+    }
+    reportCheck("poll after start", rs.ok() && ready, rs.ok() ? "" : errToStr(rs.code));
     int16_t raw = 0;
-    ADS1115::Status rs = device.readRaw(raw);
+    rs = device.readRaw(raw);
     reportCheck("readRaw(after start)", rs.ok(), rs.ok() ? "" : errToStr(rs.code));
   } else {
+    reportCheck("poll after start", false, "conversion not started");
     reportCheck("readRaw(after start)", false, "conversion not started");
   }
 
@@ -1058,8 +1083,13 @@ void processCommand(const String& cmdLine) {
     auto st = device.startConversion();
     printStatus(st);
   } else if (cmd == "poll") {
-    bool ready = device.conversionReady();
-    LOGI("Conversion ready: %s%s%s", yesNoColor(ready), ready ? "YES" : "NO", LOG_COLOR_RESET);
+    bool ready = false;
+    auto st = device.readConversionReady(ready);
+    if (st.ok()) {
+      LOGI("Conversion ready: %s%s%s", yesNoColor(ready), ready ? "YES" : "NO", LOG_COLOR_RESET);
+    } else {
+      printStatus(st);
+    }
   } else if (cmd == "raw") {
     int16_t raw = 0;
     auto st = device.readRaw(raw);
@@ -1285,7 +1315,7 @@ void processCommand(const String& cmdLine) {
     args.trim();
     const int split = args.indexOf(' ');
     if (split < 0) {
-      LOGW("Usage: wreg <addr> <val>");
+      LOGW("Usage: wreg <0..3> <val>");
       return;
     }
 
@@ -1293,16 +1323,16 @@ void processCommand(const String& cmdLine) {
     uint32_t value = 0;
     if (!parseU32(args.substring(0, split), addr) ||
         !parseU32(args.substring(split + 1), value) ||
-        addr > 0xFFu || value > 0xFFFFu) {
-      LOGW("Usage: wreg <addr> <val>");
+        addr > ADS1115::cmd::REG_HI_THRESH || value > 0xFFFFu) {
+      LOGW("Usage: wreg <0..3> <val>");
       return;
     }
 
     printStatus(device.writeRegister16(static_cast<uint8_t>(addr), static_cast<uint16_t>(value)));
   } else if (cmd.startsWith("reg ")) {
     uint32_t addr = 0;
-    if (!parseU32(cmd.substring(4), addr) || addr > 0xFFu) {
-      LOGW("Usage: reg <addr>");
+    if (!parseU32(cmd.substring(4), addr) || addr > ADS1115::cmd::REG_HI_THRESH) {
+      LOGW("Usage: reg <0..3>");
       return;
     }
 
