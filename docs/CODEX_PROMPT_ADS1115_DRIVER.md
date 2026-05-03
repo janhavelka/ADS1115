@@ -566,11 +566,11 @@ extra_scripts = pre:scripts/generate_version.py
   "keywords": ["ads1115", "adc", "analog", "i2c", "16-bit"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/ADS1115.git"
+    "url": "https://github.com/janhavelka/ADS1115.git"
   },
   "authors": [
     {
-      "name": "Your Name"
+      "name": "Thymos Solution s.r.o"
     }
   ],
   "license": "MIT",

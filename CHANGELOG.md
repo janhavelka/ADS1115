@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native coverage for register-modeled conversion reads, readiness failures, ALERT/RDY readiness, setter rollback, register validation, and stalled-clock blocking timeouts.
 
 ### Changed
+- Doxyfile project metadata now matches `library.json`, and archived prompt
+  metadata no longer contains placeholder ownership values.
 - Continuous-mode readiness now tracks the configured data-rate interval instead of reporting ready immediately.
 - CLI `poll`, `selftest`, and mixed stress paths now handle `Err::IN_PROGRESS` correctly and preserve readiness I2C errors.
 - README now documents conversion, configuration, comparator, ALERT/RDY, and configuration constraint APIs.
