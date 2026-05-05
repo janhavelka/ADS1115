@@ -94,6 +94,33 @@ bool isValidRegister(uint8_t reg) {
 
 } // namespace
 
+class ADS1115::ScopedOfflineI2cAllowance {
+public:
+  explicit ScopedOfflineI2cAllowance(ADS1115& driver)
+    : _driver(driver),
+      _previousAllow(driver._allowOfflineI2c),
+      _startedOffline(driver._initialized &&
+                      driver._driverState == DriverState::OFFLINE) {
+    _driver._allowOfflineI2c = true;
+  }
+
+  ~ScopedOfflineI2cAllowance() {
+    _driver._allowOfflineI2c = _previousAllow;
+  }
+
+  Status finishRecovery(const Status& st) {
+    if (!st.ok() && !st.inProgress() && _startedOffline) {
+      _driver._reassertOfflineLatch();
+    }
+    return st;
+  }
+
+private:
+  ADS1115& _driver;
+  bool _previousAllow;
+  bool _startedOffline;
+};
+
 // ============================================================================
 // Lifecycle
 // ============================================================================
@@ -169,7 +196,7 @@ void ADS1115::tick(uint32_t nowMs) {
 }
 
 void ADS1115::end() {
-  if (_initialized) {
+  if (_initialized && _driverState != DriverState::OFFLINE) {
     uint16_t configReg = _buildConfigRegister();
     configReg &= static_cast<uint16_t>(~cmd::MASK_MODE);
     configReg |= (static_cast<uint16_t>(Mode::SINGLE_SHOT) << cmd::BIT_MODE) & cmd::MASK_MODE;
@@ -211,10 +238,12 @@ Status ADS1115::recover() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
+  ScopedOfflineI2cAllowance allowOfflineI2c(*this);
+
   uint16_t configReg = 0;
   Status st = readRegister16(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
-    return st;
+    return allowOfflineI2c.finishRecovery(st);
   }
 
   _conversionStarted = false;
@@ -223,10 +252,10 @@ Status ADS1115::recover() {
 
   st = _applyConfig();
   if (!st.ok()) {
-    return st;
+    return allowOfflineI2c.finishRecovery(st);
   }
 
-  return Status::Ok();
+  return allowOfflineI2c.finishRecovery(Status::Ok());
 }
 
 Status ADS1115::getSettings(SettingsSnapshot& out) const {
@@ -868,6 +897,10 @@ Status ADS1115::_i2cWriteRaw(const uint8_t* buf, size_t len) {
 
 Status ADS1115::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
                                      uint8_t* rxBuf, size_t rxLen) {
+  if (_initialized && _driverState == DriverState::OFFLINE && !_allowOfflineI2c) {
+    return Status::Error(Err::BUSY, "Driver is offline; call recover()");
+  }
+
   Status st = _i2cWriteReadRaw(txBuf, txLen, rxBuf, rxLen);
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
     return st;
@@ -876,6 +909,10 @@ Status ADS1115::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
 }
 
 Status ADS1115::_i2cWriteTracked(const uint8_t* buf, size_t len) {
+  if (_initialized && _driverState == DriverState::OFFLINE && !_allowOfflineI2c) {
+    return Status::Error(Err::BUSY, "Driver is offline; call recover()");
+  }
+
   Status st = _i2cWriteRaw(buf, len);
   if (st.code == Err::INVALID_CONFIG || st.code == Err::INVALID_PARAM) {
     return st;
@@ -983,6 +1020,14 @@ Status ADS1115::_updateHealth(const Status& st) {
   }
 
   return st;
+}
+
+void ADS1115::_reassertOfflineLatch() {
+  _driverState = DriverState::OFFLINE;
+  const uint8_t threshold = _config.offlineThreshold == 0 ? 1 : _config.offlineThreshold;
+  if (_consecutiveFailures < threshold) {
+    _consecutiveFailures = threshold;
+  }
 }
 
 // ============================================================================

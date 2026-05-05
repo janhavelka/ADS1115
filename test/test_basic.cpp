@@ -303,6 +303,72 @@ void test_recover_reaches_offline_when_threshold_is_one() {
   TEST_ASSERT_FALSE(dev.isOnline());
 }
 
+void test_offline_latches_normal_read_without_i2c_until_recover() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 1;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  bus.readStatus = Status::Error(Err::TIMEOUT, "forced timeout", -11);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
+                          static_cast<uint8_t>(dev.recover().code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+
+  bus.readStatus = Status::Ok();
+  const uint32_t readsBefore = bus.readCalls;
+  uint16_t value = 0;
+  Status st = dev.readRegister16(cmd::REG_CONFIG, value);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY), static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_STRING("Driver is offline; call recover()", st.msg);
+  TEST_ASSERT_EQUAL_UINT32(readsBefore, bus.readCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+
+  TEST_ASSERT_TRUE(dev.recover().ok());
+  TEST_ASSERT_GREATER_THAN_UINT32(readsBefore, bus.readCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::READY),
+                          static_cast<uint8_t>(dev.state()));
+}
+
+void test_failed_recover_from_offline_preserves_latch_after_partial_success() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 3;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  bus.readStatus = Status::Error(Err::TIMEOUT, "forced timeout", -12);
+  uint16_t value = 0;
+  for (uint8_t i = 0; i < 3; ++i) {
+    Status st = dev.readRegister16(cmd::REG_CONFIG, value);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
+                            static_cast<uint8_t>(st.code));
+  }
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_EQUAL_UINT8(3u, dev.consecutiveFailures());
+
+  bus.readStatus = Status::Ok();
+  bus.failWriteOnCall = bus.writeCalls + 1u;
+  Status st = dev.recover();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_TRUE(dev.consecutiveFailures() >= 3u);
+  TEST_ASSERT_FALSE(dev._allowOfflineI2c);
+
+  bus.failWriteOnCall = 0;
+  const uint32_t readsBefore = bus.readCalls;
+  st = dev.readRegister16(cmd::REG_CONFIG, value);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_STRING("Driver is offline; call recover()", st.msg);
+  TEST_ASSERT_EQUAL_UINT32(readsBefore, bus.readCalls);
+}
+
 void test_single_shot_timing_wraparound_reaches_ready() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -622,6 +688,26 @@ void test_register_access_after_end_does_not_touch_bus() {
   TEST_ASSERT_EQUAL_UINT32(writesAfterBegin + 1u, bus.writeCalls);
 }
 
+void test_end_while_offline_does_not_touch_bus() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 1;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  bus.readStatus = Status::Error(Err::TIMEOUT, "forced timeout", -13);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
+                          static_cast<uint8_t>(dev.recover().code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+
+  const uint32_t writesBefore = bus.writeCalls;
+  dev.end();
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_status_ok);
@@ -635,6 +721,8 @@ int main() {
   RUN_TEST(test_recover_failure_updates_health);
   RUN_TEST(test_recover_success_returns_ready);
   RUN_TEST(test_recover_reaches_offline_when_threshold_is_one);
+  RUN_TEST(test_offline_latches_normal_read_without_i2c_until_recover);
+  RUN_TEST(test_failed_recover_from_offline_preserves_latch_after_partial_success);
   RUN_TEST(test_single_shot_timing_wraparound_reaches_ready);
   RUN_TEST(test_read_conversion_ready_propagates_i2c_failure);
   RUN_TEST(test_conversion_ready_convenience_returns_false_on_failure);
@@ -652,5 +740,6 @@ int main() {
   RUN_TEST(test_read_blocking_times_out_when_injected_clock_stalls);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_register_access_after_end_does_not_touch_bus);
+  RUN_TEST(test_end_while_offline_does_not_touch_bus);
   return UNITY_END();
 }
