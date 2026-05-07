@@ -92,34 +92,25 @@ bool isValidRegister(uint8_t reg) {
   return reg <= cmd::REG_HI_THRESH;
 }
 
-} // namespace
-
-class ADS1115::ScopedOfflineI2cAllowance {
+class ScopedOfflineI2cAllowance {
 public:
-  explicit ScopedOfflineI2cAllowance(ADS1115& driver)
-    : _driver(driver),
-      _previousAllow(driver._allowOfflineI2c),
-      _startedOffline(driver._initialized &&
-                      driver._driverState == DriverState::OFFLINE) {
-    _driver._allowOfflineI2c = true;
+  explicit ScopedOfflineI2cAllowance(bool& flag, bool allow) : _flag(flag), _old(flag) {
+    _flag = allow;
   }
 
   ~ScopedOfflineI2cAllowance() {
-    _driver._allowOfflineI2c = _previousAllow;
+    _flag = _old;
   }
 
-  Status finishRecovery(const Status& st) {
-    if (!st.ok() && !st.inProgress() && _startedOffline) {
-      _driver._reassertOfflineLatch();
-    }
-    return st;
-  }
+  ScopedOfflineI2cAllowance(const ScopedOfflineI2cAllowance&) = delete;
+  ScopedOfflineI2cAllowance& operator=(const ScopedOfflineI2cAllowance&) = delete;
 
 private:
-  ADS1115& _driver;
-  bool _previousAllow;
-  bool _startedOffline;
+  bool& _flag;
+  bool _old;
 };
+
+} // namespace
 
 // ============================================================================
 // Lifecycle
@@ -238,24 +229,30 @@ Status ADS1115::recover() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
-  ScopedOfflineI2cAllowance allowOfflineI2c(*this);
+  const bool startedOffline = (_driverState == DriverState::OFFLINE);
+  ScopedOfflineI2cAllowance allowOfflineI2c(_allowOfflineI2c, true);
+  Status result = [&]() -> Status {
+    uint16_t configReg = 0;
+    Status st = readRegister16(cmd::REG_CONFIG, configReg);
+    if (!st.ok()) {
+      return st;
+    }
 
-  uint16_t configReg = 0;
-  Status st = readRegister16(cmd::REG_CONFIG, configReg);
-  if (!st.ok()) {
-    return allowOfflineI2c.finishRecovery(st);
+    _conversionStarted = false;
+    _conversionReady = false;
+    _conversionStartMs = 0;
+
+    st = _applyConfig();
+    if (!st.ok()) {
+      return st;
+    }
+
+    return Status::Ok();
+  }();
+  if (startedOffline && !result.ok() && !result.inProgress()) {
+    _reassertOfflineLatch();
   }
-
-  _conversionStarted = false;
-  _conversionReady = false;
-  _conversionStartMs = 0;
-
-  st = _applyConfig();
-  if (!st.ok()) {
-    return allowOfflineI2c.finishRecovery(st);
-  }
-
-  return allowOfflineI2c.finishRecovery(Status::Ok());
+  return result;
 }
 
 Status ADS1115::getSettings(SettingsSnapshot& out) const {

@@ -202,8 +202,6 @@ public:
   uint32_t getConversionTimeMs() const;
 
 private:
-  class ScopedOfflineI2cAllowance;
-
   // === Transport Wrappers ===
   Status _i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
                           uint8_t* rxBuf, size_t rxLen);
