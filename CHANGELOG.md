@@ -89,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Unified example framework helpers under `examples/common/*` (`BuildConfig`, `BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
-- `docs/IDF_PORT.md` and `docs/UNIFICATION_STANDARD.md` for standardized porting and unification guidance.
+- `docs/IDF_PORT.md` for standardized ESP-IDF portability guidance.
 - CLI/timing contract checks via `tools/check_cli_contract.py` and `tools/check_core_timing_guard.py`.
 
 ### Changed

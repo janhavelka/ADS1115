@@ -239,7 +239,7 @@ pio run -e esp32s2dev
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `include/ADS1115/CommandTable.h` - public register map, masks, and defaults
-- `docs/ads1115.pdf` - TI datasheet copy used for driver verification
+- `docs/ADS111x_datasheet_revE.pdf` - TI datasheet copy used for driver verification
 - `docs/TI_registry_reference/README.md` - TI reference-driver extraction notes
 
 ## License

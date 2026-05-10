@@ -7,7 +7,7 @@ You are an expert embedded engineer. Implement a **production-grade, reusable AD
 ## Baseline Contracts (DO NOT RESTATE)
 
 - **`AGENTS.md`** defines: repository layout, non-blocking architecture, injected I2C transport rules, deterministic tick behavior, managed synchronous driver pattern, transport wrapper architecture, health tracking, and DriverState model.
-- **`ADS1115_Register_Reference.md`** is the authoritative register map (if provided).
+- **`include/ADS1115/CommandTable.h`** is the authoritative register map.
 - **Do not duplicate those requirements.** Implement them and only document what is *not already covered*.
 
 ---
