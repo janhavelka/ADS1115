@@ -132,7 +132,11 @@ void loop() {
 | `readRegister(reg, value)` | Compatibility alias for `readRegister16()` |
 | `writeRegister(reg, value)` | Compatibility alias for `writeRegister16()` |
 
-Raw register helpers accept only ADS1115 registers `0x00..0x03`.
+Raw register reads accept ADS1115 registers `0x00..0x03`. Raw writes accept
+only writable registers `0x01..0x03`; the conversion register `0x00` is
+read-only and is rejected before I2C. Raw CONFIG writes accept the datasheet
+PGA alias encodings `110` and `111` and normalize them to the `+/-0.256 V`
+gain cache.
 
 ### Conversion
 
@@ -166,6 +170,9 @@ interval between reads; ALERT/RDY can be used when wired and configured.
 Typed setters validate enum values and update the cached configuration only
 after the required I2C writes succeed. If a multi-register update is partially
 written and then fails, `recover()` reapplies the cached configuration.
+Failed `begin()` calls clear stale cached configuration/runtime state, and a
+successful `begin()` establishes the baseline state without inflating runtime
+health counters.
 
 ### Comparator And ALERT/RDY
 
@@ -194,7 +201,7 @@ written and then fails, `recover()` reapplies the cached configuration.
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
-- CLI register diagnostics: `reg <0..3>` and `wreg <0..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
+- CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 ### Example Helpers (`examples/common/`)
 

@@ -83,6 +83,8 @@ static constexpr uint16_t PGA_2_048V = 0x0400;
 static constexpr uint16_t PGA_1_024V = 0x0600;
 static constexpr uint16_t PGA_0_512V = 0x0800;
 static constexpr uint16_t PGA_0_256V = 0x0A00;
+static constexpr uint16_t PGA_0_256V_ALT1 = 0x0C00;  ///< Datasheet alias for +/-0.256V
+static constexpr uint16_t PGA_0_256V_ALT2 = 0x0E00;  ///< Datasheet alias for +/-0.256V
 
 // MODE field values
 static constexpr uint16_t MODE_CONTINUOUS  = 0x0000;

@@ -14,21 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Status::operator bool()` explicit conversion for concise success checks.
 - `readRegister()` and `writeRegister()` compatibility aliases for `readRegister16()` / `writeRegister16()`.
 - `readConversionReady(bool&)` for conversion readiness checks with explicit transport error reporting.
+- Datasheet PGA alias handling for raw CONFIG writes: encodings `110` and `111` are accepted as `+/-0.256 V`.
 - Native coverage for register-modeled conversion reads, readiness failures, ALERT/RDY readiness, setter rollback, register validation, and stalled-clock blocking timeouts.
 - Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while `recover()` remains the explicit recovery path.
 
 ### Changed
 - Doxyfile project metadata now matches `library.json`, and archived prompt
   metadata no longer contains placeholder ownership values.
+- Reference documentation now uses a human-readable vendor PDF name and separates compact chip notes from full PDF extraction under `docs/extracted-md/` and `docs/pdf-extracted-md/`.
 - Explicit recovery bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - Continuous-mode readiness now tracks the configured data-rate interval instead of reporting ready immediately.
 - CLI `poll`, `selftest`, and mixed stress paths now handle `Err::IN_PROGRESS` correctly and preserve readiness I2C errors.
 - README now documents conversion, configuration, comparator, ALERT/RDY, and configuration constraint APIs.
+- `begin()` failure now clears stale cached configuration/runtime state, and successful startup no longer seeds runtime health counters.
 - Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
 
 ### Fixed
 - Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
-- Raw register helpers now reject register pointers outside the ADS1115 `0x00..0x03` map before touching the bus.
+- Raw register helpers now reject pointers outside the ADS1115 `0x00..0x03` map, and reject conversion-register writes to read-only `0x00`, before touching the bus.
 - Example diagnostic error strings now include granular `I2C_*` status codes.
 - `readBlocking()` now has a finite escape path if an injected clock hook stops advancing.
 

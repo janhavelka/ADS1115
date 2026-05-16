@@ -246,7 +246,7 @@ void printHelp() {
 
   cli::printHelpSection("Registers");
   cli::printHelpItem("reg <0..3>", "Read 16-bit ADS1115 register");
-  cli::printHelpItem("wreg <0..3> <val>", "Write 16-bit register (diagnostic only; may desync cached config)");
+  cli::printHelpItem("wreg <1..3> <val>", "Write writable register (diagnostic only; may desync cached config)");
 
   cli::printHelpSection("Diagnostics");
   cli::printHelpItem("drv", "Show driver state and health");
@@ -321,6 +321,20 @@ const char* gainToStr(ADS1115::Gain gain) {
     case Gain::FSR_0_512V: return "FSR_0_512V";
     case Gain::FSR_0_256V: return "FSR_0_256V";
     default:               return "UNKNOWN";
+  }
+}
+
+const char* pgaBitsToStr(uint8_t bits) {
+  switch (bits) {
+    case 0: return "FSR_6_144V";
+    case 1: return "FSR_4_096V";
+    case 2: return "FSR_2_048V";
+    case 3: return "FSR_1_024V";
+    case 4: return "FSR_0_512V";
+    case 5: return "FSR_0_256V";
+    case 6: return "FSR_0_256V_ALIAS";
+    case 7: return "FSR_0_256V_ALIAS";
+    default: return "UNKNOWN";
   }
 }
 
@@ -520,6 +534,30 @@ void printConfig() {
     return;
   }
   Serial.printf("  Config: 0x%04X\n", config);
+  const uint8_t os = static_cast<uint8_t>((config & ADS1115::cmd::MASK_OS) >> ADS1115::cmd::BIT_OS);
+  const uint8_t mux = static_cast<uint8_t>((config & ADS1115::cmd::MASK_MUX) >> ADS1115::cmd::BIT_MUX);
+  const uint8_t pga = static_cast<uint8_t>((config & ADS1115::cmd::MASK_PGA) >> ADS1115::cmd::BIT_PGA);
+  const uint8_t mode = static_cast<uint8_t>((config & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE);
+  const uint8_t rate = static_cast<uint8_t>((config & ADS1115::cmd::MASK_DR) >> ADS1115::cmd::BIT_DR);
+  const uint8_t compMode = static_cast<uint8_t>((config & ADS1115::cmd::MASK_COMP_MODE) >> ADS1115::cmd::BIT_COMP_MODE);
+  const uint8_t compPol = static_cast<uint8_t>((config & ADS1115::cmd::MASK_COMP_POL) >> ADS1115::cmd::BIT_COMP_POL);
+  const uint8_t compLatch = static_cast<uint8_t>((config & ADS1115::cmd::MASK_COMP_LAT) >> ADS1115::cmd::BIT_COMP_LAT);
+  const uint8_t compQueue = static_cast<uint8_t>((config & ADS1115::cmd::MASK_COMP_QUE) >> ADS1115::cmd::BIT_COMP_QUE);
+  Serial.printf("  Fields: OS=%u(%s) MUX=%s(%u) PGA=%s(%u) MODE=%s DR=%s(%u)\n",
+                os,
+                os ? "idle/start" : "busy",
+                muxToStr(static_cast<ADS1115::Mux>(mux)),
+                mux,
+                pgaBitsToStr(pga),
+                pga,
+                modeToStr(static_cast<ADS1115::Mode>(mode)),
+                rateToStr(static_cast<ADS1115::DataRate>(rate)),
+                rate);
+  Serial.printf("  Comparator: mode=%s polarity=%s latch=%s queue=%s\n",
+                compModeToStr(static_cast<ADS1115::ComparatorMode>(compMode)),
+                compPolToStr(static_cast<ADS1115::ComparatorPolarity>(compPol)),
+                compLatchToStr(static_cast<ADS1115::ComparatorLatch>(compLatch)),
+                compQueueToStr(static_cast<ADS1115::ComparatorQueue>(compQueue)));
 }
 
 void printSettingsSnapshot() {
@@ -1315,7 +1353,7 @@ void processCommand(const String& cmdLine) {
     args.trim();
     const int split = args.indexOf(' ');
     if (split < 0) {
-      LOGW("Usage: wreg <0..3> <val>");
+      LOGW("Usage: wreg <1..3> <val>");
       return;
     }
 
@@ -1323,8 +1361,10 @@ void processCommand(const String& cmdLine) {
     uint32_t value = 0;
     if (!parseU32(args.substring(0, split), addr) ||
         !parseU32(args.substring(split + 1), value) ||
-        addr > ADS1115::cmd::REG_HI_THRESH || value > 0xFFFFu) {
-      LOGW("Usage: wreg <0..3> <val>");
+        addr < ADS1115::cmd::REG_CONFIG ||
+        addr > ADS1115::cmd::REG_HI_THRESH ||
+        value > 0xFFFFu) {
+      LOGW("Usage: wreg <1..3> <val>");
       return;
     }
 

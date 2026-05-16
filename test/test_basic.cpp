@@ -213,6 +213,73 @@ void test_begin_rejects_missing_callbacks() {
                           static_cast<uint8_t>(dev.state()));
 }
 
+void test_invalid_begin_resets_runtime_and_default_config() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config good = makeConfig(bus);
+  good.i2cAddress = 0x4B;
+  TEST_ASSERT_TRUE(dev.begin(good).ok());
+
+  bus.readStatus = Status::Error(Err::TIMEOUT, "forced recover timeout", -9);
+  (void)dev.recover();
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, dev.totalFailures());
+
+  Config bad = makeConfig(bus);
+  bad.i2cTimeoutMs = 0;
+  Status st = dev.begin(bad);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_NULL(dev.getConfig().i2cWrite);
+  TEST_ASSERT_NULL(dev.getConfig().i2cWriteRead);
+  TEST_ASSERT_EQUAL_HEX8(0x48, dev.getConfig().i2cAddress);
+  TEST_ASSERT_EQUAL_UINT8(5u, dev.getConfig().offlineThreshold);
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(0u, dev.consecutiveFailures());
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.lastOkMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.lastErrorMs());
+}
+
+void test_failed_begin_probe_resets_cached_config() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.i2cAddress = 0x4B;
+  cfg.mode = Mode::CONTINUOUS;
+  cfg.offlineThreshold = 1;
+  bus.readStatus = Status::Error(Err::TIMEOUT, "forced begin timeout", -10);
+
+  Status st = dev.begin(cfg);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::DEVICE_NOT_FOUND),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_NULL(dev.getConfig().i2cWrite);
+  TEST_ASSERT_NULL(dev.getConfig().i2cWriteRead);
+  TEST_ASSERT_EQUAL_HEX8(0x48, dev.getConfig().i2cAddress);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mode::SINGLE_SHOT),
+                          static_cast<uint8_t>(dev.getConfig().mode));
+  TEST_ASSERT_EQUAL_UINT8(5u, dev.getConfig().offlineThreshold);
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalFailures());
+}
+
+void test_begin_normalizes_offline_threshold_on_stored_copy() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 0;
+
+  Status st = dev.begin(cfg);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT8(0u, cfg.offlineThreshold);
+  TEST_ASSERT_EQUAL_UINT8(1u, dev.getConfig().offlineThreshold);
+}
+
 void test_begin_success_sets_ready_and_counters() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -221,10 +288,10 @@ void test_begin_success_sets_ready_and_counters() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::READY),
                           static_cast<uint8_t>(dev.state()));
   TEST_ASSERT_TRUE(dev.isOnline());
-  TEST_ASSERT_EQUAL_UINT32(3u, dev.totalSuccess());
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalSuccess());
   TEST_ASSERT_EQUAL_UINT32(0u, dev.totalFailures());
   TEST_ASSERT_EQUAL_UINT8(0u, dev.consecutiveFailures());
-  TEST_ASSERT_EQUAL_UINT32(bus.nowMs, dev.lastOkMs());
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.lastOkMs());
 }
 
 void test_probe_failure_does_not_update_health() {
@@ -524,6 +591,28 @@ void test_config_setters_write_expected_config_bits() {
   TEST_ASSERT_TRUE(dev._conversionStarted);
 }
 
+void test_write_config_accepts_datasheet_pga_aliases_for_0_256v() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+
+  uint16_t config = static_cast<uint16_t>((cmd::CONFIG_DEFAULT & ~cmd::MASK_PGA) |
+                                          cmd::PGA_0_256V_ALT1);
+  Status st = dev.writeConfig(config);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT16(6u, (bus.reg[cmd::REG_CONFIG] & cmd::MASK_PGA) >> cmd::BIT_PGA);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Gain::FSR_0_256V),
+                          static_cast<uint8_t>(dev.getGain()));
+
+  config = static_cast<uint16_t>((cmd::CONFIG_DEFAULT & ~cmd::MASK_PGA) |
+                                 cmd::PGA_0_256V_ALT2);
+  st = dev.writeConfig(config);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT16(7u, (bus.reg[cmd::REG_CONFIG] & cmd::MASK_PGA) >> cmd::BIT_PGA);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Gain::FSR_0_256V),
+                          static_cast<uint8_t>(dev.getGain()));
+}
+
 void test_threshold_writes_commit_cache_after_both_registers_succeed() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -622,6 +711,22 @@ void test_invalid_raw_register_is_rejected_without_bus_access() {
   TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
 }
 
+void test_write_conversion_register_is_rejected_as_read_only() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const uint32_t writesBefore = bus.writeCalls;
+  const uint16_t conversionBefore = bus.reg[cmd::REG_CONVERSION];
+
+  Status st = dev.writeRegister16(cmd::REG_CONVERSION, 0x1234);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_STRING("Register is read-only", st.msg);
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT16(conversionBefore, bus.reg[cmd::REG_CONVERSION]);
+}
+
 void test_read_blocking_times_out_when_injected_clock_stalls() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -716,6 +821,9 @@ int main() {
   RUN_TEST(test_config_defaults);
   RUN_TEST(test_get_settings_snapshot);
   RUN_TEST(test_begin_rejects_missing_callbacks);
+  RUN_TEST(test_invalid_begin_resets_runtime_and_default_config);
+  RUN_TEST(test_failed_begin_probe_resets_cached_config);
+  RUN_TEST(test_begin_normalizes_offline_threshold_on_stored_copy);
   RUN_TEST(test_begin_success_sets_ready_and_counters);
   RUN_TEST(test_probe_failure_does_not_update_health);
   RUN_TEST(test_recover_failure_updates_health);
@@ -731,12 +839,14 @@ int main() {
   RUN_TEST(test_continuous_readiness_waits_for_data_rate_interval);
   RUN_TEST(test_alert_ready_pin_path_does_not_poll_config_register);
   RUN_TEST(test_config_setters_write_expected_config_bits);
+  RUN_TEST(test_write_config_accepts_datasheet_pga_aliases_for_0_256v);
   RUN_TEST(test_threshold_writes_commit_cache_after_both_registers_succeed);
   RUN_TEST(test_set_gain_does_not_commit_cache_on_write_failure);
   RUN_TEST(test_set_thresholds_does_not_commit_cache_on_write_failure);
   RUN_TEST(test_comparator_setter_does_not_commit_cache_on_write_failure);
   RUN_TEST(test_enable_conversion_ready_pin_rolls_back_cache_on_write_failure);
   RUN_TEST(test_invalid_raw_register_is_rejected_without_bus_access);
+  RUN_TEST(test_write_conversion_register_is_rejected_as_read_only);
   RUN_TEST(test_read_blocking_times_out_when_injected_clock_stalls);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_register_access_after_end_does_not_touch_bus);

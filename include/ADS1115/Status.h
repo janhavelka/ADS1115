@@ -6,7 +6,7 @@
 
 namespace ADS1115 {
 
-/// Error codes for all ADS1115 operations
+/// @brief Error codes for all ADS1115 operations.
 enum class Err : uint8_t {
   OK = 0,                    ///< Operation successful
   NOT_INITIALIZED,           ///< begin() not called
@@ -25,7 +25,7 @@ enum class Err : uint8_t {
   I2C_BUS                    ///< I2C bus or arbitration error
 };
 
-/// Status structure returned by all fallible operations
+/// @brief Status structure returned by all fallible operations.
 struct Status {
   Err code = Err::OK;
   int32_t detail = 0;        ///< Implementation-specific detail (e.g., I2C error code)

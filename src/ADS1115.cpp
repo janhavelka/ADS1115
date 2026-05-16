@@ -21,6 +21,13 @@ bool isValidGain(Gain gain) {
   return static_cast<uint8_t>(gain) <= static_cast<uint8_t>(Gain::FSR_0_256V);
 }
 
+Gain decodePgaBits(uint8_t pga) {
+  if (pga >= static_cast<uint8_t>(Gain::FSR_0_256V)) {
+    return Gain::FSR_0_256V;
+  }
+  return static_cast<Gain>(pga);
+}
+
 bool isValidDataRate(DataRate rate) {
   return static_cast<uint8_t>(rate) <= static_cast<uint8_t>(DataRate::SPS_860);
 }
@@ -84,12 +91,16 @@ bool isValidConfigValue(uint16_t config) {
   uint8_t compLat = static_cast<uint8_t>((config & cmd::MASK_COMP_LAT) >> cmd::BIT_COMP_LAT);
   uint8_t compQue = static_cast<uint8_t>((config & cmd::MASK_COMP_QUE) >> cmd::BIT_COMP_QUE);
 
-  return mux <= 7 && pga <= 5 && mode <= 1 && dr <= 7 &&
+  return mux <= 7 && pga <= 7 && mode <= 1 && dr <= 7 &&
          compMode <= 1 && compPol <= 1 && compLat <= 1 && compQue <= 3;
 }
 
 bool isValidRegister(uint8_t reg) {
   return reg <= cmd::REG_HI_THRESH;
+}
+
+bool isWritableRegister(uint8_t reg) {
+  return reg >= cmd::REG_CONFIG && reg <= cmd::REG_HI_THRESH;
 }
 
 class ScopedOfflineI2cAllowance {
@@ -117,9 +128,12 @@ private:
 // ============================================================================
 
 Status ADS1115::begin(const Config& config) {
-  _config = config;
+  const Config requestedConfig = config;
+
+  _config = Config{};
   _initialized = false;
   _driverState = DriverState::UNINIT;
+  _allowOfflineI2c = false;
   _conversionStarted = false;
   _conversionReady = false;
   _conversionStartMs = 0;
@@ -132,40 +146,53 @@ Status ADS1115::begin(const Config& config) {
   _totalFailures = 0;
   _totalSuccess = 0;
 
-  if (_config.i2cWrite == nullptr || _config.i2cWriteRead == nullptr) {
+  if (requestedConfig.i2cWrite == nullptr || requestedConfig.i2cWriteRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C callbacks required");
   }
-  if (_config.i2cTimeoutMs == 0) {
+  if (requestedConfig.i2cTimeoutMs == 0) {
     return Status::Error(Err::INVALID_CONFIG, "Timeout must be > 0");
   }
-  if (_config.i2cAddress < kMinAddress || _config.i2cAddress > kMaxAddress) {
+  if (requestedConfig.i2cAddress < kMinAddress || requestedConfig.i2cAddress > kMaxAddress) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid I2C address");
   }
-  if (!isValidMux(_config.mux) || !isValidGain(_config.gain) ||
-      !isValidDataRate(_config.dataRate) || !isValidMode(_config.mode) ||
-      !isValidCompMode(_config.compMode) || !isValidCompPolarity(_config.compPolarity) ||
-      !isValidCompLatch(_config.compLatch) || !isValidCompQueue(_config.compQueue)) {
+  if (!isValidMux(requestedConfig.mux) || !isValidGain(requestedConfig.gain) ||
+      !isValidDataRate(requestedConfig.dataRate) || !isValidMode(requestedConfig.mode) ||
+      !isValidCompMode(requestedConfig.compMode) ||
+      !isValidCompPolarity(requestedConfig.compPolarity) ||
+      !isValidCompLatch(requestedConfig.compLatch) ||
+      !isValidCompQueue(requestedConfig.compQueue)) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid config enum value");
   }
-  if (_config.alertRdyPin < -1) {
+  if (requestedConfig.alertRdyPin < -1) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid ALERT/RDY pin");
   }
-  if (_config.alertRdyPin >= 0 && _config.gpioRead == nullptr) {
+  if (requestedConfig.alertRdyPin >= 0 && requestedConfig.gpioRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "ALERT/RDY gpioRead required");
   }
 
+  _config = requestedConfig;
   if (_config.offlineThreshold == 0) {
     _config.offlineThreshold = 1;
   }
 
+  auto failBeginAfterConfig = [this](const Status& failure) {
+    _config = Config{};
+    _allowOfflineI2c = false;
+    _conversionStarted = false;
+    _conversionReady = false;
+    _conversionStartMs = 0;
+    _lastRawValue = 0;
+    return failure;
+  };
+
   Status st = probe();
   if (!st.ok()) {
-    return st;
+    return failBeginAfterConfig(st);
   }
 
   st = _applyConfig();
   if (!st.ok()) {
-    return st;
+    return failBeginAfterConfig(st);
   }
 
   _initialized = true;
@@ -635,7 +662,7 @@ Status ADS1115::writeConfig(uint16_t config) {
   }
 
   _config.mux = static_cast<Mux>((config & cmd::MASK_MUX) >> cmd::BIT_MUX);
-  _config.gain = static_cast<Gain>((config & cmd::MASK_PGA) >> cmd::BIT_PGA);
+  _config.gain = decodePgaBits(static_cast<uint8_t>((config & cmd::MASK_PGA) >> cmd::BIT_PGA));
   _config.mode = static_cast<Mode>((config & cmd::MASK_MODE) >> cmd::BIT_MODE);
   _config.dataRate = static_cast<DataRate>((config & cmd::MASK_DR) >> cmd::BIT_DR);
   _config.compMode = static_cast<ComparatorMode>((config & cmd::MASK_COMP_MODE) >> cmd::BIT_COMP_MODE);
@@ -938,6 +965,9 @@ Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
   if (!isValidRegister(reg)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid register");
   }
+  if (!isWritableRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Register is read-only");
+  }
   return _writeRegister16Tracked(reg, value);
 }
 
@@ -957,6 +987,9 @@ Status ADS1115::_readRegister16Tracked(uint8_t reg, uint16_t& value) {
 Status ADS1115::_writeRegister16Tracked(uint8_t reg, uint16_t value) {
   if (!isValidRegister(reg)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid register");
+  }
+  if (!isWritableRegister(reg)) {
+    return Status::Error(Err::INVALID_PARAM, "Register is read-only");
   }
   uint8_t tx[3] = {
     reg,
@@ -984,18 +1017,20 @@ Status ADS1115::_readRegister16Raw(uint8_t reg, uint16_t& value) {
 // ============================================================================
 
 Status ADS1115::_updateHealth(const Status& st) {
+  if (!_initialized || st.inProgress()) {
+    return st;
+  }
+
   uint32_t nowMs = _nowMs();
 
-  if (st.ok() || st.inProgress()) {
+  if (st.ok()) {
     _lastOkMs = nowMs;
     _consecutiveFailures = 0;
     if (_totalSuccess < UINT32_MAX) {
       _totalSuccess++;
     }
 
-    if (_initialized) {
-      _driverState = DriverState::READY;
-    }
+    _driverState = DriverState::READY;
   } else {
     _lastErrorMs = nowMs;
     _lastError = st;
@@ -1007,12 +1042,10 @@ Status ADS1115::_updateHealth(const Status& st) {
       _totalFailures++;
     }
 
-    if (_initialized) {
-      if (_consecutiveFailures >= _config.offlineThreshold) {
-        _driverState = DriverState::OFFLINE;
-      } else {
-        _driverState = DriverState::DEGRADED;
-      }
+    if (_consecutiveFailures >= _config.offlineThreshold) {
+      _driverState = DriverState::OFFLINE;
+    } else {
+      _driverState = DriverState::DEGRADED;
     }
   }
 
