@@ -9,7 +9,7 @@ through application-owned transport callbacks.
 - Injected I2C transport (no Wire dependency in library code)
 - No Arduino framework dependency in `include/` or `src/`
 - ESP-IDF component metadata and a native `i2c_master` example with the same
-  user-visible CLI as the Arduino example
+  user-visible CLI coverage as the Arduino example
 - Health monitoring with READY / DEGRADED / OFFLINE states
 - Single-shot and continuous conversion modes
 - Configurable mux, gain, data rate, and comparator settings
@@ -214,7 +214,8 @@ health counters.
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
-- `examples/esp_idf/basic/` - native ESP-IDF `i2c_master` entry point sharing the full bring-up CLI
+- `examples/esp_idf/basic/` - native ESP-IDF `i2c_master` CLI using `app_main`,
+  fixed command buffers, `esp_timer`, FreeRTOS delays, and IDF GPIO/I2C APIs
 - CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 ### Example Helpers (`examples/common/`)
@@ -223,12 +224,11 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 | File | Purpose |
 |------|---------|
-| `BoardConfig.h` | Pin definitions and Arduino/ESP-IDF example I2C/GPIO init |
+| `BoardConfig.h` | Pin definitions and Arduino example I2C/GPIO init |
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
-| `I2cTransport.h` | Example transport selector for Arduino `Wire` or the ESP-IDF adapter |
-| `I2cScanner.h` | Arduino/ESP-IDF I2C bus scanner with table output and bus recovery |
-| `IdfArduinoCompat.h` | ESP-IDF-only console, timing, and fixed-buffer `String` shim for the shared CLI |
+| `I2cTransport.h` | Arduino `Wire` transport adapter |
+| `I2cScanner.h` | Arduino I2C bus scanner with table output and bus recovery |
 | `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
 | `CliStyle.h` | Shared ANSI colors and CLI formatting helpers |
 | `CliShell.h` | Serial command-line shell with line editing |

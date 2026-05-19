@@ -51,9 +51,9 @@ hardware validation.
   `cooperativeYield`.
 - The IDF adapter uses the new ESP-IDF I2C master driver
   `<driver/i2c_master.h>` from component `esp_driver_i2c`.
-- `examples/01_basic_bringup_cli/main.cpp` is shared by Arduino and ESP-IDF.
-  Arduino builds use `Serial`, `String`, and `Wire`; the ESP-IDF example uses
-  example-local console/String/timing and I2C shims instead.
+- `examples/01_basic_bringup_cli/main.cpp` is Arduino-only. The ESP-IDF example
+  has a separate native command implementation with matching command coverage
+  and validation.
 - ALERT/RDY support depends on `Config::gpioRead`; an IDF example must provide a
   GPIO callback if it enables conversion-ready pin mode.
 - The IDF v6.0.1 warning profile is stricter. Build the component with warnings
@@ -82,12 +82,11 @@ hardware validation.
 - Added `idf_component.yml`.
 - Added IDF-only adapter/example files under `examples/esp_idf/basic/`.
 
-## Proposed Architecture Preserving Arduino Compatibility
+## Current Architecture Preserving Framework Boundaries
 
 - Keep the library core callback-based and framework-neutral.
-- Keep `examples/common/I2cTransport.h` as the Arduino/Wire adapter in Arduino
-  builds and as a selector for the ESP-IDF adapter when
-  `ADS1115_EXAMPLE_PLATFORM_IDF` is defined.
+- Keep `examples/common/I2cTransport.h` as the Arduino/Wire adapter for Arduino
+  examples only.
 - Keep the IDF adapter outside the core driver in
   `examples/esp_idf/basic/main/Ads1115IdfI2cTransport.{h,cpp}`.
 - The IDF adapter owns `i2c_master_bus_handle_t` and
@@ -172,7 +171,7 @@ target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 ```
 
 If the IDF I2C adapter is shipped inside the component, add its source file and
-`PRIV_REQUIRES esp_driver_i2c esp_driver_gpio esp_timer esp_rom freertos log vfs`.
+`PRIV_REQUIRES esp_driver_i2c esp_driver_gpio esp_timer freertos`.
 The adapter currently stays in the example, so those requirements live in the
 example component instead.
 
@@ -185,14 +184,13 @@ build against stale version metadata.
 
 - Keep the existing Arduino CLI example building with PlatformIO for ESP32-S2
   and ESP32-S3.
-- `examples/esp_idf/basic/main/main.cpp` defines
-  `ADS1115_EXAMPLE_PLATFORM_IDF`, includes the example-local compatibility
-  layer, and then includes `examples/01_basic_bringup_cli/main.cpp`.
+- `examples/esp_idf/basic/main/main.cpp` uses native `app_main`, fixed command
+  buffers, `std::fgets`, `esp_timer`, `vTaskDelay`, IDF GPIO, and the IDF I2C
+  adapter. It does not include Arduino headers, Arduino CLI source, or
+  compatibility facades.
 - The ESP-IDF CLI exposes the same help grouping, color output, channel/gain/
   rate/mode commands, comparator commands, register diagnostics, health,
   probe/recover, stress, and self-test flows as the Arduino CLI.
-- `examples/common/IdfArduinoCompat.h` provides the small `Serial`, fixed-size
-  `String`, timing, delay, yield, and `F()` surface needed by the shared CLI.
 
 ## Test/Validation Plan
 
@@ -202,6 +200,9 @@ build against stale version metadata.
   - `python tools/check_core_timing_guard.py`
   - `rg "<Arduino.h>|<Wire.h>|millis\\(|delay\\(|yield\\(" include src`
     should find no unguarded Arduino dependencies in the ESP-IDF build path.
+  - `python tools/check_idf_example_contract.py` rejects `Arduino.h`, `Wire.h`,
+    `String`, `Serial`, `TwoWire`, `ArduinoCompat`, `IdfArduinoCompat`, and
+    inclusion of Arduino CLI sources in the IDF example.
   - `rg "driver/i2c.h|i2c_cmd_link|i2c_driver_install" .` should not find
     legacy I2C driver usage in IDF code.
 - Arduino regression:
@@ -245,7 +246,7 @@ build against stale version metadata.
 2. Done: remove Arduino include and timing/yield fallbacks from
    `src/ADS1115.cpp`.
 3. Done: add the IDF I2C adapter using `<driver/i2c_master.h>`.
-4. Done: add `examples/esp_idf/basic` with the shared full CLI.
+4. Done: add `examples/esp_idf/basic` with a native full-parity CLI.
 5. Done: add static Arduino/IDF CLI contract checks.
 6. Done: run Arduino PlatformIO builds and native tests to verify compatibility.
 7. Pending local ESP-IDF toolchain: build `examples/esp_idf/basic` for ESP32-S3.

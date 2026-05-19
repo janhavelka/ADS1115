@@ -13,12 +13,7 @@
 
 #include <stdint.h>
 
-#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
-#include "driver/gpio.h"
-#include "examples/common/IdfArduinoCompat.h"
-#else
 #include <Arduino.h>
-#endif
 
 #include "examples/common/I2cTransport.h"
 
@@ -64,28 +59,14 @@ inline bool initI2c() {
 /// @brief Initialize ALERT/RDY pin for examples.
 inline void initAlertRdyPin() {
   if (ALERT_RDY_PIN >= 0) {
-#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
-    gpio_config_t cfg = {};
-    cfg.pin_bit_mask = 1ULL << static_cast<uint32_t>(ALERT_RDY_PIN);
-    cfg.mode = GPIO_MODE_INPUT;
-    cfg.pull_up_en = GPIO_PULLUP_ENABLE;
-    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    cfg.intr_type = GPIO_INTR_DISABLE;
-    (void)gpio_config(&cfg);
-#else
     pinMode(ALERT_RDY_PIN, INPUT_PULLUP);
-#endif
   }
 }
 
 /// @brief Read ALERT/RDY pin level (true = HIGH, false = LOW).
 inline bool readAlertRdyPin(int pin, void* user) {
   (void)user;
-#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
-  return gpio_get_level(static_cast<gpio_num_t>(pin)) != 0;
-#else
   return digitalRead(pin) != 0;
-#endif
 }
 
 /// @brief Initialize Serial for examples.

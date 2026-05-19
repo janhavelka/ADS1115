@@ -13,23 +13,23 @@ Date: 2026-05-19
 - Added a root ESP-IDF component `CMakeLists.txt` and `idf_component.yml`.
 - Added CMake generation for the public `ADS1115/Version.h` header from
   `library.json` for ESP-IDF builds.
-- Added `examples/esp_idf/basic`, using the ESP-IDF `i2c_master` driver,
-  ESP-IDF GPIO, FreeRTOS scheduling, and stdio console glue outside the ADS1115
-  core.
-- The ESP-IDF example now includes the same `examples/01_basic_bringup_cli`
-  source as the Arduino build through an example-local compatibility layer, so
-  the serial CLI has the same commands, help, diagnostics, register access,
-  comparator controls, stress paths, and self-test behavior.
+- Added `examples/esp_idf/basic`, using `app_main`, the ESP-IDF `i2c_master`
+  driver, ESP-IDF GPIO, `esp_timer`, FreeRTOS scheduling, fixed command buffers,
+  and stdio console input outside the ADS1115 core.
+- The ESP-IDF example implements native command handling with the same
+  user-visible commands, help, diagnostics, register access, comparator
+  controls, stress paths, and self-test behavior as the Arduino CLI. It does
+  not include Arduino CLI sources or compatibility facades.
 - Kept Arduino example behavior by wiring explicit Arduino timing callbacks in
   `examples/common/I2cTransport.h` and the CLI example config.
-- Added `tools/check_idf_example_contract.py` to guard the IDF wrapper,
-  dependencies, native transport, and shared CLI command surface.
+- Added `tools/check_idf_example_contract.py` to guard native IDF dependencies,
+  ban Arduino compatibility facades, and verify Arduino/IDF CLI command parity.
 
 ## Build Notes
 
 - The ADS1115 component itself has no direct ESP-IDF peripheral dependency.
 - The ESP-IDF example depends on `esp_driver_i2c`, `esp_driver_gpio`,
-  `esp_timer`, `esp_rom`, `freertos`, `log`, and `vfs`.
+  `esp_timer`, and `freertos`.
 - The IDF I2C adapter rejects zero or oversized timeouts before calling
   `i2c_master_transmit*()` so it never converts a driver timeout to IDF's
   wait-forever value.
@@ -38,7 +38,7 @@ Date: 2026-05-19
 
 - Hardware validation is still required for real ADS1115 devices at addresses
   `0x48` through `0x4B`.
-- ALERT/RDY GPIO mode is wired through the shared CLI and IDF GPIO callback, but
+- ALERT/RDY GPIO mode is wired through the native CLI and IDF GPIO callback, but
   still needs hardware validation for both active-low and active-high modes.
 - Fault-injection validation for ESP-IDF NACK/timeout paths still needs hardware
   or an IDF-level I2C test double.

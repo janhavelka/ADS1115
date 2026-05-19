@@ -4,11 +4,7 @@
 
 #include <cstdlib>
 
-#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
-#include "examples/common/IdfArduinoCompat.h"
-#else
 #include <Arduino.h>
-#endif
 
 #include "examples/common/BoardConfig.h"
 #include "examples/common/BusDiag.h"
