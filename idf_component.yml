@@ -1,0 +1,10 @@
+version: "1.0.0"
+description: "Production-grade ADS1115 16-bit ADC driver"
+url: "https://github.com/janhavelka/ADS1115"
+repository: "https://github.com/janhavelka/ADS1115.git"
+license: "MIT"
+targets:
+  - esp32s2
+  - esp32s3
+dependencies:
+  idf: ">=5.0"

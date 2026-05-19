@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ESP-IDF component metadata, generated-version CMake support, and a basic
+  ESP-IDF `i2c_master` example.
 - `SettingsSnapshot` struct for reading cached configuration and runtime state without I2C.
 - `getSettings(SettingsSnapshot&)` method to populate a settings snapshot.
 - `Status::is(Err)` method for type-safe error code comparison.
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while `recover()` remains the explicit recovery path.
 
 ### Changed
+- Driver core timing/yield ownership moved fully behind application callbacks;
+  Arduino examples now provide explicit timing hooks instead of relying on core fallbacks.
 - Doxyfile project metadata now matches `library.json`, and archived prompt
   metadata no longer contains placeholder ownership values.
 - Reference documentation now uses a human-readable vendor PDF name and separates compact chip notes from full PDF extraction under `docs/extracted-md/` and `docs/pdf-extracted-md/`.

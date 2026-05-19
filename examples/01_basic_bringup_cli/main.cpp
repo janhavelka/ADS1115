@@ -1447,6 +1447,8 @@ void setup() {
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = transport::arduinoNowMs;
+  cfg.cooperativeYield = transport::arduinoYield;
   cfg.i2cAddress = 0x48;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.offlineThreshold = 5;

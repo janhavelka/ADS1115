@@ -150,6 +150,20 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
 }
 
 /**
+ * @brief Arduino millisecond timestamp callback for Config::nowMs.
+ */
+inline uint32_t arduinoNowMs(void*) {
+  return millis();
+}
+
+/**
+ * @brief Arduino scheduler hint callback for Config::cooperativeYield.
+ */
+inline void arduinoYield(void*) {
+  yield();
+}
+
+/**
  * @brief Initialize Wire with default pins and frequency.
  *
  * @param sda SDA pin number
