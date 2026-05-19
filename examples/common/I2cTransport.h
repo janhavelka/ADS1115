@@ -11,12 +11,48 @@
 
 #pragma once
 
+#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
+#include "Ads1115IdfI2cTransport.h"
+#else
 #include <Arduino.h>
 #include <Wire.h>
+#endif
 
 #include "ADS1115/Status.h"
 
 namespace transport {
+
+#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
+
+inline ADS1115::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
+                                 uint32_t timeoutMs, void* user) {
+  return ads1115IdfWrite(addr, data, len, timeoutMs, user);
+}
+
+inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
+                                     uint8_t* rx, size_t rxLen, uint32_t timeoutMs,
+                                     void* user) {
+  return ads1115IdfWriteRead(addr, tx, txLen, rx, rxLen, timeoutMs, user);
+}
+
+inline uint32_t arduinoNowMs(void* user) {
+  return ads1115IdfNowMs(user);
+}
+
+inline void arduinoYield(void* user) {
+  ads1115IdfYield(user);
+}
+
+inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50,
+                     uint8_t address = 0x48) {
+  return ads1115IdfInitI2c(sda, scl, freq, timeoutMs, address);
+}
+
+inline void* configUser() {
+  return &ads1115IdfTransportContext();
+}
+
+#else
 
 /**
  * @brief Wire-based I2C write implementation.
@@ -172,7 +208,9 @@ inline void arduinoYield(void*) {
  * @param timeoutMs I2C timeout in milliseconds (default 50ms)
  * @return true on success
  */
-inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50) {
+inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50,
+                     uint8_t address = 0x48) {
+  (void)address;
 #if defined(ARDUINO_ARCH_ESP32)
   // Toggle SCL to release any stuck slave
   pinMode(scl, OUTPUT);
@@ -202,5 +240,11 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
 #endif
   return true;
 }
+
+inline void* configUser() {
+  return &Wire;
+}
+
+#endif
 
 }  // namespace transport

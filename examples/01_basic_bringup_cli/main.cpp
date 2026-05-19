@@ -2,8 +2,13 @@
 /// @brief ADS1115 basic bringup example
 /// @note This is an EXAMPLE, not part of the library
 
-#include <Arduino.h>
 #include <cstdlib>
+
+#if defined(ADS1115_EXAMPLE_PLATFORM_IDF)
+#include "examples/common/IdfArduinoCompat.h"
+#else
+#include <Arduino.h>
+#endif
 
 #include "examples/common/BoardConfig.h"
 #include "examples/common/BusDiag.h"
@@ -1446,10 +1451,10 @@ void setup() {
   ADS1115::Config cfg;
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
-  cfg.i2cUser = &Wire;
+  cfg.i2cUser = transport::configUser();
   cfg.nowMs = transport::arduinoNowMs;
   cfg.cooperativeYield = transport::arduinoYield;
-  cfg.i2cAddress = 0x48;
+  cfg.i2cAddress = board::ADS1115_I2C_ADDR;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.offlineThreshold = 5;
   if (board::ALERT_RDY_PIN >= 0) {

@@ -8,7 +8,8 @@ through application-owned transport callbacks.
 
 - Injected I2C transport (no Wire dependency in library code)
 - No Arduino framework dependency in `include/` or `src/`
-- ESP-IDF component metadata and a basic `i2c_master` example
+- ESP-IDF component metadata and a native `i2c_master` example with the same
+  user-visible CLI as the Arduino example
 - Health monitoring with READY / DEGRADED / OFFLINE states
 - Single-shot and continuous conversion modes
 - Configurable mux, gain, data rate, and comparator settings
@@ -32,9 +33,10 @@ Copy `include/ADS1115/` and `src/` into your project.
 
 ### ESP-IDF
 
-Use this repository as an ESP-IDF component, or use the basic project under
-`examples/esp_idf/basic`. The IDF example owns the I2C master bus/device handle
-and passes callbacks into `ADS1115::Config`.
+Use this repository as an ESP-IDF component, or use the native project under
+`examples/esp_idf/basic`. The IDF example owns the I2C master bus/device handle,
+GPIO setup, console glue, and timing callbacks, then passes only callbacks into
+`ADS1115::Config`.
 
 ## Quick Start
 
@@ -212,7 +214,7 @@ health counters.
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
-- `examples/esp_idf/basic/` - ESP-IDF `i2c_master` bring-up example
+- `examples/esp_idf/basic/` - native ESP-IDF `i2c_master` entry point sharing the full bring-up CLI
 - CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 ### Example Helpers (`examples/common/`)
@@ -221,11 +223,12 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 | File | Purpose |
 |------|---------|
-| `BoardConfig.h` | Pin definitions and Wire init for supported boards |
+| `BoardConfig.h` | Pin definitions and Arduino/ESP-IDF example I2C/GPIO init |
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
-| `I2cTransport.h` | Wire-based I2C transport adapter (`wireWrite`, `wireWriteRead`, `initWire`) |
-| `I2cScanner.h` | I2C bus scanner with table output and bus recovery |
+| `I2cTransport.h` | Example transport selector for Arduino `Wire` or the ESP-IDF adapter |
+| `I2cScanner.h` | Arduino/ESP-IDF I2C bus scanner with table output and bus recovery |
+| `IdfArduinoCompat.h` | ESP-IDF-only console, timing, and fixed-buffer `String` shim for the shared CLI |
 | `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
 | `CliStyle.h` | Shared ANSI colors and CLI formatting helpers |
 | `CliShell.h` | Serial command-line shell with line editing |
@@ -248,6 +251,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 ```bash
 pio test -e native
 python tools/check_cli_contract.py
+python tools/check_idf_example_contract.py
 python tools/check_core_timing_guard.py
 pio run -e esp32s3dev
 pio run -e esp32s2dev

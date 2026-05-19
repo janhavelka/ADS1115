@@ -2,12 +2,15 @@
 
 #include <climits>
 
+#include "driver/gpio.h"
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 namespace {
+
+Ads1115IdfI2cTransport gTransport;
 
 ADS1115::Status mapEspError(esp_err_t err) {
   if (err == ESP_OK) {
@@ -47,6 +50,62 @@ ADS1115::Status resolveTransfer(void* user, uint8_t addr, uint32_t timeoutMs,
 
 }  // namespace
 
+Ads1115IdfI2cTransport& ads1115IdfTransportContext() {
+  return gTransport;
+}
+
+bool ads1115IdfInitI2c(int sda, int scl, uint32_t freqHz, uint16_t timeoutMs,
+                       uint8_t address) {
+  (void)timeoutMs;
+  ads1115IdfDeinitI2c();
+
+  i2c_master_bus_config_t busConfig = {};
+  busConfig.i2c_port = I2C_NUM_0;
+  busConfig.sda_io_num = static_cast<gpio_num_t>(sda);
+  busConfig.scl_io_num = static_cast<gpio_num_t>(scl);
+  busConfig.clk_source = I2C_CLK_SRC_DEFAULT;
+  busConfig.glitch_ignore_cnt = 7;
+  busConfig.flags.enable_internal_pullup = true;
+
+  esp_err_t err = i2c_new_master_bus(&busConfig, &gTransport.bus);
+  if (err != ESP_OK) {
+    gTransport.lastError = err;
+    return false;
+  }
+
+  i2c_device_config_t devConfig = {};
+  devConfig.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  devConfig.device_address = address;
+  devConfig.scl_speed_hz = freqHz;
+
+  err = i2c_master_bus_add_device(gTransport.bus, &devConfig, &gTransport.dev);
+  if (err != ESP_OK) {
+    (void)i2c_del_master_bus(gTransport.bus);
+    gTransport.bus = nullptr;
+    gTransport.lastError = err;
+    return false;
+  }
+
+  gTransport.address = address;
+  gTransport.lastError = ESP_OK;
+  return true;
+}
+
+void ads1115IdfDeinitI2c() {
+  if (gTransport.dev != nullptr) {
+    (void)i2c_master_bus_rm_device(gTransport.dev);
+    gTransport.dev = nullptr;
+  }
+  if (gTransport.bus != nullptr) {
+    (void)i2c_del_master_bus(gTransport.bus);
+    gTransport.bus = nullptr;
+  }
+}
+
+esp_err_t ads1115IdfLastError() {
+  return gTransport.lastError;
+}
+
 ADS1115::Status ads1115IdfWrite(uint8_t addr, const uint8_t* data, size_t len,
                                 uint32_t timeoutMs, void* user) {
   if (data == nullptr || len == 0) {
@@ -58,7 +117,8 @@ ADS1115::Status ads1115IdfWrite(uint8_t addr, const uint8_t* data, size_t len,
   if (!st.ok()) {
     return st;
   }
-  return mapEspError(i2c_master_transmit(transport->dev, data, len, timeout));
+  transport->lastError = i2c_master_transmit(transport->dev, data, len, timeout);
+  return mapEspError(transport->lastError);
 }
 
 ADS1115::Status ads1115IdfWriteRead(uint8_t addr, const uint8_t* txData, size_t txLen,
@@ -73,8 +133,9 @@ ADS1115::Status ads1115IdfWriteRead(uint8_t addr, const uint8_t* txData, size_t 
   if (!st.ok()) {
     return st;
   }
-  return mapEspError(i2c_master_transmit_receive(transport->dev, txData, txLen,
-                                                 rxData, rxLen, timeout));
+  transport->lastError = i2c_master_transmit_receive(transport->dev, txData, txLen,
+                                                     rxData, rxLen, timeout);
+  return mapEspError(transport->lastError);
 }
 
 uint32_t ads1115IdfNowMs(void*) {

@@ -2,8 +2,8 @@
 
 Last updated: 2026-05-19
 
-This repository now includes the framework-neutral core changes and ESP-IDF
-component/example scaffolding described by the earlier audit. See
+This repository now includes the framework-neutral core changes and a native
+ESP-IDF example that exposes the same user-visible CLI as the Arduino example. See
 `docs/IDF_PORT_IMPLEMENTATION.md` for the implementation summary and remaining
 hardware-validation blockers.
 
@@ -37,9 +37,10 @@ Official ESP-IDF references:
   `I2cScanner.h`, `BoardConfig.h`, and the CLI example. Keep that glue out of
   the library component.
 
-Readiness verdict: the core is IDF-ready at the source boundary and includes a
-basic ESP-IDF example using the new I2C master driver. Remaining work is build
-verification on the local ESP-IDF toolchain and hardware validation.
+Readiness verdict: the core is IDF-ready at the source boundary and includes an
+ESP-IDF example using the new I2C master driver plus the full bring-up CLI.
+Remaining work is build verification on the local ESP-IDF toolchain and
+hardware validation.
 
 ## Portability Blockers
 
@@ -48,11 +49,11 @@ verification on the local ESP-IDF toolchain and hardware validation.
 - The neutral core fallback for missing timing callbacks returns `0` and no-ops
   yield. Production applications should always provide `nowMs` and
   `cooperativeYield`.
-- The basic IDF adapter uses the new ESP-IDF I2C master driver
+- The IDF adapter uses the new ESP-IDF I2C master driver
   `<driver/i2c_master.h>` from component `esp_driver_i2c`.
-- `examples/01_basic_bringup_cli/main.cpp` and `examples/common/*` depend on
-  Arduino `Serial`, `String`, `Wire`, `millis()`, `delay()`, and `yield()`;
-  do not port those files in place.
+- `examples/01_basic_bringup_cli/main.cpp` is shared by Arduino and ESP-IDF.
+  Arduino builds use `Serial`, `String`, and `Wire`; the ESP-IDF example uses
+  example-local console/String/timing and I2C shims instead.
 - ALERT/RDY support depends on `Config::gpioRead`; an IDF example must provide a
   GPIO callback if it enables conversion-ready pin mode.
 - The IDF v6.0.1 warning profile is stricter. Build the component with warnings
@@ -84,11 +85,11 @@ verification on the local ESP-IDF toolchain and hardware validation.
 ## Proposed Architecture Preserving Arduino Compatibility
 
 - Keep the library core callback-based and framework-neutral.
-- Keep `examples/common/I2cTransport.h` as the Arduino/Wire adapter.
-- Add an IDF adapter outside the core driver, for example:
-  `examples/esp_idf/common/Ads1115IdfI2cTransport.{h,cpp}` or
-  `src/platform/esp_idf/Ads1115IdfI2cTransport.cpp` if the project wants to
-  ship it as part of the component.
+- Keep `examples/common/I2cTransport.h` as the Arduino/Wire adapter in Arduino
+  builds and as a selector for the ESP-IDF adapter when
+  `ADS1115_EXAMPLE_PLATFORM_IDF` is defined.
+- Keep the IDF adapter outside the core driver in
+  `examples/esp_idf/basic/main/Ads1115IdfI2cTransport.{h,cpp}`.
 - The IDF adapter owns `i2c_master_bus_handle_t` and
   `i2c_master_dev_handle_t`; the ADS1115 driver only receives
   `Config::i2cWrite`, `Config::i2cWriteRead`, and a user pointer.
@@ -171,9 +172,9 @@ target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
 ```
 
 If the IDF I2C adapter is shipped inside the component, add its source file and
-`PRIV_REQUIRES esp_driver_i2c esp_driver_gpio esp_timer freertos`. If the
-adapter stays in an example, put those requirements in the example component
-instead.
+`PRIV_REQUIRES esp_driver_i2c esp_driver_gpio esp_timer esp_rom freertos log vfs`.
+The adapter currently stays in the example, so those requirements live in the
+example component instead.
 
 `include/ADS1115/Version.h` is generated from `library.json` in the current
 PlatformIO flow. The IDF build must either run the same generation step before
@@ -182,23 +183,23 @@ build against stale version metadata.
 
 ## Example Plan
 
-- Keep the existing Arduino CLI example as-is and continue building it with
-  PlatformIO for ESP32-S2 and ESP32-S3.
-- Add `examples/esp_idf/basic` with a minimal `app_main()`:
-  - create an I2C master bus with `i2c_new_master_bus()`;
-  - add the ADS1115 device with `i2c_master_bus_add_device()`;
-  - fill `ADS1115::Config` with IDF callbacks, `nowMs`, and optional
-    `gpioRead`;
-  - call `begin()`;
-  - read one blocking single-shot sample and one voltage;
-  - call `tick()` from a bounded FreeRTOS loop for any in-progress conversion;
-  - print status with `ESP_LOGI`, not Arduino `Serial`.
-- Add an optional second IDF example only after the basic example passes:
-  ALERT/RDY conversion-ready pin mode using `gpio_get_level()`.
+- Keep the existing Arduino CLI example building with PlatformIO for ESP32-S2
+  and ESP32-S3.
+- `examples/esp_idf/basic/main/main.cpp` defines
+  `ADS1115_EXAMPLE_PLATFORM_IDF`, includes the example-local compatibility
+  layer, and then includes `examples/01_basic_bringup_cli/main.cpp`.
+- The ESP-IDF CLI exposes the same help grouping, color output, channel/gain/
+  rate/mode commands, comparator commands, register diagnostics, health,
+  probe/recover, stress, and self-test flows as the Arduino CLI.
+- `examples/common/IdfArduinoCompat.h` provides the small `Serial`, fixed-size
+  `String`, timing, delay, yield, and `F()` surface needed by the shared CLI.
 
 ## Test/Validation Plan
 
 - Static checks:
+  - `python tools/check_cli_contract.py`
+  - `python tools/check_idf_example_contract.py`
+  - `python tools/check_core_timing_guard.py`
   - `rg "<Arduino.h>|<Wire.h>|millis\\(|delay\\(|yield\\(" include src`
     should find no unguarded Arduino dependencies in the ESP-IDF build path.
   - `rg "driver/i2c.h|i2c_cmd_link|i2c_driver_install" .` should not find
@@ -244,11 +245,12 @@ build against stale version metadata.
 2. Done: remove Arduino include and timing/yield fallbacks from
    `src/ADS1115.cpp`.
 3. Done: add the IDF I2C adapter using `<driver/i2c_master.h>`.
-4. Done: add `examples/esp_idf/basic`.
-5. Done: run Arduino PlatformIO builds and native tests to verify compatibility.
-6. Pending local ESP-IDF toolchain: build `examples/esp_idf/basic` for ESP32-S3.
-7. Pending local ESP-IDF toolchain: build `examples/esp_idf/basic` for ESP32-S2.
-8. Pending hardware: validate reads, conversion timing, voltage scaling, and
+4. Done: add `examples/esp_idf/basic` with the shared full CLI.
+5. Done: add static Arduino/IDF CLI contract checks.
+6. Done: run Arduino PlatformIO builds and native tests to verify compatibility.
+7. Pending local ESP-IDF toolchain: build `examples/esp_idf/basic` for ESP32-S3.
+8. Pending local ESP-IDF toolchain: build `examples/esp_idf/basic` for ESP32-S2.
+9. Pending hardware: validate reads, conversion timing, voltage scaling, and
    ALERT/RDY.
-9. Pending hardware/test double: inject NACK and timeout failures and verify
+10. Pending hardware/test double: inject NACK and timeout failures and verify
    status/health behavior.

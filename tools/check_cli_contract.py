@@ -13,6 +13,7 @@ REQUIRED_COMMON = [
     "Log.h",
     "I2cTransport.h",
     "I2cScanner.h",
+    "IdfArduinoCompat.h",
     "CommandHandler.h",
     "TransportAdapter.h",
     "BusDiag.h",

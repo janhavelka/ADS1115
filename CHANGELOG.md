@@ -8,8 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- ESP-IDF component metadata, generated-version CMake support, and a basic
-  ESP-IDF `i2c_master` example.
+- ESP-IDF component metadata, generated-version CMake support, and a native
+  ESP-IDF `i2c_master` example that shares the full bring-up CLI command
+  surface with the Arduino example.
+- Example-local ESP-IDF console, timing, GPIO, and I2C adapter glue for the
+  shared CLI, guarded by `ADS1115_EXAMPLE_PLATFORM_IDF`.
+- `tools/check_idf_example_contract.py` to guard ESP-IDF example structure,
+  native-driver dependencies, and CLI parity.
 - `SettingsSnapshot` struct for reading cached configuration and runtime state without I2C.
 - `getSettings(SettingsSnapshot&)` method to populate a settings snapshot.
 - `Status::is(Err)` method for type-safe error code comparison.
@@ -32,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README now documents conversion, configuration, comparator, ALERT/RDY, and configuration constraint APIs.
 - `begin()` failure now clears stale cached configuration/runtime state, and successful startup no longer seeds runtime health counters.
 - Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
+- The ESP-IDF example now exposes the same user-visible commands, help,
+  diagnostics, status output, register access, comparator controls, stress
+  paths, and self-test flow as the Arduino CLI.
 
 ### Fixed
 - Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
