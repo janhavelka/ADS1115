@@ -88,6 +88,8 @@ jobs:
       - name: Enforce example CLI contract
         run: python tools/check_cli_contract.py
 
+      - name: Enforce ESP-IDF example contract
+        run: python tools/check_idf_example_contract.py
+
       - name: Validate library package
         run: pio pkg pack
-
