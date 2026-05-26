@@ -50,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-04-05
 
 ### Changed
-- Promoted to v1.0.0 — the library is fully featured and production-ready.
+- Promoted to v1.0.0 with the ADS1115 feature surface complete for the
+  documented Arduino-facing release. Hardware/build validation status must be
+  tracked through explicit run logs, not inferred from this changelog entry.
 
 ## [0.4.0] - 2026-04-05
 
