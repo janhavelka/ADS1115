@@ -56,6 +56,8 @@ def main() -> int:
     for name in REQUIRED_COMMON:
         ensure_exists(common_dir / name, f"common helper {name}")
 
+    ensure_missing(common_dir / "IdfArduinoCompat.h", "Arduino compatibility facade")
+
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
 
     for cmd in MANDATORY_COMMANDS:

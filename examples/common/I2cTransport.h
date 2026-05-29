@@ -150,6 +150,20 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
 }
 
 /**
+ * @brief Arduino millisecond timestamp callback for Config::nowMs.
+ */
+inline uint32_t arduinoNowMs(void*) {
+  return millis();
+}
+
+/**
+ * @brief Arduino scheduler hint callback for Config::cooperativeYield.
+ */
+inline void arduinoYield(void*) {
+  yield();
+}
+
+/**
  * @brief Initialize Wire with default pins and frequency.
  *
  * @param sda SDA pin number
@@ -158,7 +172,9 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
  * @param timeoutMs I2C timeout in milliseconds (default 50ms)
  * @return true on success
  */
-inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50) {
+inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50,
+                     uint8_t address = 0x48) {
+  (void)address;
 #if defined(ARDUINO_ARCH_ESP32)
   // Toggle SCL to release any stuck slave
   pinMode(scl, OUTPUT);
@@ -187,6 +203,10 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
   (void)timeoutMs;
 #endif
   return true;
+}
+
+inline void* configUser() {
+  return &Wire;
 }
 
 }  // namespace transport

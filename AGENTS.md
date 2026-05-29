@@ -3,7 +3,7 @@
 ## Role and Target
 You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
 
-- Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
+- Target: ESP32-S2 / ESP32-S3, Arduino and ESP-IDF consumers, PlatformIO/ESP-IDF.
 - Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
 - These rules are binding.
 
@@ -36,6 +36,12 @@ Rules:
 - No board-specific pins/bus in library code; only in `Config`.
 - Public headers only in `include/ADS1115/`.
 - Examples demonstrate usage and may use `examples/common/BoardConfig.h`.
+- Arduino examples may use Arduino APIs and `examples/common/` helpers.
+- ESP-IDF examples must be native IDF code. They must use `app_main`,
+  `driver/i2c_master.h`, `esp_timer`, FreeRTOS delays, IDF GPIO, and fixed C
+  buffers or native console APIs. They must not include Arduino example sources
+  or use `Arduino.h`, `Wire.h`, `String`, `Serial`, `TwoWire`,
+  `ArduinoCompat`, or `IdfArduinoCompat` facades.
 - Keep the layout boring and predictable.
 
 ---
@@ -48,6 +54,8 @@ Rules:
 - No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
 - No logging in library code; examples may log.
 - No macros for constants; use `static constexpr`. Macros only for conditional compile or logging helpers.
+- Public/core library headers and `src/` must not require Arduino or ESP-IDF
+  framework headers unless a platform-specific adapter is explicitly documented.
 
 ---
 
@@ -57,6 +65,8 @@ Rules:
 - `Config` MUST accept a transport adapter (function pointers or abstract interface).
 - Transport errors MUST map to `Status` (no leaking `Wire`, `esp_err_t`, etc.).
 - The library MUST NOT configure bus timeouts or pins.
+- ESP-IDF adapters/examples own IDF bus handles and map `esp_err_t` to
+  `Status`; the core must never expose or store IDF handles.
 
 ---
 

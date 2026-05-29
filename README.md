@@ -1,11 +1,15 @@
 # ADS1115 Driver Library
 
-Production-grade ADS1115 16-bit ADC I2C driver for ESP32-S2 / ESP32-S3
-(Arduino framework, PlatformIO).
+Production-grade ADS1115 16-bit ADC I2C driver for ESP32-S2 / ESP32-S3.
+The core driver is framework-neutral and can be used from Arduino or ESP-IDF
+through application-owned transport callbacks.
 
 ## Features
 
 - Injected I2C transport (no Wire dependency in library code)
+- No Arduino framework dependency in `include/` or `src/`
+- ESP-IDF component metadata and a native `i2c_master` example with the same
+  user-visible CLI coverage as the Arduino example
 - Health monitoring with READY / DEGRADED / OFFLINE states
 - Single-shot and continuous conversion modes
 - Configurable mux, gain, data rate, and comparator settings
@@ -26,6 +30,13 @@ lib_deps =
 ### Manual
 
 Copy `include/ADS1115/` and `src/` into your project.
+
+### ESP-IDF
+
+Use this repository as an ESP-IDF component, or use the native project under
+`examples/esp_idf/basic`. The IDF example owns the I2C master bus/device handle,
+GPIO setup, console glue, and timing callbacks, then passes only callbacks into
+`ADS1115::Config`.
 
 ## Quick Start
 
@@ -86,6 +97,8 @@ void setup() {
   cfg.i2cWrite = i2cWrite;
   cfg.i2cWriteRead = i2cWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = [](void*) -> uint32_t { return millis(); };
+  cfg.cooperativeYield = [](void*) { yield(); };
   cfg.i2cAddress = 0x48;
 
   auto status = device.begin(cfg);
@@ -201,6 +214,8 @@ health counters.
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - interactive CLI for ADS1115 features
+- `examples/esp_idf/basic/` - native ESP-IDF `i2c_master` CLI using `app_main`,
+  fixed command buffers, `esp_timer`, FreeRTOS delays, and IDF GPIO/I2C APIs
 - CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 ### Example Helpers (`examples/common/`)
@@ -209,11 +224,11 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 | File | Purpose |
 |------|---------|
-| `BoardConfig.h` | Pin definitions and Wire init for supported boards |
+| `BoardConfig.h` | Pin definitions and Arduino example I2C/GPIO init |
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
-| `I2cTransport.h` | Wire-based I2C transport adapter (`wireWrite`, `wireWriteRead`, `initWire`) |
-| `I2cScanner.h` | I2C bus scanner with table output and bus recovery |
+| `I2cTransport.h` | Arduino `Wire` transport adapter |
+| `I2cScanner.h` | Arduino I2C bus scanner with table output and bus recovery |
 | `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
 | `CliStyle.h` | Shared ANSI colors and CLI formatting helpers |
 | `CliShell.h` | Serial command-line shell with line editing |
@@ -226,7 +241,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 1. Threading model: single-threaded by default; not thread-safe.
 2. Timing model: `tick()` is bounded; conversion polling and readiness checks stay transport-timeout-bounded.
-3. Resource ownership: bus, pins, and timeout policy remain application-owned via `Config`.
+3. Resource ownership: bus, pins, timing, yield behavior, and timeout policy remain application-owned via `Config`.
 4. Memory behavior: no heap allocation in steady-state library operation.
 5. Error handling: all fallible APIs return `Status`; no exceptions and no silent failures.
 6. Health behavior: `OFFLINE` is latched. Normal public I2C operations return `BUSY` with `Driver is offline; call recover()` without touching the bus until `recover()` succeeds.
@@ -236,9 +251,12 @@ Not part of the library. These simulate project-level glue and keep examples sel
 ```bash
 pio test -e native
 python tools/check_cli_contract.py
+python tools/check_idf_example_contract.py
 python tools/check_core_timing_guard.py
 pio run -e esp32s3dev
 pio run -e esp32s2dev
+idf.py -C examples/esp_idf/basic set-target esp32s3 build
+idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
 ## Documentation

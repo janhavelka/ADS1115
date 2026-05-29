@@ -3,7 +3,6 @@
 
 #include "ADS1115/ADS1115.h"
 
-#include <Arduino.h>
 #include <climits>
 
 namespace ADS1115 {
@@ -1108,15 +1107,13 @@ uint32_t ADS1115::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);
   }
-  return millis();
+  return 0;
 }
 
 void ADS1115::_cooperativeYield() const {
   if (_config.cooperativeYield != nullptr) {
     _config.cooperativeYield(_config.timeUser);
-    return;
   }
-  yield();
 }
 
 } // namespace ADS1115
