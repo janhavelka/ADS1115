@@ -595,6 +595,31 @@ void test_single_shot_timing_wraparound_reaches_ready() {
   TEST_ASSERT_TRUE(st.ok());
 }
 
+void test_single_shot_raw_read_consumes_ready_before_voltage_read() {
+  FakeBus bus;
+  bus.reg[cmd::REG_CONVERSION] = 0x1000;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  Status st = dev.startConversion();
+  TEST_ASSERT_TRUE(st.inProgress());
+  bus.nowMs += dev.getConversionTimeMs();
+  dev.tick(bus.nowMs);
+  TEST_ASSERT_TRUE(dev.conversionReady());
+
+  int16_t raw = 0;
+  st = dev.readRaw(raw);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_INT16(0x1000, raw);
+
+  float volts = 0.0f;
+  st = dev.readVoltage(volts);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::CONVERSION_NOT_READY),
+                          static_cast<uint8_t>(st.code));
+}
+
 void test_read_conversion_ready_propagates_i2c_failure() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -1219,6 +1244,7 @@ int main() {
   RUN_TEST(test_offline_latches_normal_read_without_i2c_until_recover);
   RUN_TEST(test_failed_recover_from_offline_preserves_latch_after_partial_success);
   RUN_TEST(test_single_shot_timing_wraparound_reaches_ready);
+  RUN_TEST(test_single_shot_raw_read_consumes_ready_before_voltage_read);
   RUN_TEST(test_read_conversion_ready_propagates_i2c_failure);
   RUN_TEST(test_conversion_ready_convenience_returns_false_on_failure);
   RUN_TEST(test_read_raw_propagates_ready_poll_failure);

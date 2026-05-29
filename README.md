@@ -247,6 +247,10 @@ the scheduler cannot guarantee pulse capture.
 
 - `examples/01_basic_bringup_cli/` - diagnostic Arduino bring-up CLI for ADS1115 features
 - `examples/esp_idf/basic/` - native ESP-IDF build example with external bus context, mutex locking, timeout mapping, and periodic `tick()` scheduling
+- CLI address selection: `addr` prints the active ADS1115 address; `addr 0x48`,
+  `addr 0x49`, `addr 0x4A`, or `addr 0x4B` reinitializes the diagnostic driver
+  for that selected address. It does not automatically validate every detected
+  ADS1115-range device on the bus.
 - CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 Current examples are diagnostic and bring-up oriented. They do not demonstrate a
@@ -317,6 +321,11 @@ Before field release, validate at least:
 | Faults | Address NACK, data NACK, timeout, stuck bus, unplug/replug, brownout |
 | Recovery | OFFLINE latch, manual `recover()`, dirty-state clearing |
 | Platforms | Arduino ESP32-S2/S3, pure ESP-IDF adapter/build where used |
+
+The diagnostic CLI `addr` command can select one ADS1115 address at a time for
+manual validation. A bus scan showing multiple ADS1115-range addresses is not a
+validation result until the operator explicitly selects each address and runs the
+intended checks.
 
 ## Validation
 

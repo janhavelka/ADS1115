@@ -5,6 +5,9 @@
 
 #include <Arduino.h>
 #include <cstdlib>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp_system.h>
+#endif
 
 #include "examples/common/BoardConfig.h"
 #include "examples/common/BusDiag.h"
@@ -22,6 +25,8 @@
 
 ADS1115::ADS1115 device;
 bool verboseMode = false;
+static constexpr uint8_t DEFAULT_ADS1115_ADDRESS = 0x48;
+uint8_t activeI2cAddress = DEFAULT_ADS1115_ADDRESS;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 
 // ============================================================================
@@ -252,6 +257,7 @@ void printHelp() {
   cli::printHelpSection("Diagnostics");
   cli::printHelpItem("drv", "Show driver state and health");
   cli::printHelpItem("state", "Show compact one-line health summary");
+  cli::printHelpItem("addr [0x48..0x4B]", "Show or select ADS1115 I2C address");
   cli::printHelpItem("probe", "Probe device (no health tracking)");
   cli::printHelpItem("recover", "Manual recovery attempt");
   cli::printHelpItem("cfg / settings", "Print active configuration snapshot");
@@ -276,6 +282,33 @@ void printVersionInfo() {
                 ADS1115::VERSION_MINOR,
                 ADS1115::VERSION_PATCH);
 }
+
+#if defined(ARDUINO_ARCH_ESP32)
+const char* resetReasonToStr(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "UNKNOWN";
+  }
+}
+
+void printResetReason() {
+  const esp_reset_reason_t reason = esp_reset_reason();
+  Serial.printf("  Reset reason: %s (%d)\n", resetReasonToStr(reason), static_cast<int>(reason));
+}
+#else
+void printResetReason() {
+  Serial.println("  Reset reason: unavailable");
+}
+#endif
 
 ADS1115::Mux channelToMux(int channel) {
   switch (channel) {
@@ -430,6 +463,44 @@ bool parseBool01(const String& token, bool& out) {
   return true;
 }
 
+bool isValidAds1115Address(uint32_t address) {
+  return address >= 0x48U && address <= 0x4BU;
+}
+
+void printActiveAddress() {
+  Serial.printf("  Active ADS1115 address: 0x%02X\n", activeI2cAddress);
+}
+
+ADS1115::Config makeDriverConfig(uint8_t address) {
+  ADS1115::Config cfg;
+  cfg.i2cWrite = transport::wireWrite;
+  cfg.i2cWriteRead = transport::wireWriteRead;
+  cfg.i2cUser = &Wire;
+  cfg.nowMs = transport::arduinoNowMs;
+  cfg.cooperativeYield = transport::arduinoYield;
+  cfg.i2cAddress = address;
+  cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
+  cfg.offlineThreshold = 5;
+  if (board::ALERT_RDY_PIN >= 0) {
+    cfg.alertRdyPin = board::ALERT_RDY_PIN;
+    cfg.gpioRead = board::readAlertRdyPin;
+  }
+  return cfg;
+}
+
+ADS1115::Status beginDriverAtAddress(uint8_t address) {
+  if (!isValidAds1115Address(address)) {
+    return ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM,
+                                  "Invalid ADS1115 address",
+                                  static_cast<int32_t>(address));
+  }
+
+  device.end();
+  activeI2cAddress = address;
+  ADS1115::Config cfg = makeDriverConfig(address);
+  return device.begin(cfg);
+}
+
 bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline,
                            ADS1115::Status& failure) {
   failure = device.setMode(baseline.mode);
@@ -445,6 +516,31 @@ bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline,
     return false;
   }
   failure = device.setDataRate(baseline.dataRate);
+  return failure.ok();
+}
+
+bool restoreSelftestBaseline(const ADS1115::SettingsSnapshot& baseline,
+                             ADS1115::Status& failure) {
+  if (!restoreStressBaseline(baseline, failure)) {
+    return false;
+  }
+  failure = device.setComparatorMode(baseline.compMode);
+  if (!failure.ok()) {
+    return false;
+  }
+  failure = device.setComparatorPolarity(baseline.compPolarity);
+  if (!failure.ok()) {
+    return false;
+  }
+  failure = device.setComparatorLatch(baseline.compLatch);
+  if (!failure.ok()) {
+    return false;
+  }
+  failure = device.setThresholds(baseline.compThresholdLow, baseline.compThresholdHigh);
+  if (!failure.ok()) {
+    return false;
+  }
+  failure = device.setComparatorQueue(baseline.compQueue);
   return failure.ok();
 }
 
@@ -647,6 +743,8 @@ void runStressMix(int count) {
   ADS1115::Status firstFailure = ADS1115::Status::Ok();
   ADS1115::Status lastFailure = ADS1115::Status::Ok();
 
+  Serial.printf("=== stress_mix (%d ops, addr=0x%02X) ===\n", count, activeI2cAddress);
+
   if (haveBaseline && baseline.mode != ADS1115::Mode::SINGLE_SHOT) {
     prepStatus = device.setMode(ADS1115::Mode::SINGLE_SHOT);
   }
@@ -746,6 +844,7 @@ void runStressMix(int count) {
   healthAfter.capture(device);
 
   Serial.println("=== stress_mix summary ===");
+  printActiveAddress();
   const float successPct =
       (count > 0) ? (100.0f * static_cast<float>(okTotal) / static_cast<float>(count)) : 0.0f;
   Serial.printf("  Total: %sok=%lu%s %sfail=%lu%s (%s%.2f%%%s)\n",
@@ -827,6 +926,8 @@ void runStress(int count) {
   ADS1115::Status firstFailure = ADS1115::Status::Ok();
   ADS1115::Status lastFailure = ADS1115::Status::Ok();
 
+  Serial.printf("=== stress (%d samples, addr=0x%02X) ===\n", count, activeI2cAddress);
+
   for (int i = 0; i < count; ++i) {
     int16_t raw = 0;
     ADS1115::Status st = device.readBlocking(raw);
@@ -860,6 +961,7 @@ void runStress(int count) {
   healthAfter.capture(device);
 
   Serial.println("=== Stress Summary ===");
+  printActiveAddress();
   Serial.printf("  Total: %d\n", count);
   Serial.printf("  Success: %s%d%s\n",
                 goodIfNonZeroColor(static_cast<uint32_t>(ok)),
@@ -924,14 +1026,85 @@ void runSelfTest() {
       stats.fail++;
     }
   };
-  auto reportCheck = [&](const char* name, bool passed, const char* note) {
+  auto printFailureContext = [&](const char* operation,
+                                 const ADS1115::Status& status,
+                                 bool readyExpected) {
+    ADS1115::SettingsSnapshot snap;
+    ADS1115::Status snapStatus = device.getSettings(snap);
+    const char* mode = snapStatus.ok() ? modeToStr(snap.mode) : "UNKNOWN";
+    const char* rate = snapStatus.ok() ? rateToStr(snap.dataRate) : "UNKNOWN";
+    const char* mux = snapStatus.ok() ? muxToStr(snap.mux) : "UNKNOWN";
+    Serial.printf("    Context: op=%s code=%s detail=%ld msg=%s mode=%s rate=%s mux=%s readyExpected=%s\n",
+                  operation,
+                  errToStr(status.code),
+                  static_cast<long>(status.detail),
+                  (status.msg && status.msg[0]) ? status.msg : "",
+                  mode,
+                  rate,
+                  mux,
+                  readyExpected ? "YES" : "NO");
+  };
+  auto reportStatusCondition = [&](const char* name,
+                                   bool passed,
+                                   const ADS1115::Status& status,
+                                   const char* note,
+                                   bool readyExpected) {
     report(name, passed ? SelftestOutcome::PASS : SelftestOutcome::FAIL, note);
+    if (!passed) {
+      printFailureContext(name, status, readyExpected);
+    }
+  };
+  auto reportCheck = [&](const char* name, bool passed, const char* note) {
+    reportStatusCondition(name, passed, ADS1115::Status::Ok(), note, false);
+  };
+  auto reportStatusCheck = [&](const char* name,
+                               const ADS1115::Status& status,
+                               bool readyExpected) {
+    reportStatusCondition(name,
+                          status.ok(),
+                          status,
+                          status.ok() ? "" : errToStr(status.code),
+                          readyExpected);
+  };
+  auto reportStartCheck = [&](const char* name, const ADS1115::Status& status) {
+    const bool started = status.ok() || status.inProgress();
+    reportStatusCondition(name,
+                          started,
+                          status,
+                          started ? "" : errToStr(status.code),
+                          false);
+    return started;
   };
   auto reportSkip = [&](const char* name, const char* note) {
     report(name, SelftestOutcome::SKIP, note);
   };
+  auto waitForConversionReady = [&]() {
+    const uint32_t waitStartMs = millis();
+    bool ready = false;
+    ADS1115::Status rs = ADS1115::Status::Ok();
+    while ((millis() - waitStartMs) < 200U) {
+      rs = device.readConversionReady(ready);
+      if (!rs.ok() || ready) {
+        break;
+      }
+      device.tick(millis());
+    }
+    if (!rs.ok()) {
+      return rs;
+    }
+    if (!ready) {
+      return ADS1115::Status::Error(ADS1115::Err::TIMEOUT,
+                                    "conversion ready timeout",
+                                    200);
+    }
+    return ADS1115::Status::Ok();
+  };
 
   Serial.println("=== ADS1115 selftest (safe commands) ===");
+  printActiveAddress();
+  ADS1115::SettingsSnapshot baseline;
+  ADS1115::Status baselineStatus = device.getSettings(baseline);
+  const bool haveBaseline = baselineStatus.ok() && baseline.initialized;
 
   const uint32_t succBefore = device.totalSuccess();
   const uint32_t failBefore = device.totalFailures();
@@ -951,113 +1124,137 @@ void runSelfTest() {
       device.totalSuccess() == succBefore &&
       device.totalFailures() == failBefore &&
       device.consecutiveFailures() == consBefore;
-  reportCheck("probe responds", pst.ok(), pst.ok() ? "" : errToStr(pst.code));
+  reportStatusCheck("probe responds", pst, false);
   reportCheck("probe no-health-side-effects", probeHealthUnchanged, "");
 
   uint16_t cfg = 0;
   ADS1115::Status st = device.readConfig(cfg);
-  reportCheck("readConfig", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("readConfig", st, false);
 
   st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
-  reportCheck("setMode(single)", st.ok(), st.ok() ? "" : errToStr(st.code));
-  if (st.ok() && device.readConfig(cfg).ok()) {
+  reportStatusCheck("setMode(single)", st, false);
+  ADS1115::Status verifySt = st.ok() ? device.readConfig(cfg) : st;
+  if (st.ok() && verifySt.ok()) {
     const uint16_t modeBits =
         (cfg & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE;
     reportCheck("verify mode single", modeBits == static_cast<uint16_t>(ADS1115::Mode::SINGLE_SHOT), "");
   } else {
-    reportCheck("verify mode single", false, "readConfig failed");
+    reportStatusCondition("verify mode single", false, verifySt, "write/read verify failed", false);
   }
 
   st = device.setMode(ADS1115::Mode::CONTINUOUS);
-  reportCheck("setMode(continuous)", st.ok(), st.ok() ? "" : errToStr(st.code));
-  if (st.ok() && device.readConfig(cfg).ok()) {
+  reportStatusCheck("setMode(continuous)", st, false);
+  verifySt = st.ok() ? device.readConfig(cfg) : st;
+  if (st.ok() && verifySt.ok()) {
     const uint16_t modeBits =
         (cfg & ADS1115::cmd::MASK_MODE) >> ADS1115::cmd::BIT_MODE;
     reportCheck("verify mode continuous", modeBits == static_cast<uint16_t>(ADS1115::Mode::CONTINUOUS), "");
   } else {
-    reportCheck("verify mode continuous", false, "readConfig failed");
+    reportStatusCondition("verify mode continuous", false, verifySt, "write/read verify failed", false);
   }
 
   st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
-  reportCheck("restore mode(single)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("restore mode(single)", st, false);
 
   st = device.setGain(ADS1115::Gain::FSR_2_048V);
-  reportCheck("setGain(2.048V)", st.ok(), st.ok() ? "" : errToStr(st.code));
-  if (st.ok() && device.readConfig(cfg).ok()) {
+  reportStatusCheck("setGain(2.048V)", st, false);
+  verifySt = st.ok() ? device.readConfig(cfg) : st;
+  if (st.ok() && verifySt.ok()) {
     const uint16_t gainBits =
         (cfg & ADS1115::cmd::MASK_PGA) >> ADS1115::cmd::BIT_PGA;
     reportCheck("verify gain bits", gainBits == static_cast<uint16_t>(ADS1115::Gain::FSR_2_048V), "");
   } else {
-    reportCheck("verify gain bits", false, "readConfig failed");
+    reportStatusCondition("verify gain bits", false, verifySt, "write/read verify failed", false);
   }
 
   st = device.setDataRate(ADS1115::DataRate::SPS_128);
-  reportCheck("setRate(128sps)", st.ok(), st.ok() ? "" : errToStr(st.code));
-  if (st.ok() && device.readConfig(cfg).ok()) {
+  reportStatusCheck("setRate(128sps)", st, false);
+  verifySt = st.ok() ? device.readConfig(cfg) : st;
+  if (st.ok() && verifySt.ok()) {
     const uint16_t rateBits =
         (cfg & ADS1115::cmd::MASK_DR) >> ADS1115::cmd::BIT_DR;
     reportCheck("verify rate bits", rateBits == static_cast<uint16_t>(ADS1115::DataRate::SPS_128), "");
   } else {
-    reportCheck("verify rate bits", false, "readConfig failed");
+    reportStatusCondition("verify rate bits", false, verifySt, "write/read verify failed", false);
   }
 
   st = device.setMux(ADS1115::Mux::AIN0_GND);
-  reportCheck("setMux(AIN0_GND)", st.ok(), st.ok() ? "" : errToStr(st.code));
-  if (st.ok() && device.readConfig(cfg).ok()) {
+  reportStatusCheck("setMux(AIN0_GND)", st, false);
+  verifySt = st.ok() ? device.readConfig(cfg) : st;
+  if (st.ok() && verifySt.ok()) {
     const uint16_t muxBits =
         (cfg & ADS1115::cmd::MASK_MUX) >> ADS1115::cmd::BIT_MUX;
     reportCheck("verify mux bits", muxBits == static_cast<uint16_t>(ADS1115::Mux::AIN0_GND), "");
   } else {
-    reportCheck("verify mux bits", false, "readConfig failed");
+    reportStatusCondition("verify mux bits", false, verifySt, "write/read verify failed", false);
   }
 
   st = device.startConversion();
-  const bool started = st.ok() || st.inProgress();
-  reportCheck("startConversion", started, started ? "" : errToStr(st.code));
+  const bool started = reportStartCheck("startConversion(raw)", st);
   if (started) {
-    const uint32_t waitStartMs = millis();
-    bool ready = false;
-    ADS1115::Status rs = ADS1115::Status::Ok();
-    while ((millis() - waitStartMs) < 200U) {
-      rs = device.readConversionReady(ready);
-      if (!rs.ok() || ready) {
-        break;
-      }
-      device.tick(millis());
-    }
-    reportCheck("poll after start", rs.ok() && ready, rs.ok() ? "" : errToStr(rs.code));
+    ADS1115::Status rs = waitForConversionReady();
+    reportStatusCheck("poll after start(raw)", rs, true);
     int16_t raw = 0;
-    rs = device.readRaw(raw);
-    reportCheck("readRaw(after start)", rs.ok(), rs.ok() ? "" : errToStr(rs.code));
+    if (rs.ok()) {
+      rs = device.readRaw(raw);
+      reportStatusCheck("readRaw(after start)", rs, true);
+    } else {
+      reportSkip("readRaw(after start)", "conversion not ready");
+    }
   } else {
-    reportCheck("poll after start", false, "conversion not started");
-    reportCheck("readRaw(after start)", false, "conversion not started");
+    reportSkip("poll after start(raw)", "conversion not started");
+    reportSkip("readRaw(after start)", "conversion not started");
   }
 
   float volts = 0.0f;
-  st = device.readVoltage(volts);
-  reportCheck("readVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
+  st = device.startConversion();
+  const bool voltageStarted = reportStartCheck("startConversion(voltage)", st);
+  if (voltageStarted) {
+    ADS1115::Status rs = waitForConversionReady();
+    reportStatusCheck("poll before readVoltage", rs, true);
+    if (rs.ok()) {
+      st = device.readVoltage(volts);
+      reportStatusCheck("readVoltage", st, true);
+    } else {
+      reportSkip("readVoltage", "conversion not ready");
+    }
+  } else {
+    reportSkip("poll before readVoltage", "conversion not started");
+    reportSkip("readVoltage", "conversion not started");
+  }
 
   st = device.readBlockingVoltage(volts);
-  reportCheck("readBlockingVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("readBlockingVoltage", st, true);
 
   st = device.setComparatorMode(ADS1115::ComparatorMode::TRADITIONAL);
-  reportCheck("setComparatorMode", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("setComparatorMode", st, false);
   st = device.setComparatorPolarity(ADS1115::ComparatorPolarity::ACTIVE_LOW);
-  reportCheck("setComparatorPolarity", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("setComparatorPolarity", st, false);
   st = device.setComparatorLatch(ADS1115::ComparatorLatch::NON_LATCHING);
-  reportCheck("setComparatorLatch", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("setComparatorLatch", st, false);
   st = device.setComparatorQueue(ADS1115::ComparatorQueue::DISABLE);
-  reportCheck("setComparatorQueue", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("setComparatorQueue", st, false);
 
   int16_t low = 0;
   int16_t high = 0;
   st = device.getThresholds(low, high);
-  reportCheck("getThresholds", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("getThresholds", st, false);
 
   st = device.recover();
-  reportCheck("recover", st.ok(), st.ok() ? "" : errToStr(st.code));
+  reportStatusCheck("recover", st, false);
   reportCheck("isOnline", device.isOnline(), "");
+
+  ADS1115::Status restoreStatus = ADS1115::Status::Ok();
+  if (haveBaseline) {
+    const bool restored = restoreSelftestBaseline(baseline, restoreStatus);
+    reportStatusCondition("restore baseline",
+                          restored,
+                          restoreStatus,
+                          restored ? "" : errToStr(restoreStatus.code),
+                          false);
+  } else {
+    reportSkip("restore baseline", baselineStatus.ok() ? "snapshot unavailable" : errToStr(baselineStatus.code));
+  }
 
   Serial.printf("Selftest result: pass=%s%lu%s fail=%s%lu%s skip=%s%lu%s\n",
                 goodIfNonZeroColor(stats.pass), static_cast<unsigned long>(stats.pass), LOG_COLOR_RESET,
@@ -1084,8 +1281,27 @@ void processCommand(const String& cmdLine) {
   } else if (cmd == "scan") {
     bus_diag::scan();
   } else if (cmd == "state") {
+    printActiveAddress();
     printHealthView(device);
+  } else if (cmd == "addr") {
+    printActiveAddress();
+  } else if (cmd.startsWith("addr ")) {
+    String token = cmd.substring(5);
+    token.trim();
+    uint32_t address = 0;
+    if (!parseU32(token, address) || !isValidAds1115Address(address)) {
+      LOGW("Usage: addr [0x48|0x49|0x4A|0x4B]");
+      return;
+    }
+    LOGI("Selecting ADS1115 address 0x%02X", static_cast<unsigned>(address));
+    ADS1115::Status st = beginDriverAtAddress(static_cast<uint8_t>(address));
+    printStatus(st);
+    printActiveAddress();
+    if (st.ok()) {
+      printDriverHealth();
+    }
   } else if (cmd == "probe") {
+    printActiveAddress();
     LOGI("Probing device (no health tracking)...");
     HealthSnapshot<ADS1115::ADS1115> before;
     before.capture(device);
@@ -1096,6 +1312,7 @@ void processCommand(const String& cmdLine) {
     Serial.println("  Health changes:");
     printHealthDiff(before, after);
   } else if (cmd == "drv") {
+    printActiveAddress();
     printDriverHealth();
   } else if (cmd == "recover") {
     LOGI("Attempting recovery...");
@@ -1130,6 +1347,7 @@ void processCommand(const String& cmdLine) {
       printStatus(st);
     }
   } else if (cmd == "raw") {
+    printActiveAddress();
     int16_t raw = 0;
     auto st = device.readRaw(raw);
     if (st.ok()) {
@@ -1139,6 +1357,7 @@ void processCommand(const String& cmdLine) {
       printStatus(st);
     }
   } else if (cmd == "voltage") {
+    printActiveAddress();
     float volts = 0.0f;
     auto st = device.readVoltage(volts);
     if (st.ok()) {
@@ -1147,6 +1366,7 @@ void processCommand(const String& cmdLine) {
       printStatus(st);
     }
   } else if (cmd == "readv") {
+    printActiveAddress();
     float volts = 0.0f;
     auto st = device.readBlockingVoltage(volts);
     if (st.ok()) {
@@ -1155,6 +1375,7 @@ void processCommand(const String& cmdLine) {
       printStatus(st);
     }
   } else if (cmd == "read") {
+    printActiveAddress();
     int16_t raw = 0;
     auto st = device.readBlocking(raw);
     if (st.ok()) {
@@ -1169,6 +1390,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Invalid count (1-10000)");
       return;
     }
+    printActiveAddress();
     for (int32_t i = 0; i < count; ++i) {
       int16_t raw = 0;
       auto st = device.readBlocking(raw);
@@ -1417,6 +1639,7 @@ void processCommand(const String& cmdLine) {
     }
     runStress(count);
   } else if (cmd == "config" || cmd == "cfg" || cmd == "settings") {
+    printActiveAddress();
     printConfig();
     printSettingsSnapshot();
   } else {
@@ -1433,6 +1656,8 @@ void setup() {
   delay(100);
 
   LOGI("=== ADS1115 Bringup Example ===");
+  printVersionInfo();
+  printResetReason();
 
   if (!board::initI2c()) {
     LOGE("Failed to initialize I2C");
@@ -1444,20 +1669,7 @@ void setup() {
 
   bus_diag::scan();
 
-  ADS1115::Config cfg;
-  cfg.i2cWrite = transport::wireWrite;
-  cfg.i2cWriteRead = transport::wireWriteRead;
-  cfg.i2cUser = &Wire;
-  cfg.nowMs = transport::arduinoNowMs;
-  cfg.cooperativeYield = transport::arduinoYield;
-  cfg.i2cAddress = 0x48;
-  cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
-  cfg.offlineThreshold = 5;
-  if (board::ALERT_RDY_PIN >= 0) {
-    cfg.alertRdyPin = board::ALERT_RDY_PIN;
-    cfg.gpioRead = board::readAlertRdyPin;
-  }
-
+  ADS1115::Config cfg = makeDriverConfig(activeI2cAddress);
   auto st = device.begin(cfg);
   if (!st.ok()) {
     LOGE("Failed to initialize device");
@@ -1466,6 +1678,7 @@ void setup() {
   }
 
   LOGI("Device initialized successfully");
+  printActiveAddress();
   printDriverHealth();
 
   Serial.println("\nType 'help' for commands");
