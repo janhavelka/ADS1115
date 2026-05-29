@@ -3,7 +3,7 @@
 ## Role and Target
 You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
 
-- Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
+- Target: ESP32-S2 / ESP32-S3, Arduino and ESP-IDF consumers, PlatformIO/ESP-IDF.
 - Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
 - These rules are binding.
 
@@ -36,6 +36,12 @@ Rules:
 - No board-specific pins/bus in library code; only in `Config`.
 - Public headers only in `include/ADS1115/`.
 - Examples demonstrate usage and may use `examples/common/BoardConfig.h`.
+- Arduino examples may use Arduino APIs and `examples/common/` helpers.
+- ESP-IDF examples must be native IDF code. They must use `app_main`,
+  `driver/i2c_master.h`, `esp_timer`, FreeRTOS delays, IDF GPIO, and fixed C
+  buffers or native console APIs. They must not include Arduino example sources
+  or use `Arduino.h`, `Wire.h`, `String`, `Serial`, `TwoWire`,
+  `ArduinoCompat`, or `IdfArduinoCompat` facades.
 - Keep the layout boring and predictable.
 
 ---
@@ -48,6 +54,17 @@ Rules:
 - No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
 - No logging in library code; examples may log.
 - No macros for constants; use `static constexpr`. Macros only for conditional compile or logging helpers.
+- Public/core library headers and `src/` must not require Arduino or ESP-IDF
+  framework headers unless a platform-specific adapter is explicitly documented.
+- The core library is not thread-safe and is not ISR-safe. Applications must
+  externally serialize all calls into a driver instance and must not call public
+  APIs from interrupt context.
+- Public fallible APIs must return `Status`; silent failure is unacceptable.
+- Multi-register hardware updates must be explicit about partial hardware state.
+  If a later transaction fails after an earlier register write may have reached
+  the chip, the driver must preserve the original transport error, expose a
+  hardware-config-dirty diagnostic, and clear it only after a successful full
+  resync/recover path.
 
 ---
 
@@ -57,6 +74,12 @@ Rules:
 - `Config` MUST accept a transport adapter (function pointers or abstract interface).
 - Transport errors MUST map to `Status` (no leaking `Wire`, `esp_err_t`, etc.).
 - The library MUST NOT configure bus timeouts or pins.
+- The library MUST remain transport-injected and non-owning of the I2C bus.
+  Bus handles, pins, clock rate, timeout policy, bus recovery, and locking
+  belong to the application or example adapter, not the core library.
+- Example adapters that are diagnostic-only must say so. Production examples
+  must demonstrate shared-bus ownership, external serialization/locking, timeout
+  policy, and nonblocking tick scheduling.
 
 ---
 
@@ -162,6 +185,26 @@ Transport callbacks (Config::i2cWrite, i2cWriteRead)
 - `_lastError` - most recent error Status
 - `_consecutiveFailures` - failures since last success (resets on success)
 - `_totalFailures` / `_totalSuccess` - lifetime counters (wrap at max)
+
+---
+
+## Hardening Subagent Roles
+
+When using subagents for hardening work, split responsibilities as follows:
+
+- **Core Contracts Agent**: public API compatibility, framework neutrality,
+  transport injection, timeout semantics, strict init/read-back behavior,
+  dirty-state tracking, shutdown semantics, and copy/move prevention.
+- **Tests/Fault Injection Agent**: native fake-transport tests for missing
+  clocks, partial write failures, dirty-state clearing, probe error mapping,
+  strict read-back masking, continuous-mode semantics, shutdown behavior, and
+  compile-time copy/move prevention.
+- **Docs/Examples/CI Agent**: README/Doxygen/API latency documentation,
+  example honesty, ALERT/RDY/PGA/comparator warnings, hardware validation
+  matrix, PlatformIO/ESP-IDF build coverage, and CI command accuracy.
+- **Final Integration Review Agent**: verify all changes together, check that
+  guard scripts and builds match claimed results, identify remaining hardware
+  validation gaps, and ensure no unrelated churn was introduced.
 
 ---
 

@@ -59,6 +59,10 @@ enum class Mux : uint8_t {
 };
 
 /// @brief Programmable gain amplifier full-scale range.
+///
+/// These values set ADC full-scale conversion range only. They do not increase
+/// ADS1115 analog input absolute maximum ratings; keep all inputs within the
+/// datasheet electrical limits for the powered device.
 enum class Gain : uint8_t {
   FSR_6_144V = 0,  ///< +/-6.144V (LSB = 187.5uV)
   FSR_4_096V = 1,  ///< +/-4.096V (LSB = 125uV)
@@ -119,14 +123,15 @@ struct Config {
   I2cWriteReadFn i2cWriteRead = nullptr;
   void* i2cUser = nullptr;
 
-  // === Timing Hooks (optional) ===
-  NowMsFn nowMs = nullptr;                 ///< Monotonic millisecond source
+  // === Timing Hooks (optional; required by blocking conversion APIs) ===
+  NowMsFn nowMs = nullptr;                 ///< Monotonic source; required by readBlocking*
   YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
   void* timeUser = nullptr;                ///< User context for timing hooks
 
   // === Device Settings ===
   uint8_t i2cAddress = 0x48;       ///< 0x48-0x4B based on ADDR pin
   uint32_t i2cTimeoutMs = 50;      ///< I2C transaction timeout in ms
+  bool strictInitVerify = false;   ///< Optional read-back plausibility check after full apply
 
   // === Conversion Settings ===
   Mux mux = Mux::AIN0_GND;               ///< Input multiplexer

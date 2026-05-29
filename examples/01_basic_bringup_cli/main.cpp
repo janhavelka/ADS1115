@@ -1,6 +1,7 @@
 /// @file main.cpp
-/// @brief ADS1115 basic bringup example
-/// @note This is an EXAMPLE, not part of the library
+/// @brief ADS1115 diagnostic bring-up example
+/// @note This is an EXAMPLE, not part of the library. It is not a production
+/// shared-bus manager template.
 
 #include <Arduino.h>
 #include <cstdlib>
@@ -1447,6 +1448,8 @@ void setup() {
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = transport::arduinoNowMs;
+  cfg.cooperativeYield = transport::arduinoYield;
   cfg.i2cAddress = 0x48;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.offlineThreshold = 5;

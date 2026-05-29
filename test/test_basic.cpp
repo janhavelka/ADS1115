@@ -2,6 +2,7 @@
 /// @brief Native contract tests for ADS1115 lifecycle and health behavior.
 
 #include <unity.h>
+#include <type_traits>
 
 #include "Arduino.h"
 #include "Wire.h"
@@ -21,6 +22,7 @@ struct FakeBus {
   Status writeStatus = Status::Ok();
   Status readStatus = Status::Ok();
   Status failWriteStatus = Status::Error(Err::I2C_ERROR, "forced write failure", -1);
+  Status failReadStatus = Status::Error(Err::I2C_ERROR, "forced read failure", -1);
   uint16_t reg[4] = {
     cmd::CONVERSION_DEFAULT,
     cmd::CONFIG_DEFAULT,
@@ -31,10 +33,29 @@ struct FakeBus {
   uint32_t writeCalls = 0;
   uint32_t readCalls = 0;
   uint32_t failWriteOnCall = 0;
+  uint32_t failReadOnCall = 0;
+  uint16_t configReadOrMask = 0;
+  uint16_t configReadXorMask = 0;
   uint8_t lastWriteReg = 0xFF;
   uint16_t lastWriteValue = 0;
   bool gpioLevel = true;
 };
+
+static_assert(!std::is_copy_constructible<ADS1115::ADS1115>::value,
+              "ADS1115 driver instances must not be copy constructible");
+static_assert(!std::is_copy_assignable<ADS1115::ADS1115>::value,
+              "ADS1115 driver instances must not be copy assignable");
+static_assert(!std::is_move_constructible<ADS1115::ADS1115>::value,
+              "ADS1115 driver instances must not be move constructible");
+static_assert(!std::is_move_assignable<ADS1115::ADS1115>::value,
+              "ADS1115 driver instances must not be move assignable");
+
+void resetIoCounters(FakeBus& bus) {
+  bus.writeCalls = 0;
+  bus.readCalls = 0;
+  bus.failWriteOnCall = 0;
+  bus.failReadOnCall = 0;
+}
 
 Status fakeWrite(uint8_t, const uint8_t* data, size_t len, uint32_t, void* user) {
   FakeBus* bus = static_cast<FakeBus*>(user);
@@ -63,13 +84,19 @@ Status fakeWriteRead(uint8_t, const uint8_t* txData, size_t txLen, uint8_t* rxDa
   if (!bus->readStatus.ok()) {
     return bus->readStatus;
   }
+  if (bus->failReadOnCall != 0 && bus->readCalls == bus->failReadOnCall) {
+    return bus->failReadStatus;
+  }
   if (txData == nullptr || txLen == 0 || (rxLen > 0 && rxData == nullptr)) {
     return Status::Error(Err::INVALID_PARAM, "invalid fake I2C buffers");
   }
   if (txData[0] >= 4) {
     return Status::Error(Err::INVALID_PARAM, "invalid fake register");
   }
-  const uint16_t value = bus->reg[txData[0]];
+  uint16_t value = bus->reg[txData[0]];
+  if (txData[0] == cmd::REG_CONFIG) {
+    value = static_cast<uint16_t>((value | bus->configReadOrMask) ^ bus->configReadXorMask);
+  }
   if (rxLen >= 1) {
     rxData[0] = static_cast<uint8_t>((value >> 8) & 0xFF);
   }
@@ -141,6 +168,7 @@ void test_config_defaults() {
   TEST_ASSERT_NULL(cfg.i2cWriteRead);
   TEST_ASSERT_EQUAL_HEX8(0x48, cfg.i2cAddress);
   TEST_ASSERT_EQUAL_UINT16(50, cfg.i2cTimeoutMs);
+  TEST_ASSERT_FALSE(cfg.strictInitVerify);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mux::AIN0_GND), static_cast<uint8_t>(cfg.mux));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Gain::FSR_2_048V), static_cast<uint8_t>(cfg.gain));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DataRate::SPS_128), static_cast<uint8_t>(cfg.dataRate));
@@ -178,9 +206,12 @@ void test_get_settings_snapshot() {
   TEST_ASSERT_EQUAL_HEX8(0x4B, snap.i2cAddress);
   TEST_ASSERT_EQUAL_UINT32(10u, snap.i2cTimeoutMs);
   TEST_ASSERT_EQUAL_UINT8(3u, snap.offlineThreshold);
+  TEST_ASSERT_FALSE(snap.strictInitVerify);
   TEST_ASSERT_TRUE(snap.hasNowMsHook);
   TEST_ASSERT_TRUE(snap.hasGpioReadHook);
   TEST_ASSERT_TRUE(snap.hasCooperativeYieldHook);
+  TEST_ASSERT_FALSE(snap.hardwareConfigDirty);
+  TEST_ASSERT_TRUE(snap.hardwareConfigDirtyError.ok());
   TEST_ASSERT_EQUAL(17, snap.alertRdyPin);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mux::AIN1_GND),
                           static_cast<uint8_t>(snap.mux));
@@ -253,7 +284,7 @@ void test_failed_begin_probe_resets_cached_config() {
   bus.readStatus = Status::Error(Err::TIMEOUT, "forced begin timeout", -10);
 
   Status st = dev.begin(cfg);
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::DEVICE_NOT_FOUND),
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
                           static_cast<uint8_t>(st.code));
   TEST_ASSERT_FALSE(dev.isInitialized());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
@@ -294,6 +325,82 @@ void test_begin_success_sets_ready_and_counters() {
   TEST_ASSERT_EQUAL_UINT32(0u, dev.lastOkMs());
 }
 
+void test_begin_strict_readback_success_masks_config_os_bit() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  bus.configReadOrMask = cmd::MASK_OS;
+
+  Status st = dev.begin(cfg);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(dev.isInitialized());
+  SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(dev.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.strictInitVerify);
+  TEST_ASSERT_FALSE(snap.hardwareConfigDirty);
+}
+
+void test_begin_strict_readback_mismatch_fails_without_initializing() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  bus.configReadXorMask = cmd::MASK_DR;
+
+  Status st = dev.begin(cfg);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+}
+
+void test_recover_strict_readback_success_clears_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  TEST_ASSERT_FALSE(dev.recover().ok());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+
+  resetIoCounters(bus);
+  bus.configReadOrMask = cmd::MASK_OS;
+  Status st = dev.recover();
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+}
+
+void test_recover_strict_readback_mismatch_keeps_dirty_and_preserves_error() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  TEST_ASSERT_FALSE(dev.recover().ok());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+
+  resetIoCounters(bus);
+  bus.configReadXorMask = cmd::MASK_MODE;
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
+  TEST_ASSERT_EQUAL_STRING("Config readback mismatch", dev.hardwareConfigDirtyError().msg);
+}
+
 void test_probe_failure_does_not_update_health() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -306,12 +413,42 @@ void test_probe_failure_does_not_update_health() {
 
   bus.readStatus = Status::Error(Err::TIMEOUT, "forced probe timeout", -7);
   Status st = dev.probe();
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::DEVICE_NOT_FOUND),
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
                           static_cast<uint8_t>(st.code));
   TEST_ASSERT_EQUAL_UINT32(beforeSuccess, dev.totalSuccess());
   TEST_ASSERT_EQUAL_UINT32(beforeFailures, dev.totalFailures());
   TEST_ASSERT_EQUAL_UINT8(beforeConsecutive, dev.consecutiveFailures());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(beforeState),
+                          static_cast<uint8_t>(dev.state()));
+}
+
+void test_probe_maps_i2c_nack_addr_to_device_not_found() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+
+  bus.readStatus = Status::Error(Err::I2C_NACK_ADDR, "address nack", -20);
+  Status st = dev.probe();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::DEVICE_NOT_FOUND),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-20, st.detail);
+}
+
+void test_probe_preserves_distinct_i2c_errors() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+
+  const Err errors[] = {Err::I2C_TIMEOUT, Err::TIMEOUT, Err::I2C_BUS,
+                        Err::I2C_NACK_DATA, Err::I2C_ERROR};
+  for (size_t i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i) {
+    bus.readStatus = Status::Error(errors[i], "probe failure", static_cast<int32_t>(-30 - i));
+    Status st = dev.probe();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(errors[i]), static_cast<uint8_t>(st.code));
+    TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(-30 - i), st.detail);
+  }
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::READY),
                           static_cast<uint8_t>(dev.state()));
 }
 
@@ -545,6 +682,26 @@ void test_continuous_readiness_waits_for_data_rate_interval() {
   TEST_ASSERT_TRUE(ready);
 }
 
+void test_continuous_read_raw_returns_latest_without_fresh_wait() {
+  FakeBus bus;
+  bus.reg[cmd::REG_CONVERSION] = 0x1234;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::CONTINUOUS;
+  cfg.dataRate = DataRate::SPS_8;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  bool ready = true;
+  TEST_ASSERT_TRUE(dev.readConversionReady(ready).ok());
+  TEST_ASSERT_FALSE(ready);
+
+  int16_t raw = 0;
+  Status st = dev.readRaw(raw);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_INT16(0x1234, raw);
+}
+
 void test_alert_ready_pin_path_does_not_poll_config_register() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -693,6 +850,125 @@ void test_enable_conversion_ready_pin_rolls_back_cache_on_write_failure() {
                           static_cast<uint8_t>(dev.getConfig().compLatch));
 }
 
+void test_apply_config_failure_on_first_write_preserves_error_not_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 1;
+  bus.failWriteStatus = Status::Error(Err::I2C_TIMEOUT, "first write timeout", -41);
+
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-41, st.detail);
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+}
+
+void test_apply_config_failure_on_second_write_marks_hardware_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  bus.failWriteStatus = Status::Error(Err::I2C_BUS, "second write bus", -42);
+
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
+  TEST_ASSERT_EQUAL_INT32(-42, dev.hardwareConfigDirtyError().detail);
+}
+
+void test_apply_config_failure_on_third_write_marks_hardware_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 3;
+  bus.failWriteStatus = Status::Error(Err::I2C_ERROR, "third write failure", -43);
+
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(dev.getSettings(snap).ok());
+  TEST_ASSERT_TRUE(snap.hardwareConfigDirty);
+  TEST_ASSERT_EQUAL_INT32(-43, snap.hardwareConfigDirtyError.detail);
+}
+
+void test_set_thresholds_second_write_failure_marks_hardware_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  bus.failWriteStatus = Status::Error(Err::I2C_TIMEOUT, "high threshold timeout", -44);
+
+  Status st = dev.setThresholds(-123, 456);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(-123), bus.reg[cmd::REG_LO_THRESH]);
+  TEST_ASSERT_FALSE(bus.reg[cmd::REG_HI_THRESH] == static_cast<uint16_t>(456));
+}
+
+void test_enable_conversion_ready_pin_partial_failure_marks_hardware_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  bus.failWriteStatus = Status::Error(Err::I2C_ERROR, "partial ready pin failure", -45);
+
+  Status st = dev.enableConversionReadyPin();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_INT32(-45, dev.hardwareConfigDirtyError().detail);
+}
+
+void test_recover_success_clears_hardware_dirty_after_full_resync() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  TEST_ASSERT_FALSE(dev.recover().ok());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+
+  resetIoCounters(bus);
+  Status st = dev.recover();
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirtyError().ok());
+}
+
+void test_successful_config_only_setter_does_not_clear_prior_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  TEST_ASSERT_FALSE(dev.setThresholds(-11, 22).ok());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+
+  resetIoCounters(bus);
+  Status st = dev.setGain(Gain::FSR_0_512V);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+}
+
 void test_invalid_raw_register_is_rejected_without_bus_access() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -738,6 +1014,44 @@ void test_read_blocking_times_out_when_injected_clock_stalls() {
   Status st = dev.readBlocking(raw, 200);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
                           static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev._conversionStarted);
+  TEST_ASSERT_FALSE(dev._conversionReady);
+}
+
+void test_read_blocking_requires_now_ms_without_starting_conversion() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  const uint32_t writesBefore = bus.writeCalls;
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 200);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_FALSE(dev._conversionStarted);
+  TEST_ASSERT_FALSE(dev._conversionReady);
+}
+
+void test_read_blocking_voltage_requires_now_ms_without_starting_conversion() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  const uint32_t writesBefore = bus.writeCalls;
+
+  float volts = 0.0f;
+  Status st = dev.readBlockingVoltage(volts, 200);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
   TEST_ASSERT_FALSE(dev._conversionStarted);
   TEST_ASSERT_FALSE(dev._conversionReady);
 }
@@ -793,6 +1107,73 @@ void test_register_access_after_end_does_not_touch_bus() {
   TEST_ASSERT_EQUAL_UINT32(writesAfterBegin + 1u, bus.writeCalls);
 }
 
+void test_shutdown_success_writes_single_shot_mode_and_keeps_initialized() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::CONTINUOUS;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  Status st = dev.shutdown();
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mode::SINGLE_SHOT),
+                          static_cast<uint8_t>(dev.getMode()));
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(Mode::SINGLE_SHOT),
+                           (bus.reg[cmd::REG_CONFIG] & cmd::MASK_MODE) >> cmd::BIT_MODE);
+  TEST_ASSERT_FALSE(dev._conversionStarted);
+}
+
+void test_shutdown_returns_original_transport_error() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 1;
+  bus.failWriteStatus = Status::Error(Err::I2C_TIMEOUT, "shutdown timeout", -61);
+
+  Status st = dev.shutdown();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-61, st.detail);
+  TEST_ASSERT_TRUE(dev.isInitialized());
+}
+
+void test_shutdown_offline_returns_busy_without_bus_access() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 1;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  bus.readStatus = Status::Error(Err::I2C_TIMEOUT, "offline", -62);
+  TEST_ASSERT_FALSE(dev.recover().ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+  const uint32_t writesBefore = bus.writeCalls;
+
+  Status st = dev.shutdown();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY), static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+}
+
+void test_end_ignores_shutdown_write_failure_and_uninitializes() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 1;
+  bus.failWriteStatus = Status::Error(Err::I2C_TIMEOUT, "end timeout", -63);
+
+  dev.end();
+
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+}
+
 void test_end_while_offline_does_not_touch_bus() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -825,7 +1206,13 @@ int main() {
   RUN_TEST(test_failed_begin_probe_resets_cached_config);
   RUN_TEST(test_begin_normalizes_offline_threshold_on_stored_copy);
   RUN_TEST(test_begin_success_sets_ready_and_counters);
+  RUN_TEST(test_begin_strict_readback_success_masks_config_os_bit);
+  RUN_TEST(test_begin_strict_readback_mismatch_fails_without_initializing);
+  RUN_TEST(test_recover_strict_readback_success_clears_dirty);
+  RUN_TEST(test_recover_strict_readback_mismatch_keeps_dirty_and_preserves_error);
   RUN_TEST(test_probe_failure_does_not_update_health);
+  RUN_TEST(test_probe_maps_i2c_nack_addr_to_device_not_found);
+  RUN_TEST(test_probe_preserves_distinct_i2c_errors);
   RUN_TEST(test_recover_failure_updates_health);
   RUN_TEST(test_recover_success_returns_ready);
   RUN_TEST(test_recover_reaches_offline_when_threshold_is_one);
@@ -837,6 +1224,7 @@ int main() {
   RUN_TEST(test_read_raw_propagates_ready_poll_failure);
   RUN_TEST(test_read_raw_reconstructs_signed_conversion_register);
   RUN_TEST(test_continuous_readiness_waits_for_data_rate_interval);
+  RUN_TEST(test_continuous_read_raw_returns_latest_without_fresh_wait);
   RUN_TEST(test_alert_ready_pin_path_does_not_poll_config_register);
   RUN_TEST(test_config_setters_write_expected_config_bits);
   RUN_TEST(test_write_config_accepts_datasheet_pga_aliases_for_0_256v);
@@ -845,11 +1233,24 @@ int main() {
   RUN_TEST(test_set_thresholds_does_not_commit_cache_on_write_failure);
   RUN_TEST(test_comparator_setter_does_not_commit_cache_on_write_failure);
   RUN_TEST(test_enable_conversion_ready_pin_rolls_back_cache_on_write_failure);
+  RUN_TEST(test_apply_config_failure_on_first_write_preserves_error_not_dirty);
+  RUN_TEST(test_apply_config_failure_on_second_write_marks_hardware_dirty);
+  RUN_TEST(test_apply_config_failure_on_third_write_marks_hardware_dirty);
+  RUN_TEST(test_set_thresholds_second_write_failure_marks_hardware_dirty);
+  RUN_TEST(test_enable_conversion_ready_pin_partial_failure_marks_hardware_dirty);
+  RUN_TEST(test_recover_success_clears_hardware_dirty_after_full_resync);
+  RUN_TEST(test_successful_config_only_setter_does_not_clear_prior_dirty);
   RUN_TEST(test_invalid_raw_register_is_rejected_without_bus_access);
   RUN_TEST(test_write_conversion_register_is_rejected_as_read_only);
   RUN_TEST(test_read_blocking_times_out_when_injected_clock_stalls);
+  RUN_TEST(test_read_blocking_requires_now_ms_without_starting_conversion);
+  RUN_TEST(test_read_blocking_voltage_requires_now_ms_without_starting_conversion);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
   RUN_TEST(test_register_access_after_end_does_not_touch_bus);
+  RUN_TEST(test_shutdown_success_writes_single_shot_mode_and_keeps_initialized);
+  RUN_TEST(test_shutdown_returns_original_transport_error);
+  RUN_TEST(test_shutdown_offline_returns_busy_without_bus_access);
+  RUN_TEST(test_end_ignores_shutdown_write_failure_and_uninitializes);
   RUN_TEST(test_end_while_offline_does_not_touch_bus);
   return UNITY_END();
 }

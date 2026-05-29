@@ -7,6 +7,8 @@
  * directly; this adapter bridges them.
  *
  * NOT part of the library API. Example-only.
+ * This is diagnostic Arduino glue, not a production shared-bus manager. A
+ * production adapter should implement external bus locking and timeout policy.
  */
 
 #pragma once
@@ -147,6 +149,14 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
   }
 
   return ADS1115::Status::Ok();
+}
+
+inline uint32_t arduinoNowMs(void*) {
+  return millis();
+}
+
+inline void arduinoYield(void*) {
+  yield();
 }
 
 /**

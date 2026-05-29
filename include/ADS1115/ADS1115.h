@@ -27,9 +27,12 @@ struct SettingsSnapshot {
   uint8_t i2cAddress = 0x48;
   uint32_t i2cTimeoutMs = 0;
   uint8_t offlineThreshold = 0;
+  bool strictInitVerify = false;
   bool hasNowMsHook = false;
   bool hasGpioReadHook = false;
   bool hasCooperativeYieldHook = false;
+  bool hardwareConfigDirty = false;
+  Status hardwareConfigDirtyError = Status::Ok();
   int alertRdyPin = -1;
   bool alertRdyPinConfigured = false;
   bool conversionReadyModeEnabled = false;
@@ -51,18 +54,46 @@ struct SettingsSnapshot {
 };
 
 /// @brief Transport-agnostic ADS1115 driver.
+///
+/// The driver is externally serialized: it does not provide internal locking
+/// and is not safe for concurrent calls from multiple tasks. Public APIs can
+/// perform blocking I2C through the injected transport and are not ISR-safe.
+///
+/// Latency model: each I2C transaction can block up to Config::i2cTimeoutMs.
+/// Register read/write APIs perform one transaction. CONFIG-only setters
+/// perform one write. Full resync paths such as begin(), recover(), and
+/// enableConversionReadyPin() can perform three writes, plus optional strict
+/// read-back verification reads.
 class ADS1115 {
 public:
+  ADS1115() = default;
+  ADS1115(const ADS1115&) = delete;
+  ADS1115& operator=(const ADS1115&) = delete;
+  ADS1115(ADS1115&&) = delete;
+  ADS1115& operator=(ADS1115&&) = delete;
+  ~ADS1115() = default;
+
   // === Lifecycle ===
   /// Initialize the driver with configuration and verify device presence.
+  /// ADS1115 has no ID register; strictInitVerify adds a register read-back
+  /// plausibility check with dynamic CONFIG OS/status bits masked out.
+  /// Transaction count: one CONFIG read plus three writes; strict mode adds
+  /// three read-back transactions.
   /// @param config Transport callbacks, device address, timing, and conversion settings.
   /// @return Status::Ok() when the device responds and cached configuration is applied.
   Status begin(const Config& config);
   /// Process pending operations (currently bounded polling only).
   /// @param nowMs Current monotonic time in milliseconds.
   void tick(uint32_t nowMs);
-  /// Shut the device down to single-shot idle and clear cached conversion state.
+  /// Best-effort shutdown to single-shot idle and clear cached conversion state.
+  /// The shutdown write result is intentionally ignored; use shutdown() when the
+  /// application needs an explicit I2C status.
   void end();
+
+  /// Request single-shot idle mode while keeping the driver initialized.
+  /// Transaction count: one CONFIG write.
+  /// @return Status::Ok() when the CONFIG write succeeds.
+  Status shutdown();
 
   /// Check if begin() completed successfully and end() has not been called.
   /// @return true when the driver is initialized.
@@ -74,9 +105,14 @@ public:
 
   // === Diagnostics (no health tracking) ===
   /// Probe the device without updating health counters.
+  /// Address NACK maps to DEVICE_NOT_FOUND; distinguishable timeout, bus, data
+  /// NACK, and generic I2C failures are preserved.
+  /// Transaction count: one CONFIG read.
   /// @return Status::Ok() when the CONFIG register can be read.
   Status probe();
   /// Attempt recovery from DEGRADED or OFFLINE state using tracked I2C.
+  /// Transaction count: one CONFIG read plus three writes; strict mode adds
+  /// three read-back transactions.
   /// @return Status::Ok() when the device responds and cached configuration is restored.
   Status recover();
 
@@ -101,6 +137,10 @@ public:
   uint32_t lastErrorMs() const { return _lastErrorMs; }
   /// @return Most recent tracked error.
   Status lastError() const { return _lastError; }
+  /// @return true when a failed multi-register update may have left hardware out of sync.
+  bool hardwareConfigDirty() const { return _hardwareConfigDirty; }
+  /// @return Original Status from the failed transaction that dirtied hardware config.
+  Status hardwareConfigDirtyError() const { return _hardwareConfigDirtyError; }
   /// @return Consecutive tracked failures since the last success.
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
   /// @return Lifetime tracked failure count.
@@ -128,11 +168,17 @@ public:
   /// Uses ALERT/RDY when configured for conversion-ready mode. Otherwise,
   /// single-shot mode polls the OS bit after the conversion time and continuous
   /// mode tracks the configured data-rate interval between fresh samples.
+  /// Transaction count: zero when cached/timing/ALERT path is enough; otherwise
+  /// one CONFIG read in single-shot OS-bit polling.
   /// @param[out] ready true when conversion data can be read
   /// @return Status from the readiness path
   Status readConversionReady(bool& ready);
 
   /// Read the conversion register as a signed two's-complement sample.
+  /// In continuous mode this returns the latest register value immediately and
+  /// does not wait for a fresh data-rate interval. Use readConversionReady()
+  /// first when the caller requires a fresh continuous sample indication.
+  /// Transaction count: one conversion-register read after readiness checks.
   /// @param[out] out Signed conversion code.
   /// @return Status::Ok() on a successful register read.
   Status readRaw(int16_t& out);
@@ -142,13 +188,26 @@ public:
   /// @return Status::Ok() on a successful sample read and conversion.
   Status readVoltage(float& volts);
 
+  /// Read the latest conversion register value immediately.
+  /// In continuous mode this is the latest register contents and does not wait
+  /// for a fresh sample interval. In single-shot mode this bypasses readiness
+  /// checks and should be used only when the caller has established readiness.
+  /// @param[out] out Signed conversion code.
+  /// @return Status::Ok() on a successful register read.
+  Status readLatestRaw(int16_t& out);
+
   /// Start or join a single-shot conversion and wait with a finite deadline.
+  /// Requires Config::nowMs; returns INVALID_CONFIG before starting conversion
+  /// when no monotonic clock hook is configured.
+  /// Transaction count: one CONFIG write to start plus conversion-register read;
+  /// OS-bit polling can add CONFIG reads.
   /// @param[out] out Signed conversion code.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires.
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
 
   /// Blocking read with voltage scaling.
+  /// Requires Config::nowMs under the same contract as readBlocking().
   /// @param[out] volts Converted input voltage.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires.
@@ -156,6 +215,7 @@ public:
 
   // === Configuration ===
   /// Set the input multiplexer. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write.
   /// @param mux Input mux selection.
   /// @return Status::Ok() when CONFIG was written.
   Status setMux(Mux mux);
@@ -163,6 +223,8 @@ public:
   Mux getMux() const { return _config.mux; }
 
   /// Set PGA full-scale range. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write. PGA full-scale range does not relax
+  /// ADS1115 analog input absolute limits; keep inputs within datasheet limits.
   /// @param gain Full-scale range selection.
   /// @return Status::Ok() when CONFIG was written.
   Status setGain(Gain gain);
@@ -170,6 +232,7 @@ public:
   Gain getGain() const { return _config.gain; }
 
   /// Set output data rate. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write.
   /// @param rate Output sample rate.
   /// @return Status::Ok() when CONFIG was written.
   Status setDataRate(DataRate rate);
@@ -177,6 +240,7 @@ public:
   DataRate getDataRate() const { return _config.dataRate; }
 
   /// Set operating mode. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write.
   /// @param mode Single-shot or continuous conversion mode.
   /// @return Status::Ok() when CONFIG was written.
   Status setMode(Mode mode);
@@ -184,11 +248,13 @@ public:
   Mode getMode() const { return _config.mode; }
 
   /// Read the ADS1115 CONFIG register.
+  /// Transaction count: one CONFIG read.
   /// @param[out] config Raw 16-bit CONFIG register.
   /// @return Status::Ok() on a successful register read.
   Status readConfig(uint16_t& config);
 
   /// Write a validated CONFIG register value and sync the typed cache.
+  /// Transaction count: one CONFIG write.
   /// @param config Raw 16-bit CONFIG value. PGA aliases 110b and 111b map to Gain::FSR_0_256V.
   /// @return Status::Ok() when the register is written and cache is updated.
   Status writeConfig(uint16_t config);
@@ -222,18 +288,24 @@ public:
 
   // === Comparator ===
   /// Set signed comparator thresholds. Cache changes commit after both writes succeed.
+  /// Thresholds are signed raw conversion codes and must be recalculated if the
+  /// gain/full-scale range changes. If the second write fails after the first
+  /// reached hardware, hardwareConfigDirty() is set with the original error.
+  /// Transaction count: two threshold writes.
   /// @param low Low threshold raw code.
   /// @param high High threshold raw code.
   /// @return Status::Ok() when both threshold registers are written.
   Status setThresholds(int16_t low, int16_t high);
 
   /// Read signed comparator thresholds and sync the cache.
+  /// Transaction count: two threshold reads.
   /// @param[out] low Low threshold raw code.
   /// @param[out] high High threshold raw code.
   /// @return Status::Ok() when both threshold registers are read.
   Status getThresholds(int16_t& low, int16_t& high);
 
   /// Set comparator mode. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write.
   /// @param mode Traditional or window comparator mode.
   /// @return Status::Ok() when CONFIG was written.
   Status setComparatorMode(ComparatorMode mode);
@@ -241,6 +313,7 @@ public:
   ComparatorMode getComparatorMode() const { return _config.compMode; }
 
   /// Set ALERT/RDY polarity. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write.
   /// @param polarity ALERT/RDY active polarity.
   /// @return Status::Ok() when CONFIG was written.
   Status setComparatorPolarity(ComparatorPolarity polarity);
@@ -248,6 +321,7 @@ public:
   ComparatorPolarity getComparatorPolarity() const { return _config.compPolarity; }
 
   /// Set comparator latch behavior. Cache changes commit only after I2C success.
+  /// Transaction count: one CONFIG write.
   /// @param latch Latching or non-latching behavior.
   /// @return Status::Ok() when CONFIG was written.
   Status setComparatorLatch(ComparatorLatch latch);
@@ -255,6 +329,7 @@ public:
   ComparatorLatch getComparatorLatch() const { return _config.compLatch; }
 
   /// Set comparator queue depth or disable comparator.
+  /// Transaction count: one CONFIG write.
   /// @param queue Comparator assertion queue depth.
   /// @return Status::Ok() when CONFIG was written.
   Status setComparatorQueue(ComparatorQueue queue);
@@ -269,10 +344,15 @@ public:
   bool usesAlertRdyPinForConversionReady() const;
 
   /// Program ADS1115 threshold/comparator fields for conversion-ready ALERT/RDY mode.
+  /// ALERT/RDY is open-drain and requires a pull-up. Conversion-ready pulses can
+  /// be short; use an interrupt-capable input or latching strategy when polling
+  /// cannot guarantee capture.
+  /// Transaction count: three writes; strict mode adds three read-back reads.
   /// @return Status::Ok() when thresholds and CONFIG are written.
   Status enableConversionReadyPin();
 
   /// Disable comparator output by setting queue to DISABLE.
+  /// Transaction count: one CONFIG write.
   /// @return Status::Ok() when CONFIG was written.
   Status disableComparator();
 
@@ -306,6 +386,10 @@ private:
   // === Internal ===
   Status _readConversionReadyAt(uint32_t nowMs, bool& ready);
   Status _applyConfig();
+  Status _writeConfigOnly();
+  Status _verifyConfigReadback();
+  void _markHardwareConfigDirty(const Status& st);
+  void _clearHardwareConfigDirty();
   uint16_t _buildConfigRegister() const;
   uint32_t _nowMs() const;
   void _cooperativeYield() const;
@@ -315,6 +399,8 @@ private:
   bool _initialized = false;
   DriverState _driverState = DriverState::UNINIT;
   bool _allowOfflineI2c = false;
+  bool _hardwareConfigDirty = false;
+  Status _hardwareConfigDirtyError = Status::Ok();
 
   // === Health Counters ===
   uint32_t _lastOkMs = 0;

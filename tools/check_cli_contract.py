@@ -57,6 +57,7 @@ def main() -> int:
         ensure_exists(common_dir / name, f"common helper {name}")
 
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
     for cmd in MANDATORY_COMMANDS:
         if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
@@ -64,6 +65,14 @@ def main() -> int:
 
     if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
         fail("either 'cfg' or 'settings' command must be present")
+
+    for token in (
+        "diagnostic Arduino bring-up CLI",
+        "Current examples are diagnostic",
+        "Production applications should implement",
+    ):
+        if token not in readme:
+            fail(f"README must document example honesty token: {token!r}")
 
     print("CLI contract PASSED")
     return 0
