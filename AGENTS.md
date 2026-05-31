@@ -1,5 +1,18 @@
 ﻿# AGENTS.md - ADS1115 Production Embedded Guidelines
 
+# ADS1115 agent rules
+
+- The core driver in `include/` and `src/` must remain framework-neutral.
+- Core must not include Arduino, Wire, ESP-IDF, FreeRTOS, logging frameworks, global buses, pin ownership, tasks, or framework delay calls.
+- Core must use injected/non-owning I2C transport.
+- Application/adapter code owns bus setup, locking, timeout policy, and recovery policy.
+- Fallible public APIs must return meaningful `Status`; do not introduce exceptions or silent boolean-only failures.
+- Public APIs are not ISR-safe unless explicitly proven and documented.
+- Instances are not internally thread-safe unless explicit locking is added and tested.
+- ADS1115 has no chip-ID register. Do not claim identity verification. Strict init can only be writable-register plausibility/read-back verification.
+- Multi-register operations can partially reach hardware; report and plan dirty-state handling rather than pretending I2C writes are atomic.
+- Hardware validation claims require actual logs.
+
 ## Role and Target
 You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
 
