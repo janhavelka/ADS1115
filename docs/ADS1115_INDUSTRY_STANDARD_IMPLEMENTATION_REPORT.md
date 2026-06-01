@@ -34,7 +34,7 @@ validated in native tests. Hardware validation evidence is still pending.
 | 01 | Branch baseline, rules, and tracking report | Docs/rules only |
 | 02 | P0 native test design for status and partial hardware state | Contract tests added |
 | 03 | P0 core status taxonomy and begin dirty-state implementation | Implemented |
-| 04 | P0 raw register cache/dirty contract | Implemented with Prompt 03 |
+| 04 | P0 raw register cache/dirty contract | Implemented; recovery closure tests/docs added |
 | 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Not started |
 | 06 | P1 tests, guards, and documentation polish | Not started |
 | 07 | Integration examples, CI evidence, and HIL validation matrix | Not started |
@@ -63,7 +63,8 @@ fixes and validation. The highest-priority follow-up work is:
 | --- | --- | --- | --- | --- |
 | 01 | `38e55ea127a33aeb9fa601ce3d74b6e21856fe70` | `AGENTS.md`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Guards passed; native PlatformIO passed | Rules/report initialization only; no core implementation complete |
 | 02 | `7ce66d14cef39e5f2c6a7b497bcf02c65770c764` | `include/ADS1115/Status.h`, `test/test_basic.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core guard passed; native PlatformIO had expected contract failures | Test-first contracts added |
-| 03 | Pending commit | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/common/HealthDiag.h`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Required guards, native tests, and Arduino builds passed | P0 status and dirty diagnostics implemented |
+| 03 | `effddc526ab51927488acb12ede1e6586cde00c0` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/common/HealthDiag.h`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Required guards, native tests, and Arduino builds passed | P0 status and dirty diagnostics implemented |
+| 04 | This Prompt 04 commit | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
 
 ## Prompt 02 Contract Tests
 
@@ -161,6 +162,54 @@ Remaining gaps:
 - P1 API/documentation work remains for bool-only readiness, `tick()` status
   visibility, `nowMs` scope, blocking latency, and broader guard/test coverage.
 
+## Prompt 04 Raw Register Contract
+
+Selected contract: public raw register writes are diagnostic-only. Successful
+`writeRegister16()` / `writeRegister()` calls to CONFIG, `LO_THRESH`, or
+`HI_THRESH` update hardware, leave typed cache unchanged, and mark
+`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`; `Status::detail`
+stores the raw register pointer. Invalid registers and read-only conversion
+register writes are rejected before I2C. If a raw write reaches the transport
+and returns an error, the dirty diagnostic preserves that transport status
+because hardware may still have accepted the write. Offline short-circuits do
+not touch the bus or mark dirty.
+
+Implementation status:
+
+- Core implementation already followed the selected contract from Prompt 03.
+  Prompt 04 tightened dirty clearing so a dirty full apply performs read-back
+  verification even when `strictInitVerify` is false.
+- `recover()` clears raw-write dirty state only through a successful full cached
+  config reapply plus read-back verification. A failed recover preserves dirty
+  visibility; if a later partial apply reaches hardware and fails, the dirty
+  diagnostic records that newer transport failure.
+- Failed raw writes that reached the transport now mark dirty with the original
+  transport status. Offline and validation errors still return before I2C and do
+  not mark dirty.
+- `getSettings()` exposes `hardwareConfigDirty` and `hardwareConfigDirtyError`
+  so cached settings snapshots do not imply confirmed hardware synchronization
+  after a raw diagnostic write.
+
+Prompt 04 tests added:
+
+| Test | Expected behavior |
+| --- | --- |
+| `test_write_register_alias_marks_hardware_config_dirty_without_cache_commit` | Compatibility alias inherits raw diagnostic dirty behavior and leaves threshold cache unchanged. |
+| `test_failed_raw_write_marks_hardware_config_dirty_with_transport_error` | Failed raw transport write returns the original error and marks dirty because hardware may have accepted the write. |
+| `test_raw_write_offline_returns_offline_without_dirty_or_bus_access` | Offline raw write short-circuits without bus access or dirty state changes. |
+| `test_recover_success_clears_raw_register_dirty_after_full_resync` | Successful `recover()` reapplies cached settings and clears raw-write dirty state. |
+| `test_recover_raw_dirty_requires_verified_readback_before_clear` | Dirty recovery must pass read-back verification before clearing dirty state, even when strict init verification is disabled. |
+| `test_failed_recover_probe_preserves_raw_register_dirty_reason` | Probe/read failure during `recover()` does not clear or replace the original raw-write dirty reason. |
+| `test_failed_recover_partial_apply_keeps_raw_register_dirty_visible` | Partial apply failure during `recover()` keeps dirty visibility and records the new transport failure. |
+
+Documentation updates:
+
+- Doxygen for raw writes documents invalid-register rejection, alias behavior,
+  and dirty diagnostic detail.
+- README raw diagnostics now documents the register pointer in dirty diagnostic
+  detail.
+- CLI help for `wreg` now says diagnostic writes mark cache dirty.
+
 ## Validation Log
 
 Prompt 01 validation on `hardening/ads1115-industry-standard-p0`:
@@ -206,6 +255,21 @@ Prompt 03 validation on `hardening/ads1115-industry-standard-p0`:
 | `python -m platformio test -e native` | `69 test cases: 69 succeeded in 00:00:01.990`; environment `native`, status `PASSED` |
 | `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:24.048` |
 | `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:23.496` |
+
+Prompt 04 validation on `hardening/ads1115-industry-standard-p0`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python -m platformio test -e native` | `76 test cases: 76 succeeded in 00:00:01.855`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:16.632` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:15.575` |
+
+Note: an earlier non-verbose `esp32s2dev` build attempt in this prompt stopped
+at `firmware.elf Error 1` without linker diagnostics. A verbose rerun succeeded
+(`00:00:14.299`), followed by the exact required non-verbose command succeeding
+as recorded above.
 
 ## Final Report Placeholder
 

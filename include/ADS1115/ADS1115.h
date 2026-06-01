@@ -279,7 +279,14 @@ public:
   /// @param value Raw 16-bit value to write.
   /// Successful raw writes are diagnostic writes: they leave the typed cache
   /// unchanged and mark hardwareConfigDirty() with Err::HARDWARE_CONFIG_DIRTY.
-  /// @return Status::Ok() on success; Err::INVALID_PARAM for register 0x00.
+  /// hardwareConfigDirtyError().detail stores the register pointer.
+  /// If the transport reports an error after the raw write is attempted, the
+  /// same transport Status is preserved as the dirty diagnostic because hardware
+  /// may have accepted the write.
+  /// Dirty state clears only after a later full cached-settings rewrite and
+  /// successful read-back verification.
+  /// @return Status::Ok() on success; Err::INVALID_PARAM for read-only register
+  /// 0x00 or invalid registers above 0x03.
   Status writeRegister16(uint8_t reg, uint16_t value);
 
   /// Compatibility alias for readRegister16().
@@ -288,7 +295,8 @@ public:
   /// @return Status::Ok() on a successful register read.
   Status readRegister(uint8_t reg, uint16_t& value) { return readRegister16(reg, value); }
 
-  /// Compatibility alias for writeRegister16().
+  /// Compatibility alias for writeRegister16(); inherits the same diagnostic
+  /// dirty/stale cache behavior.
   /// @param reg Register pointer.
   /// @param value Raw 16-bit value to write.
   /// @return Status::Ok() on a successful register write.

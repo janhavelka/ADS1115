@@ -152,8 +152,13 @@ Raw register reads accept ADS1115 registers `0x00..0x03`. Raw writes accept
 only writable registers `0x01..0x03`; the conversion register `0x00` is
 read-only and is rejected before I2C. Successful raw writes are diagnostic
 access: they update hardware, leave the typed cache unchanged, and mark
-`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`. Use typed helpers
-such as `writeConfig()` or `setThresholds()` when the cache must stay in sync.
+`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`; the dirty diagnostic
+detail is the raw register pointer. If the transport reports an error after a
+raw write is attempted, the same transport status is preserved as the dirty
+diagnostic because the device may still have accepted the write. Use typed
+helpers such as `writeConfig()` or `setThresholds()` when the cache must stay in
+sync. A later `recover()` or `begin()` clears raw-write dirty state only after
+the cached settings are fully rewritten and read back successfully.
 
 ### Conversion
 

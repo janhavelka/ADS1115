@@ -1008,6 +1008,9 @@ Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
   }
   Status st = _writeRegister16Tracked(reg, value);
   if (!st.ok()) {
+    if (st.code != Err::OFFLINE) {
+      _markHardwareConfigDirty(st);
+    }
     return st;
   }
   _markHardwareConfigDirty(
@@ -1127,7 +1130,8 @@ Status ADS1115::_applyConfig() {
     return st;
   }
 
-  if (_config.strictInitVerify) {
+  const bool requireReadback = _config.strictInitVerify || _hardwareConfigDirty;
+  if (requireReadback) {
     st = _verifyConfigReadback();
     if (!st.ok()) {
       _markHardwareConfigDirty(st);

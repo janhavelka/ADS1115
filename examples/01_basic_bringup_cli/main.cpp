@@ -256,7 +256,7 @@ void printHelp() {
 
   cli::printHelpSection("Registers");
   cli::printHelpItem("reg <0..3>", "Read 16-bit ADS1115 register");
-  cli::printHelpItem("wreg <1..3> <val>", "Write writable register (diagnostic only; may desync cached config)");
+  cli::printHelpItem("wreg <1..3> <val>", "Write writable register (diagnostic; marks cache dirty)");
 
   cli::printHelpSection("Diagnostics");
   cli::printHelpItem("drv", "Show driver state and health");

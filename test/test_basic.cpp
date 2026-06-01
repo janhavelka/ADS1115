@@ -1273,6 +1273,139 @@ void test_raw_high_threshold_write_marks_hardware_config_dirty_without_cache_com
   assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_HI_THRESH);
 }
 
+void test_write_register_alias_marks_hardware_config_dirty_without_cache_commit() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const int16_t cachedLow = dev.getConfig().compThresholdLow;
+  const uint16_t rawLow = static_cast<uint16_t>(-99);
+
+  Status st = dev.writeRegister(cmd::REG_LO_THRESH, rawLow);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT16(rawLow, bus.reg[cmd::REG_LO_THRESH]);
+  TEST_ASSERT_EQUAL_INT16(cachedLow, dev.getConfig().compThresholdLow);
+  assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_LO_THRESH);
+}
+
+void test_failed_raw_write_marks_hardware_config_dirty_with_transport_error() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const uint16_t configBefore = bus.reg[cmd::REG_CONFIG];
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 1;
+  bus.failWriteStatus = Status::Error(Err::I2C_TIMEOUT, "raw write timeout", -60);
+
+  Status st = dev.writeRegister16(cmd::REG_CONFIG,
+                                  static_cast<uint16_t>(configBefore ^ cmd::MASK_DR));
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-60, st.detail);
+  TEST_ASSERT_EQUAL_UINT16(configBefore, bus.reg[cmd::REG_CONFIG]);
+  assertDirtyDiagnostic(dev, Err::I2C_TIMEOUT, -60);
+}
+
+void test_raw_write_offline_returns_offline_without_dirty_or_bus_access() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.offlineThreshold = 1;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  bus.readStatus = Status::Error(Err::TIMEOUT, "forced offline", -61);
+  TEST_ASSERT_FALSE(dev.recover().ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::OFFLINE),
+                          static_cast<uint8_t>(dev.state()));
+
+  bus.readStatus = Status::Ok();
+  const uint32_t writesBefore = bus.writeCalls;
+  const uint16_t rawConfig = static_cast<uint16_t>(cmd::CONFIG_DEFAULT ^ cmd::MASK_DR);
+  Status st = dev.writeRegister16(cmd::REG_CONFIG, rawConfig);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::OFFLINE),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirtyError().ok());
+}
+
+void test_recover_success_clears_raw_register_dirty_after_full_resync() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const uint16_t cachedConfig = bus.reg[cmd::REG_CONFIG];
+  const uint16_t rawConfig = static_cast<uint16_t>(cachedConfig ^ cmd::MASK_DR);
+  TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, rawConfig).ok());
+  TEST_ASSERT_EQUAL_UINT16(rawConfig, bus.reg[cmd::REG_CONFIG]);
+  assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+
+  resetIoCounters(bus);
+  Status st = dev.recover();
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_UINT16(cachedConfig, bus.reg[cmd::REG_CONFIG]);
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirtyError().ok());
+}
+
+void test_recover_raw_dirty_requires_verified_readback_before_clear() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const uint16_t rawConfig = static_cast<uint16_t>(cmd::CONFIG_DEFAULT ^ cmd::MASK_DR);
+  TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, rawConfig).ok());
+  assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  resetIoCounters(bus);
+  bus.readXorMask[cmd::REG_CONFIG] = cmd::MASK_DR;
+
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
+                          static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
+}
+
+void test_failed_recover_probe_preserves_raw_register_dirty_reason() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const uint16_t rawConfig = static_cast<uint16_t>(cmd::CONFIG_DEFAULT ^ cmd::MASK_DR);
+  TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, rawConfig).ok());
+  assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  resetIoCounters(bus);
+  bus.failReadOnCall = 1;
+  bus.failReadStatus = Status::Error(Err::I2C_BUS, "recover probe failed", -61);
+
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-61, st.detail);
+  assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+}
+
+void test_failed_recover_partial_apply_keeps_raw_register_dirty_visible() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  const uint16_t rawHigh = static_cast<uint16_t>(777);
+  TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_HI_THRESH, rawHigh).ok());
+  assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_HI_THRESH);
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 2;
+  bus.failWriteStatus = Status::Error(Err::I2C_ERROR, "recover high threshold failed", -62);
+
+  Status st = dev.recover();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-62, st.detail);
+  assertDirtyDiagnostic(dev, Err::I2C_ERROR, -62);
+}
+
 void test_read_blocking_times_out_when_injected_clock_stalls() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -1525,6 +1658,13 @@ int main() {
   RUN_TEST(test_raw_config_write_marks_hardware_config_dirty_without_cache_commit);
   RUN_TEST(test_raw_low_threshold_write_marks_hardware_config_dirty_without_cache_commit);
   RUN_TEST(test_raw_high_threshold_write_marks_hardware_config_dirty_without_cache_commit);
+  RUN_TEST(test_write_register_alias_marks_hardware_config_dirty_without_cache_commit);
+  RUN_TEST(test_failed_raw_write_marks_hardware_config_dirty_with_transport_error);
+  RUN_TEST(test_raw_write_offline_returns_offline_without_dirty_or_bus_access);
+  RUN_TEST(test_recover_success_clears_raw_register_dirty_after_full_resync);
+  RUN_TEST(test_recover_raw_dirty_requires_verified_readback_before_clear);
+  RUN_TEST(test_failed_recover_probe_preserves_raw_register_dirty_reason);
+  RUN_TEST(test_failed_recover_partial_apply_keeps_raw_register_dirty_visible);
   RUN_TEST(test_read_blocking_times_out_when_injected_clock_stalls);
   RUN_TEST(test_read_blocking_requires_now_ms_without_starting_conversion);
   RUN_TEST(test_read_blocking_voltage_requires_now_ms_without_starting_conversion);
