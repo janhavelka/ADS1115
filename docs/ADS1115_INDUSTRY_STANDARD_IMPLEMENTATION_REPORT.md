@@ -4,8 +4,9 @@ Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
 Source audit report: `exploration/ads1115-industry-standard:docs/ADS1115_INDUSTRY_STANDARD_EXPLORATION.md` at `d6f163534d59ad8bdd4b597bfd7f64a93615ac94`
 Status: P0 status taxonomy, failed-begin dirty diagnostics, strict read-back
-mismatch status, and raw diagnostic write dirty marking are implemented and
-validated in native tests. Hardware validation evidence is still pending.
+mismatch status, raw diagnostic write dirty marking, and P1 readiness/timing API
+contract polish are implemented and validated in native tests. Hardware
+validation evidence is still pending.
 
 ## Scope Rules
 
@@ -35,7 +36,7 @@ validated in native tests. Hardware validation evidence is still pending.
 | 02 | P0 native test design for status and partial hardware state | Contract tests added |
 | 03 | P0 core status taxonomy and begin dirty-state implementation | Implemented |
 | 04 | P0 raw register cache/dirty contract | Implemented; recovery closure tests/docs added |
-| 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Not started |
+| 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Implemented |
 | 06 | P1 tests, guards, and documentation polish | Not started |
 | 07 | Integration examples, CI evidence, and HIL validation matrix | Not started |
 | 08 | Final report and release-readiness review | Not started |
@@ -64,7 +65,8 @@ fixes and validation. The highest-priority follow-up work is:
 | 01 | `38e55ea127a33aeb9fa601ce3d74b6e21856fe70` | `AGENTS.md`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Guards passed; native PlatformIO passed | Rules/report initialization only; no core implementation complete |
 | 02 | `7ce66d14cef39e5f2c6a7b497bcf02c65770c764` | `include/ADS1115/Status.h`, `test/test_basic.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core guard passed; native PlatformIO had expected contract failures | Test-first contracts added |
 | 03 | `effddc526ab51927488acb12ede1e6586cde00c0` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/common/HealthDiag.h`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Required guards, native tests, and Arduino builds passed | P0 status and dirty diagnostics implemented |
-| 04 | This Prompt 04 commit | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
+| 04 | `8056c962a010b4db83551d2c4805514899886ee5` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
+| 05 | This Prompt 05 commit | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `include/ADS1115/Config.h`, `test/test_basic.cpp`, `README.md`, `docs`, `examples/01_basic_bringup_cli/main.cpp`, `tools/check_core_timing_guard.py` | Required guards, native tests, and Arduino builds passed | Readiness/status aliases, service timing, no-clock diagnostics, and blocking bounds clarified |
 
 ## Prompt 02 Contract Tests
 
@@ -155,11 +157,11 @@ Additional Prompt 03 regression tests:
 - Failed-begin dirty state now survives a later retry that fails during probe,
   proving dirty state is not cleared merely by starting a new `begin()`.
 
-Remaining gaps:
+Remaining gaps after Prompt 03:
 
 - Hardware validation evidence is still required before field-grade or
   production-readiness claims.
-- P1 API/documentation work remains for bool-only readiness, `tick()` status
+- P1 API/documentation work remained for bool-only readiness, `tick()` status
   visibility, `nowMs` scope, blocking latency, and broader guard/test coverage.
 
 ## Prompt 04 Raw Register Contract
@@ -209,6 +211,67 @@ Documentation updates:
 - README raw diagnostics now documents the register pointer in dirty diagnostic
   detail.
 - CLI help for `wreg` now says diagnostic writes mark cache dirty.
+
+## Prompt 05 API Timing Contract
+
+API additions and compatibility decisions:
+
+- Kept existing `bool conversionReady()` as a source-compatible lossy
+  convenience helper. It still returns `false` for both "not ready" and
+  readiness-path failures.
+- Added `Status conversionReady(bool& ready)` as an explicit-status alias for
+  `readConversionReady(bool&)`.
+- Kept existing `void tick(uint32_t nowMs)` as a compatibility wrapper.
+- Added `Status service(uint32_t nowMs)` for the same bounded service step with
+  immediate error visibility.
+- Added `SettingsSnapshot::timebaseAvailable`; it is `true` when `Config::nowMs`
+  is configured. When false, health timestamps that read as `0` are unavailable,
+  not real measured times.
+
+Timing and no-clock contract:
+
+- `Config::nowMs` remains optional for `begin()`. Blocking reads require it and
+  return `Err::INVALID_CONFIG` before starting a conversion when it is missing.
+- Without `Config::nowMs`, direct timing-based readiness does not advance by
+  elapsed time. Applications can drive pending conversions with
+  `tick(nowMs)`/`service(nowMs)` from an external scheduler timebase, or use the
+  ALERT/RDY GPIO path.
+- `tick()`/`service()` may perform one tracked CONFIG read when a single-shot
+  conversion is pending and its data-rate interval has elapsed. `tick()` ignores
+  the immediate `Status`; failures remain visible through health state,
+  counters, `lastError()`, and `lastErrorMs()` when a timebase is available.
+- `readBlocking()` in continuous mode returns the current/latest conversion
+  register value immediately after the `nowMs` precondition check; it does not
+  wait for a fresh continuous sample.
+- Single-shot `readBlocking()` polls OS readiness at most once per observed
+  millisecond tick. If the injected clock stalls, it returns `Err::TIMEOUT`
+  after a finite same-tick guard instead of spinning forever. `cooperativeYield`
+  remains optional and is a no-op unless supplied.
+
+Prompt 05 tests added:
+
+| Test | Expected behavior |
+| --- | --- |
+| `test_conversion_ready_status_alias_preserves_transport_error` | New readiness alias preserves exact transport status while the bool helper remains lossy. |
+| `test_service_returns_ready_poll_failure_and_updates_health` | `service(nowMs)` returns immediate poll failure and updates health diagnostics. |
+| `test_tick_discards_status_but_updates_health_on_ready_poll_failure` | `tick(nowMs)` keeps source-compatible void behavior while tracked I2C failure updates health. |
+| `test_no_clock_direct_readiness_waits_for_service_timebase` | No-clock direct readiness stays conservative until service anchors and advances external time. |
+| `test_no_clock_health_timestamps_are_marked_unavailable` | Snapshot exposes missing timebase so timestamp `0` is not presented as a real time. |
+| `test_tick_marks_continuous_ready_without_config_poll_after_interval` | Continuous-mode service readiness advances without CONFIG polling. |
+| `test_single_shot_elapsed_os_busy_remains_not_ready` | Elapsed single-shot readiness still respects OS busy read-back. |
+| `test_read_blocking_success_uses_cooperative_yield_cadence` | Blocking read succeeds with cooperative-yield-driven time advance. |
+| `test_read_blocking_tolerates_repeated_same_tick_before_clock_advances` | Repeated same millisecond observations before clock advance do not false-timeout. |
+| `test_read_blocking_polls_ready_state_once_per_observed_tick` | Single-shot blocking readiness polls CONFIG at most once per observed tick. |
+| `test_read_blocking_times_out_with_advancing_clock_while_os_busy` | Advancing-clock OS-busy path times out and clears stale conversion state. |
+| `test_read_blocking_propagates_ready_poll_transport_error` | Blocking readiness poll transport errors propagate exactly. |
+
+Compatibility notes:
+
+- No status enum values or `Status` fields were added or reordered.
+- Adding non-virtual member functions does not change driver instance layout.
+- Adding the overloaded `conversionReady(bool&)` can make uncast member-function
+  pointer expressions for `conversionReady` ambiguous; normal calls to
+  `conversionReady()` remain source-compatible.
 
 ## Validation Log
 
@@ -270,6 +333,22 @@ Note: an earlier non-verbose `esp32s2dev` build attempt in this prompt stopped
 at `firmware.elf Error 1` without linker diagnostics. A verbose rerun succeeded
 (`00:00:14.299`), followed by the exact required non-verbose command succeeding
 as recorded above.
+
+Prompt 05 validation on `hardening/ads1115-industry-standard-p0`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h` |
+| `python -m platformio test -e native` | `88 test cases: 88 succeeded in 00:00:02.831`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:23.154` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:25.189` |
+
+Note: an earlier `esp32s2dev` run during Prompt 05 stopped while compiling
+framework Arduino `esp32-hal-tinyusb.c.o` with `Error 1` and no compiler
+diagnostic in the captured output. Re-running the exact required command
+succeeded as recorded above.
 
 ## Final Report Placeholder
 

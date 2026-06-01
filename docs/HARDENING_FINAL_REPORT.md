@@ -104,7 +104,7 @@ Native test result:
   - external bus context.
   - mutex-based bus locking.
   - timeout/error mapping.
-  - periodic nonblocking `tick()` scheduling.
+  - periodic bounded `tick()` scheduling.
 
 ## CI And Build Coverage
 

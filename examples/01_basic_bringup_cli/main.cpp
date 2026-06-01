@@ -679,6 +679,8 @@ void printSettingsSnapshot() {
                 snap.hasNowMsHook ? "YES" : "NO",
                 snap.hasGpioReadHook ? "YES" : "NO",
                 snap.hasCooperativeYieldHook ? "YES" : "NO");
+  Serial.printf("  Timebase available: %s\n",
+                snap.timebaseAvailable ? "YES" : "NO");
   Serial.printf("  Alert pin: %d\n", snap.alertRdyPin);
   Serial.printf("  ALERT/RDY pin configured: %s\n",
                 snap.alertRdyPinConfigured ? "YES" : "NO");

@@ -29,6 +29,7 @@ struct SettingsSnapshot {
   uint8_t offlineThreshold = 0;
   bool strictInitVerify = false;
   bool hasNowMsHook = false;
+  bool timebaseAvailable = false;
   bool hasGpioReadHook = false;
   bool hasCooperativeYieldHook = false;
   bool hardwareConfigDirty = false;
@@ -87,8 +88,19 @@ public:
   /// @return Status::Ok() when the device responds and cached configuration is applied.
   Status begin(const Config& config);
   /// Process pending operations (currently bounded polling only).
+  /// May perform one CONFIG-read I2C transaction when a single-shot conversion
+  /// is pending and its conversion interval has elapsed. Failures are ignored
+  /// by this compatibility API but remain visible through health counters,
+  /// lastError(), and lastErrorMs() when a timebase is configured.
   /// @param nowMs Current monotonic time in milliseconds.
   void tick(uint32_t nowMs);
+  /// Status-returning service step for pending conversion work.
+  /// May perform one CONFIG-read I2C transaction when a single-shot conversion
+  /// is pending and its conversion interval has elapsed.
+  /// @param nowMs Current monotonic time in milliseconds.
+  /// @return Immediate status from the service step, or Status::Ok() when no
+  /// I2C work is needed.
+  Status service(uint32_t nowMs);
   /// Best-effort shutdown to single-shot idle and clear cached conversion state.
   /// The shutdown write result is intentionally ignored; use shutdown() when the
   /// application needs an explicit I2C status.
@@ -166,9 +178,17 @@ public:
   Status startConversion(Mux mux);
 
   /// Convenience wrapper around readConversionReady(). Returns false when the
-  /// driver is not initialized or when the underlying CONFIG read fails.
+  /// driver is not initialized or when the underlying CONFIG read fails. False
+  /// therefore means either "not ready" or "error"; production code should use
+  /// readConversionReady(bool&) or conversionReady(bool&) when the distinction
+  /// matters.
   /// @return true when conversion data is ready to read.
   bool conversionReady();
+
+  /// Alias for readConversionReady() with explicit error reporting.
+  /// @param[out] ready true when conversion data can be read
+  /// @return Status from the readiness path
+  Status conversionReady(bool& ready);
 
   /// Check conversion readiness with explicit error reporting.
   /// Uses ALERT/RDY when configured for conversion-ready mode. Otherwise,
@@ -205,8 +225,14 @@ public:
   /// Start or join a single-shot conversion and wait with a finite deadline.
   /// Requires Config::nowMs; returns INVALID_CONFIG before starting conversion
   /// when no monotonic clock hook is configured.
+  /// In continuous mode this returns the latest conversion register value
+  /// immediately after the nowMs precondition check; timeoutMs is only used for
+  /// single-shot waiting.
   /// Transaction count: one CONFIG write to start plus conversion-register read;
-  /// OS-bit polling can add CONFIG reads.
+  /// OS-bit polling can add CONFIG reads. Worst-case wall time is bounded by
+  /// timeoutMs plus active I2C transaction timeouts. OS-bit polling occurs at
+  /// most once per observed millisecond tick; a stalled clock returns
+  /// Err::TIMEOUT after a finite same-tick guard.
   /// @param[out] out Signed conversion code.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires.

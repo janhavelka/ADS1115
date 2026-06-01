@@ -124,7 +124,10 @@ struct Config {
   void* i2cUser = nullptr;
 
   // === Timing Hooks (optional; required by blocking conversion APIs) ===
-  NowMsFn nowMs = nullptr;                 ///< Monotonic source; required by readBlocking*
+  /// Monotonic source. Required by readBlocking* and by direct timing-based
+  /// readiness checks that should advance without tick(nowMs)/service(nowMs).
+  /// Without this hook, health timestamps are unavailable and report as 0.
+  NowMsFn nowMs = nullptr;
   YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
   void* timeUser = nullptr;                ///< User context for timing hooks
 

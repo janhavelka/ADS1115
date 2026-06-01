@@ -208,16 +208,26 @@ Status ADS1115::begin(const Config& config) {
 }
 
 void ADS1115::tick(uint32_t nowMs) {
+  (void)service(nowMs);
+}
+
+Status ADS1115::service(uint32_t nowMs) {
   if (!_initialized) {
-    return;
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
   if (_conversionStarted && !_conversionReady) {
+    if (_config.nowMs == nullptr && _conversionStartMs == UINT32_MAX) {
+      _conversionStartMs = nowMs;
+      return Status::Ok();
+    }
     if ((nowMs - _conversionStartMs) >= getConversionTimeMs()) {
       bool ready = false;
-      (void)_readConversionReadyAt(nowMs, ready);
+      return _readConversionReadyAt(nowMs, ready);
     }
   }
+
+  return Status::Ok();
 }
 
 void ADS1115::end() {
@@ -313,6 +323,7 @@ Status ADS1115::getSettings(SettingsSnapshot& out) const {
   out.offlineThreshold = _config.offlineThreshold;
   out.strictInitVerify = _config.strictInitVerify;
   out.hasNowMsHook = (_config.nowMs != nullptr);
+  out.timebaseAvailable = out.hasNowMsHook;
   out.hasGpioReadHook = (_config.gpioRead != nullptr);
   out.hasCooperativeYieldHook = (_config.cooperativeYield != nullptr);
   out.hardwareConfigDirty = _hardwareConfigDirty;
@@ -333,7 +344,7 @@ Status ADS1115::getSettings(SettingsSnapshot& out) const {
   out.compThresholdLow = _config.compThresholdLow;
   out.conversionStarted = _conversionStarted;
   out.conversionReady = _conversionReady;
-  out.conversionStartMs = _conversionStartMs;
+  out.conversionStartMs = (_conversionStartMs == UINT32_MAX) ? 0 : _conversionStartMs;
   out.lastRawValue = _lastRawValue;
   return Status::Ok();
 }
@@ -373,7 +384,7 @@ Status ADS1115::startConversion() {
 
   _conversionStarted = true;
   _conversionReady = false;
-  _conversionStartMs = _nowMs();
+  _conversionStartMs = (_config.nowMs != nullptr) ? _nowMs() : UINT32_MAX;
   return Status{Err::IN_PROGRESS, 0, "Conversion started"};
 }
 
@@ -403,7 +414,7 @@ Status ADS1115::startConversion(Mux mux) {
 
   _conversionStarted = true;
   _conversionReady = false;
-  _conversionStartMs = _nowMs();
+  _conversionStartMs = (_config.nowMs != nullptr) ? _nowMs() : UINT32_MAX;
   return Status{Err::IN_PROGRESS, 0, "Conversion started"};
 }
 
@@ -413,8 +424,13 @@ bool ADS1115::conversionReady() {
   return ready;
 }
 
+Status ADS1115::conversionReady(bool& ready) {
+  return readConversionReady(ready);
+}
+
 Status ADS1115::readConversionReady(bool& ready) {
-  return _readConversionReadyAt(_nowMs(), ready);
+  const uint32_t nowMs = (_config.nowMs != nullptr) ? _nowMs() : _conversionStartMs;
+  return _readConversionReadyAt(nowMs, ready);
 }
 
 Status ADS1115::_readConversionReadyAt(uint32_t nowMs, bool& ready) {
@@ -508,7 +524,7 @@ Status ADS1115::readLatestRaw(int16_t& out) {
   } else {
     _conversionStarted = true;
     _conversionReady = false;
-    _conversionStartMs = _nowMs();
+    _conversionStartMs = (_config.nowMs != nullptr) ? _nowMs() : UINT32_MAX;
   }
 
   return Status::Ok();
@@ -556,27 +572,33 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
   static constexpr uint32_t kMaxSameTickPolls = 65535U;
   uint32_t lastObservedMs = _nowMs();
   uint32_t sameTickPolls = 0;
+  uint32_t lastReadyPollMs = 0;
+  bool hasReadyPollMs = false;
 
   while (static_cast<int32_t>(_nowMs() - deadlineMs) < 0) {
     uint32_t loopNowMs = _nowMs();
     if (loopNowMs == lastObservedMs) {
-      if (sameTickPolls < UINT32_MAX) {
-        sameTickPolls++;
-      }
-      if (sameTickPolls > kMaxSameTickPolls) {
+      if (sameTickPolls >= kMaxSameTickPolls) {
         _conversionStarted = false;
         _conversionReady = false;
         return Status::Error(Err::TIMEOUT, "Conversion timeout");
       }
+      sameTickPolls++;
     } else {
       lastObservedMs = loopNowMs;
-      sameTickPolls = 0;
+      sameTickPolls = 1;
     }
 
     if (static_cast<int32_t>(loopNowMs - readyAtMs) < 0) {
       _cooperativeYield();  // Feed watchdog, let other FreeRTOS tasks run
       continue;
     }
+    if (hasReadyPollMs && loopNowMs == lastReadyPollMs) {
+      _cooperativeYield();
+      continue;
+    }
+    hasReadyPollMs = true;
+    lastReadyPollMs = loopNowMs;
 
     Status readSt = readRaw(out);
     if (readSt.ok()) {
@@ -585,6 +607,7 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     if (readSt.code != Err::CONVERSION_NOT_READY) {
       return readSt;
     }
+    _cooperativeYield();
   }
 
   // Timeout: clean up stale conversion state so startConversion() doesn't
@@ -710,7 +733,7 @@ Status ADS1115::writeConfig(uint16_t config) {
   if (_config.mode == Mode::SINGLE_SHOT && ((config & cmd::MASK_OS) == cmd::OS_START)) {
     _conversionStarted = true;
     _conversionReady = false;
-    _conversionStartMs = _nowMs();
+    _conversionStartMs = (_config.nowMs != nullptr) ? _nowMs() : UINT32_MAX;
   } else {
     _conversionStarted = false;
     _conversionReady = false;
@@ -1143,7 +1166,7 @@ Status ADS1115::_applyConfig() {
 
   if (_config.mode == Mode::CONTINUOUS) {
     _conversionStarted = true;
-    _conversionStartMs = _nowMs();
+    _conversionStartMs = (_config.nowMs != nullptr) ? _nowMs() : UINT32_MAX;
   } else {
     _conversionStarted = false;
     _conversionStartMs = 0;
@@ -1160,7 +1183,7 @@ Status ADS1115::_writeConfigOnly() {
 
   if (_config.mode == Mode::CONTINUOUS) {
     _conversionStarted = true;
-    _conversionStartMs = _nowMs();
+    _conversionStartMs = (_config.nowMs != nullptr) ? _nowMs() : UINT32_MAX;
   } else {
     _conversionStarted = false;
     _conversionStartMs = 0;

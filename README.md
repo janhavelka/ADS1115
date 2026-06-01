@@ -130,7 +130,8 @@ void loop() {
 | Method | Description |
 |--------|-------------|
 | `begin(config)` | Initialize with injected transport and verify the device is reachable |
-| `tick(nowMs)` | Process bounded conversion polling work |
+| `tick(nowMs)` | Compatibility service step; may perform one bounded CONFIG read and suppresses the returned status |
+| `service(nowMs)` | Status-returning service step for pending conversion polling work |
 | `end()` | Best-effort return the ADC to single-shot idle and clear cached conversion state |
 | `shutdown()` | Status-returning request to write single-shot idle while keeping the driver initialized |
 | `isInitialized()` | True after successful `begin()` until `end()` |
@@ -142,7 +143,7 @@ void loop() {
 |--------|-------------|
 | `probe()` | Check device presence without updating health counters; preserves distinguishable I2C errors except definite address NACK maps to `DEVICE_NOT_FOUND` |
 | `recover()` | Re-validate comms, clear conversion state, and re-apply cached config |
-| `getSettings(snap)` | Populate a `SettingsSnapshot` with cached config and runtime state (no I2C) |
+| `getSettings(snap)` | Populate a `SettingsSnapshot` with cached config, hook availability, and runtime state (no I2C) |
 | `readRegister16(reg, value)` | Read a raw 16-bit register using tracked I2C |
 | `writeRegister16(reg, value)` | Write a raw 16-bit register using tracked I2C |
 | `readRegister(reg, value)` | Compatibility alias for `readRegister16()` |
@@ -167,11 +168,12 @@ the cached settings are fully rewritten and read back successfully.
 | `startConversion()` | Start a single-shot conversion with the current mux; returns `Err::IN_PROGRESS` when scheduled, `Err::UNSUPPORTED_OPERATION` in continuous mode, and `Err::BUSY` only for an already-active single-shot conversion |
 | `startConversion(mux)` | Start a single-shot conversion after atomically applying a temporary mux |
 | `readConversionReady(ready)` | Report readiness with explicit I2C error status |
-| `conversionReady()` | Convenience readiness check; returns `false` on transport failure |
+| `conversionReady(ready)` | Alias for `readConversionReady(ready)` with explicit status |
+| `conversionReady()` | Convenience readiness check; `false` means not ready or an error |
 | `readRaw(out)` | Read signed two's-complement conversion data |
 | `readLatestRaw(out)` | Read the conversion register immediately without readiness checks |
 | `readVoltage(volts)` | Read conversion data and scale it using the active gain |
-| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion and wait with a finite deadline; requires `Config::nowMs` |
+| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion and wait with a finite deadline; requires `Config::nowMs`; continuous mode returns the latest register value immediately |
 | `readBlockingVoltage(volts, timeoutMs)` | Blocking read with voltage scaling; requires `Config::nowMs` |
 
 In single-shot mode, readiness is determined by ALERT/RDY when conversion-ready
@@ -181,9 +183,22 @@ latest conversion register value immediately, which may be older than the next
 data-rate interval. Use `readConversionReady()` first when the application needs
 a fresh-sample indication.
 
-`begin()` can succeed without `Config::nowMs`; only `readBlocking*()` requires a
-clock hook. If `nowMs` is missing, blocking reads return `INVALID_CONFIG` before
-starting a conversion.
+`conversionReady()` is a lossy source-compatibility helper. A `false` result can
+mean either "not ready" or "readiness check failed"; production code should use
+`readConversionReady(bool&)` or `conversionReady(bool&)` and inspect `Status`.
+
+`tick(nowMs)` may perform one tracked CONFIG read when a single-shot conversion
+is pending and its data-rate interval has elapsed. It ignores the immediate
+status for compatibility; failures are visible through `state()`, health
+counters, `lastError()`, and `lastErrorMs()`. Use `service(nowMs)` when the
+caller needs that immediate `Status`.
+
+`begin()` can succeed without `Config::nowMs`. In that no-clock mode,
+`SettingsSnapshot::timebaseAvailable` is false, health timestamps remain `0`,
+and direct timing-based readiness checks do not advance by elapsed time. Use
+`tick(nowMs)` / `service(nowMs)` from an external scheduler timebase, or use the
+ALERT/RDY GPIO readiness path. Blocking reads return `INVALID_CONFIG` before
+starting a conversion when `nowMs` is missing.
 
 ### Configuration
 
@@ -290,7 +305,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 ## Behavioral Contracts
 
 1. Threading model: externally serialized; not thread-safe and not ISR-safe.
-2. Timing model: `tick()` is bounded; conversion polling and readiness checks stay transport-timeout-bounded.
+2. Timing model: `tick()`/`service()` are bounded; they may perform one tracked CONFIG read when single-shot readiness polling is due.
 3. Resource ownership: bus, pins, and timeout policy remain application-owned via `Config`.
 4. Memory behavior: no heap allocation in steady-state library operation.
 5. Error handling: all fallible APIs return `Status`; no exceptions and no silent failures.
@@ -315,7 +330,14 @@ lists nominal transaction counts; strict read-back adds the noted extra reads.
 | `enableConversionReadyPin()` | 3 writes; strict adds 3 reads | `3 * timeout`, strict `6 * timeout` |
 | `readRegister16()` / `writeRegister16()` | 1 transaction | `1 * timeout` |
 | `readRaw()` / `readLatestRaw()` | 1 conversion read, plus single-shot readiness if needed | `1-2 * timeout` |
-| `readBlocking()` | Start write + readiness polling + conversion read | Bounded by `timeoutMs` plus per-transaction timeouts |
+| `readBlocking()` | Single-shot start write + readiness polling + conversion read | Bounded by `timeoutMs` plus active I2C transaction timeouts; polls OS at most once per observed millisecond tick |
+
+`readBlocking()` in continuous mode does not wait for a new sample interval; it
+returns the current/latest conversion register value after the same `nowMs`
+precondition check. In single-shot mode, `cooperativeYield` is called between
+poll attempts when supplied. If the injected clock stops advancing, the driver
+returns `Err::TIMEOUT` after a finite same-tick guard rather than spinning
+forever.
 
 ## Hardware Validation Matrix
 

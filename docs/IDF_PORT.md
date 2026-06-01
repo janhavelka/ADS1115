@@ -9,9 +9,11 @@ Last audited: 2026-05-29
   `Config.cooperativeYield`, `Config.timeUser`).
 - Core logic does not include Arduino or ESP-IDF headers and does not call
   framework timing APIs directly.
-- `readBlocking*()` requires `Config.nowMs`. `begin()` and nonblocking/tick
-  workflows may still be used without `nowMs`, but blocking reads return
-  `INVALID_CONFIG` before starting conversion when no clock hook is configured.
+- `readBlocking*()` requires `Config.nowMs`. `begin()` and `tick(nowMs)` /
+  `service(nowMs)` workflows may still be used without `Config.nowMs`; direct
+  timing-based readiness checks need either `Config.nowMs`, externally supplied
+  service time, or ALERT/RDY GPIO. Blocking reads return `INVALID_CONFIG` before
+  starting conversion when no clock hook is configured.
 - A minimal pure ESP-IDF example exists at `examples/esp_idf/basic`. It is a
   build/integration example with external bus context, mutex locking, timeout
   mapping, and periodic `tick()` scheduling. Hardware behavior still requires

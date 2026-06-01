@@ -32,6 +32,7 @@ struct FakeBus {
   uint32_t nowMs = 1234;
   uint32_t writeCalls = 0;
   uint32_t readCalls = 0;
+  uint32_t yieldCalls = 0;
   uint32_t failWriteOnCall = 0;
   uint32_t failReadOnCall = 0;
   uint16_t configReadOrMask = 0;
@@ -55,6 +56,7 @@ static_assert(!std::is_move_assignable<ADS1115::ADS1115>::value,
 void resetIoCounters(FakeBus& bus) {
   bus.writeCalls = 0;
   bus.readCalls = 0;
+  bus.yieldCalls = 0;
   bus.failWriteOnCall = 0;
   bus.failReadOnCall = 0;
 }
@@ -122,6 +124,20 @@ bool fakeGpioRead(int, void* user) {
 }
 
 void fakeYield(void*) {}
+
+void fakeYieldAdvanceMs(void* user) {
+  FakeBus* bus = static_cast<FakeBus*>(user);
+  bus->yieldCalls++;
+  bus->nowMs++;
+}
+
+void fakeYieldAdvanceEveryOtherCall(void* user) {
+  FakeBus* bus = static_cast<FakeBus*>(user);
+  bus->yieldCalls++;
+  if ((bus->yieldCalls % 2U) == 0U) {
+    bus->nowMs++;
+  }
+}
 
 Config makeConfig(FakeBus& bus) {
   Config cfg;
@@ -234,6 +250,7 @@ void test_get_settings_snapshot() {
   TEST_ASSERT_EQUAL_UINT8(3u, snap.offlineThreshold);
   TEST_ASSERT_FALSE(snap.strictInitVerify);
   TEST_ASSERT_TRUE(snap.hasNowMsHook);
+  TEST_ASSERT_TRUE(snap.timebaseAvailable);
   TEST_ASSERT_TRUE(snap.hasGpioReadHook);
   TEST_ASSERT_TRUE(snap.hasCooperativeYieldHook);
   TEST_ASSERT_FALSE(snap.hardwareConfigDirty);
@@ -827,6 +844,7 @@ void test_read_conversion_ready_propagates_i2c_failure() {
   TEST_ASSERT_EQUAL_UINT8(1u, dev.consecutiveFailures());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::DEGRADED),
                           static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_EQUAL_INT32(-2, st.detail);
 }
 
 void test_conversion_ready_convenience_returns_false_on_failure() {
@@ -842,6 +860,119 @@ void test_conversion_ready_convenience_returns_false_on_failure() {
 
   TEST_ASSERT_FALSE(dev.conversionReady());
   TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
+}
+
+void test_conversion_ready_status_alias_preserves_transport_error() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+
+  bus.nowMs += dev.getConversionTimeMs();
+  bus.readStatus = Status::Error(Err::I2C_BUS, "forced bus failure", -64);
+  bool ready = true;
+  Status st = dev.conversionReady(ready);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-64, st.detail);
+  TEST_ASSERT_FALSE(ready);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(dev.lastError().code));
+}
+
+void test_service_returns_ready_poll_failure_and_updates_health() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+
+  bus.nowMs += dev.getConversionTimeMs();
+  bus.readStatus = Status::Error(Err::I2C_TIMEOUT, "service timeout", -65);
+  Status st = dev.service(bus.nowMs);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-65, st.detail);
+  TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::DEGRADED),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(dev.lastError().code));
+  TEST_ASSERT_EQUAL_UINT32(bus.nowMs, dev.lastErrorMs());
+}
+
+void test_tick_discards_status_but_updates_health_on_ready_poll_failure() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+
+  bus.nowMs += dev.getConversionTimeMs();
+  bus.readStatus = Status::Error(Err::I2C_TIMEOUT, "tick timeout", -66);
+  dev.tick(bus.nowMs);
+
+  TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_INT32(-66, dev.lastError().detail);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::DEGRADED),
+                          static_cast<uint8_t>(dev.state()));
+}
+
+void test_no_clock_direct_readiness_waits_for_service_timebase() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+
+  bus.nowMs += dev.getConversionTimeMs();
+  bool ready = true;
+  Status st = dev.readConversionReady(ready);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ready);
+
+  SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(dev.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.hasNowMsHook);
+  TEST_ASSERT_FALSE(snap.timebaseAvailable);
+  TEST_ASSERT_EQUAL_UINT32(0u, snap.conversionStartMs);
+
+  st = dev.service(bus.nowMs);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(dev.conversionReady());
+
+  st = dev.service(bus.nowMs + dev.getConversionTimeMs());
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(dev.conversionReady());
+}
+
+void test_no_clock_health_timestamps_are_marked_unavailable() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  bus.readStatus = Status::Error(Err::I2C_TIMEOUT, "no-clock timeout", -67);
+  uint16_t value = 0;
+  Status st = dev.readRegister16(cmd::REG_CONFIG, value);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.lastErrorMs());
+
+  SettingsSnapshot snap;
+  TEST_ASSERT_TRUE(dev.getSettings(snap).ok());
+  TEST_ASSERT_FALSE(snap.timebaseAvailable);
+  TEST_ASSERT_FALSE(snap.hasNowMsHook);
 }
 
 void test_read_raw_propagates_ready_poll_failure() {
@@ -894,6 +1025,22 @@ void test_continuous_readiness_waits_for_data_rate_interval() {
   TEST_ASSERT_TRUE(ready);
 }
 
+void test_tick_marks_continuous_ready_without_config_poll_after_interval() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::CONTINUOUS;
+  cfg.dataRate = DataRate::SPS_128;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+
+  bus.nowMs += dev.getConversionTimeMs();
+  dev.tick(bus.nowMs);
+
+  TEST_ASSERT_TRUE(dev._conversionReady);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+}
+
 void test_continuous_read_raw_returns_latest_without_fresh_wait() {
   FakeBus bus;
   bus.reg[cmd::REG_CONVERSION] = 0x1234;
@@ -912,6 +1059,25 @@ void test_continuous_read_raw_returns_latest_without_fresh_wait() {
 
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_EQUAL_INT16(0x1234, raw);
+}
+
+void test_single_shot_elapsed_os_busy_remains_not_ready() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+
+  bus.nowMs += dev.getConversionTimeMs();
+  bus.readXorMask[cmd::REG_CONFIG] = cmd::MASK_OS;
+  bool ready = true;
+  Status st = dev.readConversionReady(ready);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ready);
+  TEST_ASSERT_TRUE(dev._conversionStarted);
+  TEST_ASSERT_FALSE(dev._conversionReady);
 }
 
 void test_alert_ready_pin_path_does_not_poll_config_register() {
@@ -1421,6 +1587,103 @@ void test_read_blocking_times_out_when_injected_clock_stalls() {
   TEST_ASSERT_FALSE(dev._conversionReady);
 }
 
+void test_read_blocking_success_uses_cooperative_yield_cadence() {
+  FakeBus bus;
+  bus.reg[cmd::REG_CONVERSION] = 0x2222;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  cfg.cooperativeYield = fakeYieldAdvanceMs;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 200);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_INT16(0x2222, raw);
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(2u, bus.readCalls);
+  TEST_ASSERT_TRUE(bus.yieldCalls >= dev.getConversionTimeMs());
+}
+
+void test_read_blocking_tolerates_repeated_same_tick_before_clock_advances() {
+  FakeBus bus;
+  bus.reg[cmd::REG_CONVERSION] = 0x3333;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  cfg.cooperativeYield = fakeYieldAdvanceEveryOtherCall;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 200);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_INT16(0x3333, raw);
+  TEST_ASSERT_TRUE(bus.yieldCalls > dev.getConversionTimeMs());
+}
+
+void test_read_blocking_polls_ready_state_once_per_observed_tick() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  cfg.cooperativeYield = fakeYield;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+  bus.nowMs += dev.getConversionTimeMs();
+  resetIoCounters(bus);
+  bus.readXorMask[cmd::REG_CONFIG] = cmd::MASK_OS;
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 200);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.readCalls);
+}
+
+void test_read_blocking_times_out_with_advancing_clock_while_os_busy() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  cfg.cooperativeYield = fakeYieldAdvanceMs;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+  bus.readXorMask[cmd::REG_CONFIG] = cmd::MASK_OS;
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 12);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev._conversionStarted);
+  TEST_ASSERT_FALSE(dev._conversionReady);
+  TEST_ASSERT_TRUE(bus.readCalls <= 2u);
+}
+
+void test_read_blocking_propagates_ready_poll_transport_error() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  cfg.cooperativeYield = fakeYieldAdvanceMs;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+  bus.failReadOnCall = 1;
+  bus.failReadStatus = Status::Error(Err::I2C_BUS, "blocking poll failed", -68);
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 200);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-68, st.detail);
+}
+
 void test_read_blocking_requires_now_ms_without_starting_conversion() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -1634,10 +1897,17 @@ int main() {
   RUN_TEST(test_single_shot_raw_read_consumes_ready_before_voltage_read);
   RUN_TEST(test_read_conversion_ready_propagates_i2c_failure);
   RUN_TEST(test_conversion_ready_convenience_returns_false_on_failure);
+  RUN_TEST(test_conversion_ready_status_alias_preserves_transport_error);
+  RUN_TEST(test_service_returns_ready_poll_failure_and_updates_health);
+  RUN_TEST(test_tick_discards_status_but_updates_health_on_ready_poll_failure);
+  RUN_TEST(test_no_clock_direct_readiness_waits_for_service_timebase);
+  RUN_TEST(test_no_clock_health_timestamps_are_marked_unavailable);
   RUN_TEST(test_read_raw_propagates_ready_poll_failure);
   RUN_TEST(test_read_raw_reconstructs_signed_conversion_register);
   RUN_TEST(test_continuous_readiness_waits_for_data_rate_interval);
+  RUN_TEST(test_tick_marks_continuous_ready_without_config_poll_after_interval);
   RUN_TEST(test_continuous_read_raw_returns_latest_without_fresh_wait);
+  RUN_TEST(test_single_shot_elapsed_os_busy_remains_not_ready);
   RUN_TEST(test_alert_ready_pin_path_does_not_poll_config_register);
   RUN_TEST(test_config_setters_write_expected_config_bits);
   RUN_TEST(test_write_config_accepts_datasheet_pga_aliases_for_0_256v);
@@ -1666,6 +1936,11 @@ int main() {
   RUN_TEST(test_failed_recover_probe_preserves_raw_register_dirty_reason);
   RUN_TEST(test_failed_recover_partial_apply_keeps_raw_register_dirty_visible);
   RUN_TEST(test_read_blocking_times_out_when_injected_clock_stalls);
+  RUN_TEST(test_read_blocking_success_uses_cooperative_yield_cadence);
+  RUN_TEST(test_read_blocking_tolerates_repeated_same_tick_before_clock_advances);
+  RUN_TEST(test_read_blocking_polls_ready_state_once_per_observed_tick);
+  RUN_TEST(test_read_blocking_times_out_with_advancing_clock_while_os_busy);
+  RUN_TEST(test_read_blocking_propagates_ready_poll_transport_error);
   RUN_TEST(test_read_blocking_requires_now_ms_without_starting_conversion);
   RUN_TEST(test_read_blocking_voltage_requires_now_ms_without_starting_conversion);
   RUN_TEST(test_raw_transport_rejects_invalid_buffers);
