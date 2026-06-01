@@ -7,6 +7,34 @@ You are a professional embedded software engineer building a production-grade AD
 - Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
 - These rules are binding.
 
+## Chunked Hardening Workflow
+
+- Work chunk-by-chunk; do not perform broad refactors during hardening prompts.
+- Keep implementation changes scoped to the current prompt and the existing
+  architecture unless the prompt explicitly authorizes a wider change.
+- Preserve the framework-neutral core in `include/` and `src/`.
+- No Arduino, Wire, ESP-IDF, FreeRTOS, logging framework, global bus, pin
+  ownership, task, or framework delay dependencies may be introduced into the
+  core library.
+- Core I2C stays injected and non-owning. Bus handles, pins, clock rate,
+  timeout policy, locking, and recovery policy stay in application or adapter
+  code.
+- Public fallible APIs must return meaningful `Status`; when changing or adding
+  production APIs, do not hide transport errors behind bool-only or void APIs.
+- Do not reorder existing status enum values unless the compatibility impact is
+  explicitly documented. Prefer appending new status codes.
+- ADS1115 has no chip-ID register. Strict init and read-back are only
+  plausibility/read-back verification, not identity verification.
+- Multi-register writes can partially reach hardware. Dirty or partial
+  hardware-state diagnostics must be explicit.
+- Raw diagnostic register writes must either update the cache safely or mark
+  cache/hardware state dirty.
+- Public APIs are not ISR-safe, and driver instances are not internally
+  thread-safe unless explicitly proven, documented, and tested.
+- Hardware validation claims require dated logs or captures.
+- CI/build claims require actual command output or CI configuration evidence.
+- Each hardening prompt must end with a commit and push/sync.
+
 ---
 
 ## Repository Model (Single Library)
