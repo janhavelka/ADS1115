@@ -67,9 +67,22 @@ def main() -> int:
         fail("either 'cfg' or 'settings' command must be present")
 
     for token in (
+        "beginDriverAtAddress",
+        "activeI2cAddress",
+        'cmd.startsWith("addr ")',
+        'cmd.startsWith("wreg ")',
+        "writeRegister16",
+        "hardwareConfigDirty",
+        "marks cache dirty",
+    ):
+        if token not in text:
+            fail(f"bringup CLI must include token: {token!r}")
+
+    for token in (
         "diagnostic Arduino bring-up CLI",
         "Current examples are diagnostic",
         "Production applications should implement",
+        "Raw writes bypass the typed config helpers",
     ):
         if token not in readme:
             fail(f"README must document example honesty token: {token!r}")

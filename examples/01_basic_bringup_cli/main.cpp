@@ -223,7 +223,8 @@ void printDriverHealth() {
 
 void printHelp() {
   Serial.println();
-  cli::printHelpHeader("ADS1115 CLI Help");
+  cli::printHelpHeader("ADS1115 Diagnostic Bring-up CLI Help");
+  Serial.println("  Diagnostic example only; not a production shared-bus manager.");
   cli::printHelpSection("Common");
   cli::printHelpItem("help / ?", "Show this help");
   cli::printHelpItem("version / ver", "Print firmware and library version info");
@@ -239,7 +240,7 @@ void printHelp() {
 
   cli::printHelpSection("Configuration");
   cli::printHelpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
-  cli::printHelpItem("diff [0|1|2|3]", "Set differential pair");
+  cli::printHelpItem("diff [0|1|2|3]", "Set differential MUX selection");
   cli::printHelpItem("gain [0..5]", "Set PGA (0=6.144V, 2=2.048V, 5=0.256V)");
   cli::printHelpItem("rate [0..7]", "Set data rate");
   cli::printHelpItem("mode [single|cont]", "Set operating mode");
@@ -681,6 +682,14 @@ void printSettingsSnapshot() {
                 snap.hasCooperativeYieldHook ? "YES" : "NO");
   Serial.printf("  Timebase available: %s\n",
                 snap.timebaseAvailable ? "YES" : "NO");
+  Serial.printf("  Hardware/cache dirty: %s\n",
+                snap.hardwareConfigDirty ? "YES" : "NO");
+  if (snap.hardwareConfigDirty) {
+    Serial.printf("  Dirty error: %s detail=%ld msg=%s\n",
+                  errToStr(snap.hardwareConfigDirtyError.code),
+                  static_cast<long>(snap.hardwareConfigDirtyError.detail),
+                  snap.hardwareConfigDirtyError.msg ? snap.hardwareConfigDirtyError.msg : "");
+  }
   Serial.printf("  Alert pin: %d\n", snap.alertRdyPin);
   Serial.printf("  ALERT/RDY pin configured: %s\n",
                 snap.alertRdyPinConfigured ? "YES" : "NO");
@@ -1572,6 +1581,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Usage: config write <0..0xFFFF>");
       return;
     }
+    printActiveAddress();
     ADS1115::Status st = device.writeConfig(static_cast<uint16_t>(value));
     printStatus(st);
     if (st.ok()) {
@@ -1597,7 +1607,18 @@ void processCommand(const String& cmdLine) {
       return;
     }
 
-    printStatus(device.writeRegister16(static_cast<uint8_t>(addr), static_cast<uint16_t>(value)));
+    printActiveAddress();
+    LOGW("wreg is diagnostic: successful writes mark hardware/cache sync dirty; run recover or begin to resync");
+    ADS1115::Status st =
+        device.writeRegister16(static_cast<uint8_t>(addr), static_cast<uint16_t>(value));
+    printStatus(st);
+    if (st.ok() && device.hardwareConfigDirty()) {
+      Serial.printf("  Dirty diagnostic: %s%s%s detail=%ld\n",
+                    LOG_COLOR_YELLOW,
+                    errToStr(device.hardwareConfigDirtyError().code),
+                    LOG_COLOR_RESET,
+                    static_cast<long>(device.hardwareConfigDirtyError().detail));
+    }
   } else if (cmd.startsWith("reg ")) {
     uint32_t addr = 0;
     if (!parseU32(cmd.substring(4), addr) || addr > ADS1115::cmd::REG_HI_THRESH) {
@@ -1605,6 +1626,7 @@ void processCommand(const String& cmdLine) {
       return;
     }
 
+    printActiveAddress();
     uint16_t value = 0;
     ADS1115::Status st = device.readRegister16(static_cast<uint8_t>(addr), value);
     if (!st.ok()) {
@@ -1661,7 +1683,8 @@ void setup() {
   board::initSerial();
   delay(100);
 
-  LOGI("=== ADS1115 Bringup Example ===");
+  LOGI("=== ADS1115 Diagnostic Bring-up CLI ===");
+  LOGW("Diagnostic example only: not a production shared-bus manager");
   printVersionInfo();
   printResetReason();
 
@@ -1669,7 +1692,12 @@ void setup() {
     LOGE("Failed to initialize I2C");
     return;
   }
-  LOGI("I2C initialized (SDA=%d, SCL=%d)", board::I2C_SDA, board::I2C_SCL);
+  LOGI("I2C initialized (SDA=%d, SCL=%d, freq=%lu Hz, Wire timeout=%u ms)",
+       board::I2C_SDA,
+       board::I2C_SCL,
+       static_cast<unsigned long>(board::I2C_FREQ_HZ),
+       static_cast<unsigned>(board::I2C_TIMEOUT_MS));
+  LOGW("Arduino example adapter uses Wire's global timeout; per-call timeoutMs is advisory");
 
   board::initAlertRdyPin();
 
@@ -1692,7 +1720,13 @@ void setup() {
 }
 
 void loop() {
-  device.tick(millis());
+  if (device.isInitialized()) {
+    ADS1115::Status serviceStatus = device.service(millis());
+    if (!serviceStatus.ok() && verboseMode) {
+      LOGW("service() reported an I2C/status issue");
+      printStatus(serviceStatus);
+    }
+  }
 
   static String inputBuffer;
   static constexpr size_t kMaxInputLen = 128;

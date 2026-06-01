@@ -3,6 +3,11 @@
 Date: 2026-05-29
 Branch: `hardening/ads1115-industry-readiness`
 
+Historical report: this file records the earlier industry-readiness branch and
+its then-current validation counts. Current hardening status, Prompt 07
+integration evidence, and current native test counts are tracked in
+`docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md`.
+
 ## Summary
 
 This branch hardens the ADS1115 driver against the industry-readiness findings:

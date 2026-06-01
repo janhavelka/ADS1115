@@ -6,7 +6,8 @@ Source audit report: `exploration/ads1115-industry-standard:docs/ADS1115_INDUSTR
 Status: P0 status taxonomy, failed-begin dirty diagnostics, strict read-back
 mismatch status, raw diagnostic write dirty marking, P1 readiness/timing API
 contract polish, and P1 guard/test/documentation expansion are implemented and
-validated in native tests. Hardware validation evidence is still pending.
+validated in native tests. Integration examples and HIL validation artifacts are
+prepared. Hardware validation evidence is still pending.
 
 ## Scope Rules
 
@@ -38,7 +39,7 @@ validated in native tests. Hardware validation evidence is still pending.
 | 04 | P0 raw register cache/dirty contract | Implemented; recovery closure tests/docs added |
 | 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Implemented |
 | 06 | P1 tests, guards, and documentation polish | Implemented |
-| 07 | Integration examples, CI evidence, and HIL validation matrix | Not started |
+| 07 | Integration examples, CI evidence, and HIL validation matrix | Implemented; hardware execution pending |
 | 08 | Final report and release-readiness review | Not started |
 
 ## Source Audit Summary
@@ -67,7 +68,8 @@ fixes and validation. The highest-priority follow-up work is:
 | 03 | `effddc526ab51927488acb12ede1e6586cde00c0` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/common/HealthDiag.h`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Required guards, native tests, and Arduino builds passed | P0 status and dirty diagnostics implemented |
 | 04 | `8056c962a010b4db83551d2c4805514899886ee5` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
 | 05 | `3f4583b0138d4cf9694ceaeeb35e1ffa164db24b` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `include/ADS1115/Config.h`, `test/test_basic.cpp`, `README.md`, `docs`, `examples/01_basic_bringup_cli/main.cpp`, `tools/check_core_timing_guard.py` | Required guards, native tests, and Arduino builds passed | Readiness/status aliases, service timing, no-clock diagnostics, and blocking bounds clarified |
-| 06 | This Prompt 06 commit | `test/test_basic.cpp`, `tools/check_core_timing_guard.py`, `scripts/generate_version.py`, `README.md`, `CHANGELOG.md`, `docs`, `include/ADS1115/ADS1115.h` | Required guards, version check, native tests, Arduino builds, and package pack passed | Edge coverage, core leakage guards, version metadata sync, and documentation honesty expanded |
+| 06 | `73f87fee663473340a7d53428ab1f6bc113067bd` | `test/test_basic.cpp`, `tools/check_core_timing_guard.py`, `scripts/generate_version.py`, `README.md`, `CHANGELOG.md`, `docs`, `include/ADS1115/ADS1115.h` | Required guards, version check, native tests, Arduino builds, and package pack passed | Edge coverage, core leakage guards, version metadata sync, and documentation honesty expanded |
+| 07 | This Prompt 07 commit | `examples`, `.github`, `tools`, `README.md`, `docs` | Required local guards/tests/builds passed; `idf.py` local availability recorded | Integration examples clarified, CI evidence strengthened, ESP-IDF mapping limits documented, and HIL operator plan/template/script added |
 
 ## Prompt 02 Contract Tests
 
@@ -382,12 +384,53 @@ Prompt 06 validation on `hardening/ads1115-industry-standard-p0`:
 | `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:15.300` |
 | `python -m platformio pkg pack` | Exit code 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz`; artifact removed after validation |
 
-Remaining gaps after Prompt 06:
+Prompt 07 implementation on `hardening/ads1115-industry-standard-p0`:
+
+- Arduino diagnostic CLI runtime output now labels itself as diagnostic, shows
+  the global Wire timeout policy, uses `service()` from the main loop, reports
+  dirty/cache diagnostics in `cfg/settings`, and warns on `wreg` raw writes.
+- ESP-IDF example comments and `docs/IDF_PORT.md` now document coarse
+  `esp_err_t` mapping limitations and explicitly avoid claiming precise
+  address-NACK/data-NACK taxonomy without bus evidence.
+- CI workflow now runs `python scripts/generate_version.py check` in addition to
+  existing native tests, core guard, CLI guard, IDF example guard, Arduino
+  ESP32-S2/S3 builds, ESP-IDF S2/S3 container builds, and package validation.
+- Added `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` and
+  `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` for HIL execution.
+- Added `tools/hil_ads1115_capture.py`, an optional serial transcript helper
+  with dry-run command listing and timestamped log capture; it does not declare
+  pass/fail.
+
+Prompt 07 validation on `hardening/ads1115-industry-standard-p0`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | `106 test cases: 106 succeeded in 00:00:02.163`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:14.932` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:15.630` |
+| `idf.py` availability check | `idf.py unavailable`; local pure ESP-IDF builds were not run |
+| `python tools/hil_ads1115_capture.py --dry-run --suite identity` | Exit code 0; printed local branch, local commit, and command list `version`, `addr`, `state`, `cfg`, `drv` |
+
+CI/build evidence after Prompt 07:
+
+- `.github/workflows/ci.yml` configures Arduino PlatformIO builds for
+  `esp32s3dev` and `esp32s2dev`.
+- `.github/workflows/ci.yml` configures native tests, core guard, CLI guard, IDF
+  example guard, version metadata check, package validation, and pure ESP-IDF
+  example container builds for `esp32s3` and `esp32s2`.
+- The workflow runs on `main` push and pull requests targeting `main`; this
+  branch has local command evidence until a PR/CI run exists.
+
+Remaining gaps after Prompt 07:
 
 - Dated hardware/HIL logs or captures are still required before field-grade
   validation claims.
-- Prompt 07 remains responsible for integration-example evidence, CI evidence,
-  and the HIL validation matrix closure.
+- Package archive contents are validated by `pio pkg pack` success, but there is
+  not yet a separate package-contents allow/deny guard.
 
 ## Final Report Placeholder
 

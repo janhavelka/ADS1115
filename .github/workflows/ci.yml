@@ -68,6 +68,9 @@ jobs:
       - name: Enforce core timing guard
         run: python tools/check_core_timing_guard.py
 
+      - name: Check version metadata
+        run: python scripts/generate_version.py check
+
       - name: Run native tests
         run: pio test -e native
 
@@ -110,6 +113,9 @@ jobs:
 
       - name: Enforce ESP-IDF example contract
         run: python tools/check_idf_example_contract.py
+
+      - name: Check version metadata
+        run: python scripts/generate_version.py check
 
       - name: Validate library package
         run: pio pkg pack

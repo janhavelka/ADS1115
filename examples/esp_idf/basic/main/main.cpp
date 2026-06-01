@@ -29,6 +29,10 @@ struct I2cBusContext {
 I2cBusContext busContext;
 ADS1115::ADS1115 adc;
 
+// ESP-IDF's master I2C API reports broad esp_err_t values here; this example
+// cannot prove address-NACK versus data-NACK precision. Production adapters
+// should refine this mapping only when their platform/driver exposes reliable
+// fault classification.
 ADS1115::Status mapEspError(esp_err_t err) {
   if (err == ESP_OK) {
     return ADS1115::Status::Ok();
@@ -112,6 +116,8 @@ bool initBus() {
   busConfig.scl_io_num = I2C_SCL;
   busConfig.clk_source = I2C_CLK_SRC_DEFAULT;
   busConfig.glitch_ignore_cnt = 7;
+  // Example convenience only. Production boards should size external pull-ups
+  // for bus capacitance, speed, voltage domain, and sink-current limits.
   busConfig.flags.enable_internal_pullup = true;
 
   esp_err_t err = i2c_new_master_bus(&busConfig, &busContext.bus);

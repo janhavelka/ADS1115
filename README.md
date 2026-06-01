@@ -123,6 +123,10 @@ void loop() {
 }
 ```
 
+The Arduino `Wire` mapping above is adapter-specific. Other frameworks may not
+expose reliable address-NACK versus data-NACK detail; preserve the raw transport
+detail and document any coarse mappings in the adapter.
+
 ## API Overview
 
 ### Lifecycle
@@ -278,7 +282,7 @@ limits, and the ALERT/RDY pulse-capture strategy.
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - diagnostic Arduino bring-up CLI for ADS1115 features
-- `examples/esp_idf/basic/` - native ESP-IDF build example with external bus context, mutex locking, timeout mapping, and periodic `tick()` scheduling
+- `examples/esp_idf/basic/` - native ESP-IDF build example with external bus context, mutex locking, timeout propagation, coarse ESP-IDF error mapping, and periodic `tick()` scheduling
 - CLI address selection: `addr` prints the active ADS1115 address; `addr 0x48`,
   `addr 0x49`, `addr 0x4A`, or `addr 0x4B` reinitializes the diagnostic driver
   for that selected address. It does not automatically validate every detected
@@ -289,6 +293,11 @@ Current examples are diagnostic and bring-up oriented. They do not demonstrate a
 production shared-bus manager with external locking, nonblocking console input,
 or system-wide timeout policy. Production applications should implement those
 policies in their transport callbacks.
+
+| Example | Intent | Evidence/limits |
+| --- | --- | --- |
+| Arduino CLI | Diagnostic bring-up and HIL operator interface. | Reports active address, version, driver state, cached settings, and raw-write dirty diagnostics. Uses Arduino `Wire` global timeout rather than a production shared-bus manager. |
+| ESP-IDF basic | Native build/integration template. | Owns bus context in the adapter, locks I2C transactions with a mutex, propagates timeout values, and uses coarse `esp_err_t` mapping. It does not prove precise address-NACK/data-NACK taxonomy; see `docs/IDF_PORT.md`. |
 
 ### Example Helpers (`examples/common/`)
 
@@ -368,11 +377,14 @@ intended checks.
 
 ## Validation
 
+CI-backed checks configured in `.github/workflows/ci.yml`:
+
 ```bash
-pio test -e native
-python tools/check_cli_contract.py
 python tools/check_core_timing_guard.py
+python scripts/generate_version.py check
+pio test -e native
 python tools/check_idf_example_contract.py
+python tools/check_cli_contract.py
 pio run -e esp32s3dev
 pio run -e esp32s2dev
 pio pkg pack
@@ -380,10 +392,17 @@ idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
+Local optional checks depend on installed tools. If `idf.py` is unavailable,
+record that exactly rather than reporting a pass. Hardware/HIL validation remains
+pending until dated logs or captures are produced with
+`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` and the results template.
+
 ## Documentation
 
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
+- `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - HIL operator plan and evidence requirements
+- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - blank results template for dated hardware runs
 - `include/ADS1115/CommandTable.h` - public register map, masks, and defaults
 - `docs/ADS111x_datasheet_revE.pdf` - TI datasheet copy used for driver verification
 - `docs/TI_registry_reference/README.md` - TI reference-driver extraction notes
