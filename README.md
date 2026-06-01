@@ -254,6 +254,10 @@ transport failures preserve the original transport status.
 Comparator thresholds are signed raw conversion codes, not volts. Recalculate
 threshold raw codes whenever PGA/full-scale range changes.
 
+Latched comparator assertions clear when the conversion register is read or
+after a successful SMBus alert response. This driver does not issue SMBus alert
+response cycles.
+
 ALERT/RDY is open-drain and requires a pull-up. In conversion-ready mode the
 pulse can be short; in continuous conversion the datasheet pulse-width caveat is
 approximately 8 us, so slow polling tasks may miss it. Use an interrupt-capable

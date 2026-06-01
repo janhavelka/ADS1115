@@ -590,7 +590,7 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     }
 
     if (static_cast<int32_t>(loopNowMs - readyAtMs) < 0) {
-      _cooperativeYield();  // Feed watchdog, let other FreeRTOS tasks run
+      _cooperativeYield();  // Feed watchdog or cooperative scheduler.
       continue;
     }
     if (hasReadyPollMs && loopNowMs == lastReadyPollMs) {

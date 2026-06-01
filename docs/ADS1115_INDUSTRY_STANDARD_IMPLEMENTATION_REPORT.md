@@ -40,7 +40,7 @@ prepared. Hardware validation evidence is still pending.
 | 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Implemented |
 | 06 | P1 tests, guards, and documentation polish | Implemented |
 | 07 | Integration examples, CI evidence, and HIL validation matrix | Implemented; hardware execution pending |
-| 08 | Final report and release-readiness review | Not started |
+| 08 | Final report and release-readiness review | Implemented; merge/release gates documented |
 
 ## Source Audit Summary
 
@@ -69,7 +69,8 @@ fixes and validation. The highest-priority follow-up work is:
 | 04 | `8056c962a010b4db83551d2c4805514899886ee5` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
 | 05 | `3f4583b0138d4cf9694ceaeeb35e1ffa164db24b` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `include/ADS1115/Config.h`, `test/test_basic.cpp`, `README.md`, `docs`, `examples/01_basic_bringup_cli/main.cpp`, `tools/check_core_timing_guard.py` | Required guards, native tests, and Arduino builds passed | Readiness/status aliases, service timing, no-clock diagnostics, and blocking bounds clarified |
 | 06 | `73f87fee663473340a7d53428ab1f6bc113067bd` | `test/test_basic.cpp`, `tools/check_core_timing_guard.py`, `scripts/generate_version.py`, `README.md`, `CHANGELOG.md`, `docs`, `include/ADS1115/ADS1115.h` | Required guards, version check, native tests, Arduino builds, and package pack passed | Edge coverage, core leakage guards, version metadata sync, and documentation honesty expanded |
-| 07 | This Prompt 07 commit | `examples`, `.github`, `tools`, `README.md`, `docs` | Required local guards/tests/builds passed; `idf.py` local availability recorded | Integration examples clarified, CI evidence strengthened, ESP-IDF mapping limits documented, and HIL operator plan/template/script added |
+| 07 | `c4558b293a66975112a0db85c10a2cd8dde814b4` | `examples`, `.github`, `tools`, `README.md`, `docs` | Required local guards/tests/builds passed; `idf.py` local availability recorded | Integration examples clarified, CI evidence strengthened, ESP-IDF mapping limits documented, and HIL operator plan/template/script added |
+| 08 | Report commit containing `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md` | `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md`, this report, `README.md`, `CHANGELOG.md`, `src/ADS1115.cpp` | Required local guards/tests/builds/package pack passed; `idf.py` unavailable; read-only merge-tree reports conflicts with current `origin/main` | Final readiness report added; branch requires rebase/merge conflict resolution before merge and dated HIL evidence before release claims |
 
 ## Prompt 02 Contract Tests
 
@@ -77,9 +78,11 @@ Status taxonomy additions in `include/ADS1115/Status.h` are append-only:
 `OFFLINE`, `UNSUPPORTED_OPERATION`, `READBACK_MISMATCH`, and
 `HARDWARE_CONFIG_DIRTY`.
 
-Added or updated native tests:
+Added or updated native tests. This table records the intentional test-first
+state from Prompt 02; the listed failing contracts were implemented in later
+prompts and all pass in the Prompt 08 native validation.
 
-| Test | Expected behavior | Current status |
+| Test | Expected behavior | Prompt 02 historical status |
 | --- | --- | --- |
 | `test_status_taxonomy_additions_are_append_only` | New `Err` values append after existing `I2C_BUS` values. | Pass |
 | `test_begin_strict_readback_mismatch_fails_without_initializing_and_preserves_dirty` | Strict read-back mismatch returns `READBACK_MISMATCH`, leaves driver uninitialized, and preserves dirty diagnostic. | Fails: returns `I2C_ERROR` |
@@ -432,7 +435,7 @@ Remaining gaps after Prompt 07:
 - Package archive contents are validated by `pio pkg pack` success, but there is
   not yet a separate package-contents allow/deny guard.
 
-## Final Report Placeholder
+## Final Report
 
-Final release-readiness conclusions will be written after all planned hardening
-chunks complete and after the required validation evidence is available.
+Final release-readiness conclusions are recorded in
+`docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md`.

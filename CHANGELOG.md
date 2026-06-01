@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Status::operator bool()` explicit conversion for concise success checks.
 - `readRegister()` and `writeRegister()` compatibility aliases for `readRegister16()` / `writeRegister16()`.
 - `readConversionReady(bool&)` for conversion readiness checks with explicit transport error reporting.
+- `conversionReady(bool&)` status-returning alias while keeping the existing bool-only convenience overload.
+- `service(uint32_t)` status-returning periodic service while keeping `tick(uint32_t)` for compatibility.
+- `shutdown()` public API for explicit best-effort single-shot idle handling before `end()`.
+- `readLatestRaw(int16_t&)` for continuous-mode latest-register reads without promising a fresh sample.
+- `Config::strictInitVerify` for optional writable-register read-back plausibility checks.
+- `hardwareConfigDirty()` and `hardwareConfigDirtyError()` diagnostics for partial apply and raw diagnostic writes.
+- Appended `Err::OFFLINE`, `Err::UNSUPPORTED_OPERATION`, `Err::READBACK_MISMATCH`, and `Err::HARDWARE_CONFIG_DIRTY` without reordering existing status values.
 - Datasheet PGA alias handling for raw CONFIG writes: encodings `110` and `111` are accepted as `+/-0.256 V`.
 - Native coverage for register-modeled conversion reads, readiness failures, ALERT/RDY readiness, setter rollback, register validation, and stalled-clock blocking timeouts.
 - Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while `recover()` remains the explicit recovery path.
