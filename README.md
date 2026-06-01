@@ -204,7 +204,7 @@ starting a conversion when `nowMs` is missing.
 
 | Method | Description |
 |--------|-------------|
-| `setMux(mux)` | Select one of four single-ended inputs or four differential pairs |
+| `setMux(mux)` | Select one of four single-ended inputs or four differential MUX selections: AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, or AIN2-AIN3 |
 | `setGain(gain)` | Select PGA full-scale range from +/-6.144 V to +/-0.256 V |
 | `setDataRate(rate)` | Select 8, 16, 32, 64, 128, 250, 475, or 860 SPS |
 | `setMode(mode)` | Select single-shot or continuous mode |
@@ -251,22 +251,29 @@ Comparator thresholds are signed raw conversion codes, not volts. Recalculate
 threshold raw codes whenever PGA/full-scale range changes.
 
 ALERT/RDY is open-drain and requires a pull-up. In conversion-ready mode the
-pulse can be short, especially in continuous conversion; slow polling tasks may
-miss it. Use an interrupt-capable GPIO, a latch strategy, or OS-bit polling when
-the scheduler cannot guarantee pulse capture.
+pulse can be short; in continuous conversion the datasheet pulse-width caveat is
+approximately 8 us, so slow polling tasks may miss it. Use an interrupt-capable
+GPIO, a latch strategy, or OS-bit polling when the scheduler cannot guarantee
+pulse capture.
 
 ### Configuration Constraints
 
 | Field | Valid Values |
 |-------|--------------|
 | `i2cWrite`, `i2cWriteRead` | Required transport callbacks |
-| `i2cAddress` | `0x48`, `0x49`, `0x4A`, or `0x4B` |
+| `i2cAddress` | ADDR to GND `0x48`, VDD `0x49`, SDA `0x4A`, or SCL `0x4B` |
 | `i2cTimeoutMs` | Must be greater than zero |
 | `strictInitVerify` | Optional register read-back plausibility check |
 | `nowMs` | Optional for `begin()`; required by `readBlocking*()` |
 | `alertRdyPin` | `-1` when unused; otherwise requires `gpioRead` |
 | `offlineThreshold` | Zero is normalized to one |
 | enum fields | Must be one of the documented enum values |
+
+The datasheet says `ADDR` is sampled continuously. If `ADDR` is tied to SDA,
+hold SDA low for the required setup window after SCL goes low so the address
+decodes correctly. I2C and ALERT/RDY pull-up sizing is board-specific: choose
+values for bus speed, total capacitance, GPIO voltage domain, sink-current
+limits, and the ALERT/RDY pulse-capture strategy.
 
 ## Examples
 
@@ -311,7 +318,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 5. Error handling: all fallible APIs return `Status`; no exceptions and no silent failures.
 6. Health behavior: `OFFLINE` is latched. Normal public I2C operations return `Err::OFFLINE` with `Driver is offline; call recover()` without touching the bus until `recover()` succeeds.
 7. Partial hardware state: multi-register failures can leave hardware partially updated; use `hardwareConfigDirty()` and `recover()`.
-8. Electrical limits: PGA full-scale settings do not override ADS1115 analog input absolute maximum ratings.
+8. Electrical limits: PGA full-scale settings do not override ADS1115 analog input absolute maximum ratings (`GND - 0.3 V` to `VDD + 0.3 V`).
 
 ## I2C Transaction And Latency Model
 
@@ -343,16 +350,16 @@ forever.
 
 Before field release, validate at least:
 
-| Area | Cases |
-|------|-------|
-| I2C address | `0x48`, `0x49`, `0x4A`, `0x4B` |
-| Modes | Single-shot, continuous, mode switching during operation |
-| Mux/gain/rate | All muxes, all PGA ranges, all data rates |
-| ALERT/RDY | Pull-up value, active-low/high, comparator mode, conversion-ready pulse capture |
-| Comparator | Traditional/window, latching/non-latching, queue depths, raw threshold recalculation |
-| Faults | Address NACK, data NACK, timeout, stuck bus, unplug/replug, brownout |
-| Recovery | OFFLINE latch, manual `recover()`, dirty-state clearing |
-| Platforms | Arduino ESP32-S2/S3, pure ESP-IDF adapter/build where used |
+| Area | Cases | Current evidence |
+|------|-------|------------------|
+| I2C address | ADDR straps: GND `0x48`, VDD `0x49`, SDA `0x4A`, SCL `0x4B` | Pending dated HIL log/capture |
+| Modes | Single-shot, continuous, mode switching during operation | Pending dated HIL log/capture |
+| Mux/gain/rate | All muxes, all PGA ranges, all data rates | Pending dated HIL log/capture |
+| ALERT/RDY | Pull-up sizing/rise time, active-low/high, comparator mode, conversion-ready pulse capture | Pending dated HIL log/capture |
+| Comparator | Traditional/window, latching/non-latching, queue depths, raw threshold recalculation | Pending dated HIL log/capture |
+| Faults | Address NACK, data NACK, timeout, stuck bus, unplug/replug, brownout | Pending dated HIL log/capture |
+| Recovery | OFFLINE latch, manual `recover()`, dirty-state clearing | Pending dated HIL log/capture |
+| Platforms | Arduino ESP32-S2/S3, pure ESP-IDF adapter/build where used | Pending dated CI/HIL log/capture |
 
 The diagnostic CLI `addr` command can select one ADS1115 address at a time for
 manual validation. A bus scan showing multiple ADS1115-range addresses is not a

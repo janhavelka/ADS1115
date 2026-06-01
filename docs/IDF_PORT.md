@@ -61,4 +61,7 @@ cfg.cooperativeYield = idfYield;
 - Example builds pass (`pio run -e esp32s3dev`, `pio run -e esp32s2dev`).
 - No direct `millis/micros/yield/delay` calls or Arduino includes exist in
   `include/` or `src/`.
-- Pure ESP-IDF builds should pass for `esp32s3` and `esp32s2`.
+- Pure ESP-IDF coverage requires running:
+  `idf.py -C examples/esp_idf/basic set-target esp32s3 build` and
+  `idf.py -C examples/esp_idf/basic set-target esp32s2 build`, or citing CI logs
+  that ran those exact targets.

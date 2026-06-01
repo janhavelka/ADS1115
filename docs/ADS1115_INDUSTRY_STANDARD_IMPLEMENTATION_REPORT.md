@@ -4,9 +4,9 @@ Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
 Source audit report: `exploration/ads1115-industry-standard:docs/ADS1115_INDUSTRY_STANDARD_EXPLORATION.md` at `d6f163534d59ad8bdd4b597bfd7f64a93615ac94`
 Status: P0 status taxonomy, failed-begin dirty diagnostics, strict read-back
-mismatch status, raw diagnostic write dirty marking, and P1 readiness/timing API
-contract polish are implemented and validated in native tests. Hardware
-validation evidence is still pending.
+mismatch status, raw diagnostic write dirty marking, P1 readiness/timing API
+contract polish, and P1 guard/test/documentation expansion are implemented and
+validated in native tests. Hardware validation evidence is still pending.
 
 ## Scope Rules
 
@@ -37,7 +37,7 @@ validation evidence is still pending.
 | 03 | P0 core status taxonomy and begin dirty-state implementation | Implemented |
 | 04 | P0 raw register cache/dirty contract | Implemented; recovery closure tests/docs added |
 | 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Implemented |
-| 06 | P1 tests, guards, and documentation polish | Not started |
+| 06 | P1 tests, guards, and documentation polish | Implemented |
 | 07 | Integration examples, CI evidence, and HIL validation matrix | Not started |
 | 08 | Final report and release-readiness review | Not started |
 
@@ -66,7 +66,8 @@ fixes and validation. The highest-priority follow-up work is:
 | 02 | `7ce66d14cef39e5f2c6a7b497bcf02c65770c764` | `include/ADS1115/Status.h`, `test/test_basic.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core guard passed; native PlatformIO had expected contract failures | Test-first contracts added |
 | 03 | `effddc526ab51927488acb12ede1e6586cde00c0` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/common/HealthDiag.h`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Required guards, native tests, and Arduino builds passed | P0 status and dirty diagnostics implemented |
 | 04 | `8056c962a010b4db83551d2c4805514899886ee5` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
-| 05 | This Prompt 05 commit | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `include/ADS1115/Config.h`, `test/test_basic.cpp`, `README.md`, `docs`, `examples/01_basic_bringup_cli/main.cpp`, `tools/check_core_timing_guard.py` | Required guards, native tests, and Arduino builds passed | Readiness/status aliases, service timing, no-clock diagnostics, and blocking bounds clarified |
+| 05 | `3f4583b0138d4cf9694ceaeeb35e1ffa164db24b` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `include/ADS1115/Config.h`, `test/test_basic.cpp`, `README.md`, `docs`, `examples/01_basic_bringup_cli/main.cpp`, `tools/check_core_timing_guard.py` | Required guards, native tests, and Arduino builds passed | Readiness/status aliases, service timing, no-clock diagnostics, and blocking bounds clarified |
+| 06 | This Prompt 06 commit | `test/test_basic.cpp`, `tools/check_core_timing_guard.py`, `scripts/generate_version.py`, `README.md`, `CHANGELOG.md`, `docs`, `include/ADS1115/ADS1115.h` | Required guards, version check, native tests, Arduino builds, and package pack passed | Edge coverage, core leakage guards, version metadata sync, and documentation honesty expanded |
 
 ## Prompt 02 Contract Tests
 
@@ -349,6 +350,44 @@ Note: an earlier `esp32s2dev` run during Prompt 05 stopped while compiling
 framework Arduino `esp32-hal-tinyusb.c.o` with `Error 1` and no compiler
 diagnostic in the captured output. Re-running the exact required command
 succeeded as recorded above.
+
+Prompt 06 implementation on `hardening/ads1115-industry-standard-p0`:
+
+- Native Unity tests expanded from 88 to 106 registered cases.
+- Added focused native coverage for invalid I2C address/config enum/ALERT-RDY
+  config rejection, tracked I2C status taxonomy, strict recover read-back
+  mismatch and transport-failure branches, signed threshold reconstruction,
+  all-gain LSB/scaling boundaries, config/comparator rollback variants, and
+  dirty-diagnostic preservation.
+- Expanded `tools/check_core_timing_guard.py` to scan stripped core code in
+  `include/` and `src/` for timing calls, framework includes/symbols,
+  ESP-IDF/FreeRTOS/logging leakage, and heap/STL allocation patterns.
+- Expanded `scripts/generate_version.py check` to verify version metadata across
+  `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h`.
+- Documentation now avoids production-ready overclaims, records hardware
+  validation as pending evidence, clarifies ADDR strap mapping and SDA strap
+  timing, documents pull-up sizing caveats, corrects differential MUX wording,
+  and keeps the ALERT/RDY approximately 8 us continuous-mode pulse caveat.
+
+Prompt 06 validation on `hardening/ads1115-industry-standard-p0`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | `106 test cases: 106 succeeded in 00:00:02.500`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:17.975` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:15.300` |
+| `python -m platformio pkg pack` | Exit code 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz`; artifact removed after validation |
+
+Remaining gaps after Prompt 06:
+
+- Dated hardware/HIL logs or captures are still required before field-grade
+  validation claims.
+- Prompt 07 remains responsible for integration-example evidence, CI evidence,
+  and the HIL validation matrix closure.
 
 ## Final Report Placeholder
 

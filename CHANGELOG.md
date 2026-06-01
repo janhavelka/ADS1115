@@ -17,17 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Datasheet PGA alias handling for raw CONFIG writes: encodings `110` and `111` are accepted as `+/-0.256 V`.
 - Native coverage for register-modeled conversion reads, readiness failures, ALERT/RDY readiness, setter rollback, register validation, and stalled-clock blocking timeouts.
 - Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while `recover()` remains the explicit recovery path.
+- Native coverage for invalid config boundaries, tracked I2C status taxonomy, strict read-back recover branches, signed threshold/scaling boundaries, setter rollback variants, and dirty-state preservation.
+- Version metadata checks now verify `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h` agree.
 
 ### Changed
 - Doxyfile project metadata now matches `library.json`, and archived prompt
   metadata no longer contains placeholder ownership values.
+- Core guard script now rejects framework leakage and dynamic allocation patterns
+  in `include/` and `src/`, including Arduino/Wire symbols, ESP-IDF/FreeRTOS
+  symbols, logging calls, `std::string`, `std::vector`, and heap allocation.
 - Reference documentation now uses a human-readable vendor PDF name and separates compact chip notes from full PDF extraction under `docs/extracted-md/` and `docs/pdf-extracted-md/`.
 - Explicit recovery bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - Continuous-mode readiness now tracks the configured data-rate interval instead of reporting ready immediately.
 - CLI `poll`, `selftest`, and mixed stress paths now handle `Err::IN_PROGRESS` correctly and preserve readiness I2C errors.
 - README now documents conversion, configuration, comparator, ALERT/RDY, and configuration constraint APIs.
 - `begin()` failure now clears stale cached configuration/runtime state, and successful startup no longer seeds runtime health counters.
-- Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `BUSY` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
+- Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `Err::OFFLINE` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
+- Hardware validation wording now uses pending evidence rows instead of implying
+  fresh HIL coverage.
 
 ### Fixed
 - Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
@@ -38,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-04-05
 
 ### Changed
-- Promoted to v1.0.0 — the library is fully featured and production-ready.
+- Promoted to v1.0.0 as a feature-complete, production-oriented API-stable candidate pending dated hardware validation evidence.
 
 ## [0.4.0] - 2026-04-05
 

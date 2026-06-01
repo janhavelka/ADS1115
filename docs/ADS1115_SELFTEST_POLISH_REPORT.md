@@ -1,7 +1,10 @@
 # ADS1115 Selftest Polish Report
 
 Date: 2026-05-29
-Branch: `hardening/ads1115-industry-readiness`
+Branch at original pass: `hardening/ads1115-industry-readiness`
+Current hardening continuation: `hardening/ads1115-industry-standard-p0`. See
+`docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` for current Prompt 06
+validation.
 
 ## Summary
 
@@ -78,7 +81,7 @@ idf.py --version
 python -m platformio device list
 ```
 
-Results:
+Results from the original 2026-05-29 local pass:
 
 ```text
 Core timing guard PASSED
@@ -91,6 +94,9 @@ Arduino ESP32-S2 build SUCCESS
 idf.py --version FAILED: idf.py not found in this local shell
 PlatformIO device list completed
 ```
+
+The historical native count above is not current. Prompt 06 on
+`hardening/ads1115-industry-standard-p0` reports 106/106 native test cases.
 
 Pure ESP-IDF local builds were not run because `idf.py` is not installed or not
 on `PATH` in this shell.
@@ -128,9 +134,9 @@ addr 0x48
 
 These hardware commands were not run in this session. Serial discovery found
 USB serial devices, but `COM15` and `COM16` returned access denied, and `COM5`
-opened but did not respond to a `version` command at 115200 baud. The earlier
-hardware log showing `stress 500` and `stress_mix 200` passing remains useful
-background, but it is not a fresh validation result for this polish pass.
+opened but did not respond to a `version` command at 115200 baud. No dated
+hardware log or capture path is recorded here for `stress 500` or
+`stress_mix 200`, so those runs are not claimed as validation evidence.
 
 ## Remaining Limitations
 

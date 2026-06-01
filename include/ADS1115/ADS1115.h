@@ -387,7 +387,8 @@ public:
 
   /// Program ADS1115 threshold/comparator fields for conversion-ready ALERT/RDY mode.
   /// ALERT/RDY is open-drain and requires a pull-up. Conversion-ready pulses can
-  /// be short; use an interrupt-capable input or latching strategy when polling
+  /// be short; continuous-mode pulses are approximately 8 us per the datasheet
+  /// caveat. Use an interrupt-capable input or latching strategy when polling
   /// cannot guarantee capture.
   /// Transaction count: three writes; strict mode adds three read-back reads.
   /// @return Status::Ok() when thresholds and CONFIG are written.
