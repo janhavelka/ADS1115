@@ -79,6 +79,10 @@ public:
   /// plausibility check with dynamic CONFIG OS/status bits masked out.
   /// Transaction count: one CONFIG read plus three writes; strict mode adds
   /// three read-back transactions.
+  /// If begin() fails after one or more writes may have reached hardware,
+  /// hardwareConfigDirty() and hardwareConfigDirtyError() remain available even
+  /// though the driver is not initialized. A later successful full apply clears
+  /// the dirty diagnostic.
   /// @param config Transport callbacks, device address, timing, and conversion settings.
   /// @return Status::Ok() when the device responds and cached configuration is applied.
   Status begin(const Config& config);
@@ -150,13 +154,15 @@ public:
 
   // === Conversion API ===
   /// Start one single-shot conversion using the cached mux.
-  /// @return Err::IN_PROGRESS when the conversion was started.
+  /// @return Err::IN_PROGRESS when started, Err::UNSUPPORTED_OPERATION in
+  /// continuous mode, or Err::BUSY when a single-shot conversion is already active.
   Status startConversion();
 
   /// Start one single-shot conversion after applying the requested mux.
   /// The cached mux is restored if the CONFIG write fails.
   /// @param mux Input mux to use for this conversion.
-  /// @return Err::IN_PROGRESS when the conversion was started.
+  /// @return Err::IN_PROGRESS when started, Err::UNSUPPORTED_OPERATION in
+  /// continuous mode, or Err::BUSY when a single-shot conversion is already active.
   Status startConversion(Mux mux);
 
   /// Convenience wrapper around readConversionReady(). Returns false when the
@@ -271,6 +277,8 @@ public:
   /// Writable register pointers are 0x01..0x03; conversion register 0x00 is read-only.
   /// @param reg Register pointer.
   /// @param value Raw 16-bit value to write.
+  /// Successful raw writes are diagnostic writes: they leave the typed cache
+  /// unchanged and mark hardwareConfigDirty() with Err::HARDWARE_CONFIG_DIRTY.
   /// @return Status::Ok() on success; Err::INVALID_PARAM for register 0x00.
   Status writeRegister16(uint8_t reg, uint16_t value);
 

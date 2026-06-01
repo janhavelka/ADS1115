@@ -3,8 +3,9 @@
 Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
 Source audit report: `exploration/ads1115-industry-standard:docs/ADS1115_INDUSTRY_STANDARD_EXPLORATION.md` at `d6f163534d59ad8bdd4b597bfd7f64a93615ac94`
-Status: P0 contract tests are being added test-first. No production
-implementation fixes are marked complete yet.
+Status: P0 status taxonomy, failed-begin dirty diagnostics, strict read-back
+mismatch status, and raw diagnostic write dirty marking are implemented and
+validated in native tests. Hardware validation evidence is still pending.
 
 ## Scope Rules
 
@@ -31,9 +32,9 @@ implementation fixes are marked complete yet.
 | Prompt | Planned scope | Implementation status |
 | --- | --- | --- |
 | 01 | Branch baseline, rules, and tracking report | Docs/rules only |
-| 02 | P0 native test design for status and partial hardware state | Contract tests added; implementation pending |
-| 03 | P0 core status taxonomy and begin dirty-state implementation | Not started |
-| 04 | P0 raw register cache/dirty contract | Not started |
+| 02 | P0 native test design for status and partial hardware state | Contract tests added |
+| 03 | P0 core status taxonomy and begin dirty-state implementation | Implemented |
+| 04 | P0 raw register cache/dirty contract | Implemented with Prompt 03 |
 | 05 | P1 API contracts for `tick()`, `nowMs`, and blocking latency | Not started |
 | 06 | P1 tests, guards, and documentation polish | Not started |
 | 07 | Integration examples, CI evidence, and HIL validation matrix | Not started |
@@ -61,7 +62,8 @@ fixes and validation. The highest-priority follow-up work is:
 | Prompt | Branch/commit | Files changed | Validation | Result |
 | --- | --- | --- | --- | --- |
 | 01 | `38e55ea127a33aeb9fa601ce3d74b6e21856fe70` | `AGENTS.md`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Guards passed; native PlatformIO passed | Rules/report initialization only; no core implementation complete |
-| 02 | Pending commit | `include/ADS1115/Status.h`, `test/test_basic.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core guard passed; native PlatformIO has expected contract failures | Test-first contracts added; production implementation pending |
+| 02 | `7ce66d14cef39e5f2c6a7b497bcf02c65770c764` | `include/ADS1115/Status.h`, `test/test_basic.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core guard passed; native PlatformIO had expected contract failures | Test-first contracts added |
+| 03 | Pending commit | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/common/HealthDiag.h`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Required guards, native tests, and Arduino builds passed | P0 status and dirty diagnostics implemented |
 
 ## Prompt 02 Contract Tests
 
@@ -98,6 +100,67 @@ Implementation work required next:
 - Mark successful raw CONFIG/threshold diagnostic writes as cache/hardware dirty
   or stale using `HARDWARE_CONFIG_DIRTY`, while keeping typed cache unchanged.
 
+## Prompt 03 Implementation Summary
+
+Implemented P0 status and dirty-diagnostic behavior:
+
+- Failed `begin()` still leaves `isInitialized() == false` and clears cached
+  config/runtime state, but no longer clears `hardwareConfigDirty()` or
+  `hardwareConfigDirtyError()` after partial writes or strict read-back failure.
+  Dirty state is cleared only by a later successful full apply.
+- Strict read-back mismatches for `LO_THRESH`, `HI_THRESH`, and CONFIG now return
+  `Err::READBACK_MISMATCH`. `Status::detail` carries the observed raw register
+  value. CONFIG comparison still masks dynamic OS/status bits.
+- Offline tracked I2C short-circuits now return `Err::OFFLINE` without touching
+  the bus. `recover()` remains the explicit path allowed to access the bus while
+  offline.
+- `startConversion()` and `startConversion(mux)` return
+  `Err::UNSUPPORTED_OPERATION` in continuous mode. A true already-active
+  single-shot conversion still returns `Err::BUSY`.
+- Successful raw writes to CONFIG, `LO_THRESH`, and `HI_THRESH` are treated as
+  diagnostic writes: they return `Status::Ok()`, leave the typed cache unchanged,
+  and mark `hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY` and the raw
+  register pointer in `Status::detail`.
+- Typed internal writers were routed around public raw-write dirty marking so
+  `writeConfig()`, config setters, conversion start, shutdown, and
+  `setThresholds()` keep their cache-commit semantics.
+- Example status string helpers now print the new `Err` names instead of
+  `UNKNOWN`.
+
+Public API/status changes:
+
+- Appended `Err::OFFLINE`, `Err::UNSUPPORTED_OPERATION`,
+  `Err::READBACK_MISMATCH`, and `Err::HARDWARE_CONFIG_DIRTY`; existing enum
+  values were not reordered.
+- No new public accessors or `Status` fields were added. Failed-`begin()`
+  partial-state diagnostics use existing `hardwareConfigDirty()`,
+  `hardwareConfigDirtyError()`, and `SettingsSnapshot` fields.
+
+Compatibility notes:
+
+- Source and ABI shape are preserved: `Err` remains `uint8_t`, `Status` layout is
+  unchanged, and enum additions are append-only.
+- Callers that previously treated offline as `BUSY`, continuous-mode
+  `startConversion()` as `BUSY`, or strict mismatch as `I2C_ERROR` now receive
+  more precise status codes. This is an intentional P0 diagnostic hardening
+  change.
+- Raw public register writes are now explicitly diagnostic and set dirty state;
+  typed helpers should be used for cache-synchronized writes.
+
+Additional Prompt 03 regression tests:
+
+- Strict low-threshold and high-threshold read-back mismatches now verify
+  `READBACK_MISMATCH` and observed-register `detail`.
+- Failed-begin dirty state now survives a later retry that fails during probe,
+  proving dirty state is not cleared merely by starting a new `begin()`.
+
+Remaining gaps:
+
+- Hardware validation evidence is still required before field-grade or
+  production-readiness claims.
+- P1 API/documentation work remains for bool-only readiness, `tick()` status
+  visibility, `nowMs` scope, blocking latency, and broader guard/test coverage.
+
 ## Validation Log
 
 Prompt 01 validation on `hardening/ads1115-industry-standard-p0`:
@@ -132,6 +195,17 @@ Expected Prompt 02 native failures:
 - `test_raw_low_threshold_write_marks_hardware_config_dirty_without_cache_commit`: expected dirty diagnostic, got clean state.
 - `test_raw_high_threshold_write_marks_hardware_config_dirty_without_cache_commit`: expected dirty diagnostic, got clean state.
 - `test_shutdown_offline_returns_offline_without_bus_access`: expected `OFFLINE`, got `BUSY`.
+
+Prompt 03 validation on `hardening/ads1115-industry-standard-p0`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h` |
+| `python -m platformio test -e native` | `69 test cases: 69 succeeded in 00:00:01.990`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:24.048` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:23.496` |
 
 ## Final Report Placeholder
 

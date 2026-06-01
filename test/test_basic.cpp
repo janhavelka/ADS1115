@@ -36,6 +36,8 @@ struct FakeBus {
   uint32_t failReadOnCall = 0;
   uint16_t configReadOrMask = 0;
   uint16_t configReadXorMask = 0;
+  uint16_t readOrMask[4] = {0, 0, 0, 0};
+  uint16_t readXorMask[4] = {0, 0, 0, 0};
   uint8_t lastWriteReg = 0xFF;
   uint16_t lastWriteValue = 0;
   bool gpioLevel = true;
@@ -93,7 +95,9 @@ Status fakeWriteRead(uint8_t, const uint8_t* txData, size_t txLen, uint8_t* rxDa
   if (txData[0] >= 4) {
     return Status::Error(Err::INVALID_PARAM, "invalid fake register");
   }
-  uint16_t value = bus->reg[txData[0]];
+  uint8_t reg = txData[0];
+  uint16_t value = bus->reg[reg];
+  value = static_cast<uint16_t>((value | bus->readOrMask[reg]) ^ bus->readXorMask[reg]);
   if (txData[0] == cmd::REG_CONFIG) {
     value = static_cast<uint16_t>((value | bus->configReadOrMask) ^ bus->configReadXorMask);
   }
@@ -381,7 +385,42 @@ void test_begin_strict_readback_mismatch_fails_without_initializing_and_preserve
   TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
                           static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
-  TEST_ASSERT_EQUAL_STRING("Config readback mismatch", dev.hardwareConfigDirtyError().msg);
+  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(bus.reg[cmd::REG_CONFIG] ^ cmd::MASK_DR),
+                          dev.hardwareConfigDirtyError().detail);
+}
+
+void test_begin_strict_low_threshold_readback_mismatch_reports_observed_detail() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  bus.readXorMask[cmd::REG_LO_THRESH] = 0x0001;
+
+  Status st = dev.begin(cfg);
+
+  const int32_t observed = static_cast<int32_t>(bus.reg[cmd::REG_LO_THRESH] ^ 0x0001);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(observed, st.detail);
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  assertDirtyDiagnostic(dev, Err::READBACK_MISMATCH, observed);
+}
+
+void test_begin_strict_high_threshold_readback_mismatch_reports_observed_detail() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  bus.readXorMask[cmd::REG_HI_THRESH] = 0x0001;
+
+  Status st = dev.begin(cfg);
+
+  const int32_t observed = static_cast<int32_t>(bus.reg[cmd::REG_HI_THRESH] ^ 0x0001);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(observed, st.detail);
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  assertDirtyDiagnostic(dev, Err::READBACK_MISMATCH, observed);
 }
 
 void test_begin_failure_after_first_apply_write_preserves_dirty_diagnostic() {
@@ -465,6 +504,28 @@ void test_successful_begin_clears_prior_failed_begin_dirty_diagnostic() {
   TEST_ASSERT_TRUE(dev.hardwareConfigDirtyError().ok());
 }
 
+void test_failed_begin_dirty_survives_later_probe_failure() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  bus.failWriteOnCall = 2;
+  bus.failWriteStatus = Status::Error(Err::I2C_BUS, "second begin write bus", -56);
+
+  Status st = dev.begin(cfg);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(st.code));
+  assertDirtyDiagnostic(dev, Err::I2C_BUS, -56);
+
+  resetIoCounters(bus);
+  bus.readStatus = Status::Error(Err::I2C_TIMEOUT, "retry probe timeout", -57);
+  st = dev.begin(cfg);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  assertDirtyDiagnostic(dev, Err::I2C_BUS, -56);
+}
+
 void test_recover_strict_readback_success_clears_dirty() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -504,7 +565,8 @@ void test_recover_strict_readback_mismatch_keeps_dirty_and_preserves_error() {
   TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
                           static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
-  TEST_ASSERT_EQUAL_STRING("Config readback mismatch", dev.hardwareConfigDirtyError().msg);
+  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(bus.reg[cmd::REG_CONFIG] ^ cmd::MASK_MODE),
+                          dev.hardwareConfigDirtyError().detail);
 }
 
 void test_probe_failure_does_not_update_health() {
@@ -1417,10 +1479,13 @@ int main() {
   RUN_TEST(test_begin_success_sets_ready_and_counters);
   RUN_TEST(test_begin_strict_readback_success_masks_config_os_bit);
   RUN_TEST(test_begin_strict_readback_mismatch_fails_without_initializing_and_preserves_dirty);
+  RUN_TEST(test_begin_strict_low_threshold_readback_mismatch_reports_observed_detail);
+  RUN_TEST(test_begin_strict_high_threshold_readback_mismatch_reports_observed_detail);
   RUN_TEST(test_begin_failure_after_first_apply_write_preserves_dirty_diagnostic);
   RUN_TEST(test_begin_failure_after_second_apply_write_preserves_dirty_diagnostic);
   RUN_TEST(test_begin_strict_readback_transport_failure_after_writes_preserves_dirty_diagnostic);
   RUN_TEST(test_successful_begin_clears_prior_failed_begin_dirty_diagnostic);
+  RUN_TEST(test_failed_begin_dirty_survives_later_probe_failure);
   RUN_TEST(test_recover_strict_readback_success_clears_dirty);
   RUN_TEST(test_recover_strict_readback_mismatch_keeps_dirty_and_preserves_error);
   RUN_TEST(test_probe_failure_does_not_update_health);

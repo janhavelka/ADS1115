@@ -150,15 +150,16 @@ void loop() {
 
 Raw register reads accept ADS1115 registers `0x00..0x03`. Raw writes accept
 only writable registers `0x01..0x03`; the conversion register `0x00` is
-read-only and is rejected before I2C. Raw CONFIG writes accept the datasheet
-PGA alias encodings `110` and `111` and normalize them to the `+/-0.256 V`
-gain cache.
+read-only and is rejected before I2C. Successful raw writes are diagnostic
+access: they update hardware, leave the typed cache unchanged, and mark
+`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`. Use typed helpers
+such as `writeConfig()` or `setThresholds()` when the cache must stay in sync.
 
 ### Conversion
 
 | Method | Description |
 |--------|-------------|
-| `startConversion()` | Start a single-shot conversion with the current mux; returns `Err::IN_PROGRESS` when scheduled |
+| `startConversion()` | Start a single-shot conversion with the current mux; returns `Err::IN_PROGRESS` when scheduled, `Err::UNSUPPORTED_OPERATION` in continuous mode, and `Err::BUSY` only for an already-active single-shot conversion |
 | `startConversion(mux)` | Start a single-shot conversion after atomically applying a temporary mux |
 | `readConversionReady(ready)` | Report readiness with explicit I2C error status |
 | `conversionReady()` | Convenience readiness check; returns `false` on transport failure |
@@ -200,14 +201,18 @@ If a multi-register update is partially written and then fails, the driver sets
 state clears only after a successful full resync, such as `recover()` or another
 successful full apply path.
 
-Failed `begin()` calls clear stale cached configuration/runtime state, and a
-successful `begin()` establishes the baseline state without inflating runtime
-health counters.
+Failed `begin()` calls clear stale cached configuration/runtime state. If the
+failure occurs after one or more config writes may have reached hardware,
+`hardwareConfigDirty()` and `hardwareConfigDirtyError()` remain available even
+while `isInitialized()` is false. A successful later full `begin()` apply clears
+that diagnostic.
 
 `Config::strictInitVerify` enables an optional read-back plausibility check after
 full config apply. ADS1115 has no ID register; strict mode only verifies that
 threshold registers and CONFIG writable fields read back as expected. Dynamic
-CONFIG OS/status bits are masked.
+CONFIG OS/status bits are masked. Register read-back mismatches return
+`Err::READBACK_MISMATCH` with the observed register value in `Status::detail`;
+transport failures preserve the original transport status.
 
 ### Comparator And ALERT/RDY
 
@@ -251,7 +256,7 @@ the scheduler cannot guarantee pulse capture.
   `addr 0x49`, `addr 0x4A`, or `addr 0x4B` reinitializes the diagnostic driver
   for that selected address. It does not automatically validate every detected
   ADS1115-range device on the bus.
-- CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers; use `recover()` or `begin()` to restore cached settings after manual register edits.
+- CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers, leave the typed cache unchanged, and mark hardware/cache sync dirty; use `recover()` or `begin()` to restore cached settings after manual register edits.
 
 Current examples are diagnostic and bring-up oriented. They do not demonstrate a
 production shared-bus manager with external locking, nonblocking console input,
@@ -284,7 +289,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 3. Resource ownership: bus, pins, and timeout policy remain application-owned via `Config`.
 4. Memory behavior: no heap allocation in steady-state library operation.
 5. Error handling: all fallible APIs return `Status`; no exceptions and no silent failures.
-6. Health behavior: `OFFLINE` is latched. Normal public I2C operations return `BUSY` with `Driver is offline; call recover()` without touching the bus until `recover()` succeeds.
+6. Health behavior: `OFFLINE` is latched. Normal public I2C operations return `Err::OFFLINE` with `Driver is offline; call recover()` without touching the bus until `recover()` succeeds.
 7. Partial hardware state: multi-register failures can leave hardware partially updated; use `hardwareConfigDirty()` and `recover()`.
 8. Electrical limits: PGA full-scale settings do not override ADS1115 analog input absolute maximum ratings.
 

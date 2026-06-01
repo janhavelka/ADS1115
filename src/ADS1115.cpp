@@ -141,8 +141,6 @@ Status ADS1115::begin(const Config& config) {
   _initialized = false;
   _driverState = DriverState::UNINIT;
   _allowOfflineI2c = false;
-  _hardwareConfigDirty = false;
-  _hardwareConfigDirtyError = Status::Ok();
   _conversionStarted = false;
   _conversionReady = false;
   _conversionStartMs = 0;
@@ -187,8 +185,6 @@ Status ADS1115::begin(const Config& config) {
   auto failBeginAfterConfig = [this](const Status& failure) {
     _config = Config{};
     _allowOfflineI2c = false;
-    _hardwareConfigDirty = false;
-    _hardwareConfigDirtyError = Status::Ok();
     _conversionStarted = false;
     _conversionReady = false;
     _conversionStartMs = 0;
@@ -246,7 +242,7 @@ Status ADS1115::shutdown() {
   configReg &= static_cast<uint16_t>(~cmd::MASK_MODE);
   configReg |= (static_cast<uint16_t>(Mode::SINGLE_SHOT) << cmd::BIT_MODE) & cmd::MASK_MODE;
 
-  Status st = writeRegister16(cmd::REG_CONFIG, configReg);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
     return st;
   }
@@ -363,14 +359,14 @@ Status ADS1115::startConversion() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
   if (_config.mode == Mode::CONTINUOUS) {
-    return Status::Error(Err::BUSY, "Continuous mode active");
+    return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
   if (_conversionStarted) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
   }
 
   uint16_t configReg = _buildConfigRegister() | cmd::OS_START;
-  Status st = writeRegister16(cmd::REG_CONFIG, configReg);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
     return st;
   }
@@ -389,7 +385,7 @@ Status ADS1115::startConversion(Mux mux) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
   }
   if (_config.mode == Mode::CONTINUOUS) {
-    return Status::Error(Err::BUSY, "Continuous mode active");
+    return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
   if (_conversionStarted) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
@@ -399,7 +395,7 @@ Status ADS1115::startConversion(Mux mux) {
   _config.mux = mux;
 
   uint16_t configReg = _buildConfigRegister() | cmd::OS_START;
-  Status st = writeRegister16(cmd::REG_CONFIG, configReg);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
     _config.mux = prevMux;
     return st;
@@ -697,7 +693,7 @@ Status ADS1115::writeConfig(uint16_t config) {
     return Status::Error(Err::INVALID_PARAM, "Invalid config value");
   }
 
-  Status st = writeRegister16(cmd::REG_CONFIG, config);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, config);
   if (!st.ok()) {
     return st;
   }
@@ -732,11 +728,11 @@ Status ADS1115::setThresholds(int16_t low, int16_t high) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
 
-  Status st = writeRegister16(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
+  Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
   if (!st.ok()) {
     return st;
   }
-  st = writeRegister16(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
+  st = _writeRegister16Tracked(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
   if (!st.ok()) {
     _markHardwareConfigDirty(st);
     return st;
@@ -964,7 +960,7 @@ Status ADS1115::_i2cWriteRaw(const uint8_t* buf, size_t len) {
 Status ADS1115::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
                                      uint8_t* rxBuf, size_t rxLen) {
   if (_initialized && _driverState == DriverState::OFFLINE && !_allowOfflineI2c) {
-    return Status::Error(Err::BUSY, "Driver is offline; call recover()");
+    return Status::Error(Err::OFFLINE, "Driver is offline; call recover()");
   }
 
   Status st = _i2cWriteReadRaw(txBuf, txLen, rxBuf, rxLen);
@@ -976,7 +972,7 @@ Status ADS1115::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
 
 Status ADS1115::_i2cWriteTracked(const uint8_t* buf, size_t len) {
   if (_initialized && _driverState == DriverState::OFFLINE && !_allowOfflineI2c) {
-    return Status::Error(Err::BUSY, "Driver is offline; call recover()");
+    return Status::Error(Err::OFFLINE, "Driver is offline; call recover()");
   }
 
   Status st = _i2cWriteRaw(buf, len);
@@ -1010,7 +1006,14 @@ Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
   if (!isWritableRegister(reg)) {
     return Status::Error(Err::INVALID_PARAM, "Register is read-only");
   }
-  return _writeRegister16Tracked(reg, value);
+  Status st = _writeRegister16Tracked(reg, value);
+  if (!st.ok()) {
+    return st;
+  }
+  _markHardwareConfigDirty(
+      Status::Error(Err::HARDWARE_CONFIG_DIRTY,
+                    "Raw register write changed hardware config", reg));
+  return Status::Ok();
 }
 
 Status ADS1115::_readRegister16Tracked(uint8_t reg, uint16_t& value) {
@@ -1169,7 +1172,7 @@ Status ADS1115::_verifyConfigReadback() {
     return st;
   }
   if (lowReg != static_cast<uint16_t>(_config.compThresholdLow)) {
-    return Status::Error(Err::I2C_ERROR, "Low threshold readback mismatch",
+    return Status::Error(Err::READBACK_MISMATCH, "Low threshold readback mismatch",
                          static_cast<int32_t>(lowReg));
   }
 
@@ -1179,7 +1182,7 @@ Status ADS1115::_verifyConfigReadback() {
     return st;
   }
   if (highReg != static_cast<uint16_t>(_config.compThresholdHigh)) {
-    return Status::Error(Err::I2C_ERROR, "High threshold readback mismatch",
+    return Status::Error(Err::READBACK_MISMATCH, "High threshold readback mismatch",
                          static_cast<int32_t>(highReg));
   }
 
@@ -1191,7 +1194,7 @@ Status ADS1115::_verifyConfigReadback() {
   const uint16_t expectedConfig = _buildConfigRegister() & kConfigReadbackMask;
   const uint16_t observedConfig = configReg & kConfigReadbackMask;
   if (observedConfig != expectedConfig) {
-    return Status::Error(Err::I2C_ERROR, "Config readback mismatch",
+    return Status::Error(Err::READBACK_MISMATCH, "Config readback mismatch",
                          static_cast<int32_t>(configReg));
   }
   return Status::Ok();

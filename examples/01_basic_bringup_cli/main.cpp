@@ -50,6 +50,10 @@ const char* errToStr(ADS1115::Err err) {
     case Err::I2C_NACK_DATA:        return "I2C_NACK_DATA";
     case Err::I2C_TIMEOUT:          return "I2C_TIMEOUT";
     case Err::I2C_BUS:              return "I2C_BUS";
+    case Err::OFFLINE:               return "OFFLINE";
+    case Err::UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
+    case Err::READBACK_MISMATCH:     return "READBACK_MISMATCH";
+    case Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
     default:                        return "UNKNOWN";
   }
 }
