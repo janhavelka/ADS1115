@@ -243,6 +243,54 @@ def read_available(ser, quiet_s: float, max_s: float) -> str:
     return b"".join(chunks).decode("utf-8", errors="replace")
 
 
+def response_has_prompt(text: str) -> bool:
+    plain = ansi_stripped(text).replace("\r", "")
+    return bool(re.search(r"(^|\n)> ?$", plain))
+
+
+def command_timeout_s(command: str, default_s: float) -> float:
+    parts = command.strip().split()
+    if not parts:
+        return default_s
+    if parts[0] == "stress" and len(parts) >= 2:
+        try:
+            count = int(parts[1], 0)
+        except ValueError:
+            count = 0
+        return max(default_s, 20.0 + (0.03 * max(count, 0)))
+    if parts[0] == "stress_mix" and len(parts) >= 2:
+        try:
+            count = int(parts[1], 0)
+        except ValueError:
+            count = 0
+        return max(default_s, 20.0 + (0.04 * max(count, 0)))
+    if parts[0] in ("selftest", "mux", "gain", "rate", "mode", "comparator", "fault"):
+        return max(default_s, 30.0)
+    return default_s
+
+
+def read_command_response(ser, quiet_s: float, max_s: float) -> str:
+    chunks: List[bytes] = []
+    start = time.monotonic()
+    last_data = start
+    while True:
+        waiting = getattr(ser, "in_waiting", 0)
+        if waiting:
+            data = ser.read(waiting)
+            chunks.append(data)
+            last_data = time.monotonic()
+            text = b"".join(chunks).decode("utf-8", errors="replace")
+            if response_has_prompt(text):
+                return text
+        now = time.monotonic()
+        if (now - start) >= max_s:
+            break
+        if not chunks and (now - last_data) >= quiet_s and (now - start) >= max_s:
+            break
+        time.sleep(0.05)
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
 def ansi_stripped(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
@@ -344,9 +392,16 @@ def capture_serial(port: str, baud: int, commands: List[str], out_path: pathlib.
             ser.write((command + "\r\n").encode("utf-8"))
             ser.flush()
             time.sleep(per_command_delay_s)
-            response = read_available(ser, quiet_s=quiet_s, max_s=read_timeout_s)
+            timeout_s = command_timeout_s(command, read_timeout_s)
+            response = read_command_response(ser, quiet_s=quiet_s, max_s=timeout_s)
             if response:
                 write_log(response)
+            if not response_has_prompt(response):
+                write_log(
+                    "# Command timed out before CLI prompt; aborting to avoid "
+                    "overlapping serial commands.\n"
+                )
+                raise SystemExit(2)
             return response
 
         def restore_ready() -> bool:
