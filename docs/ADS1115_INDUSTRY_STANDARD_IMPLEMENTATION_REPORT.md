@@ -294,12 +294,13 @@ Remaining gaps after Prompt 03:
 Selected contract: public raw register writes are diagnostic-only. Successful
 `writeRegister16()` / `writeRegister()` calls to CONFIG, `LO_THRESH`, or
 `HI_THRESH` update hardware, leave typed cache unchanged, and mark
-`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`; `Status::detail`
-stores the raw register pointer. Invalid registers and read-only conversion
-register writes are rejected before I2C. If a raw write reaches the transport
-and returns an error, the dirty diagnostic preserves that transport status
-because hardware may still have accepted the write. Offline short-circuits do
-not touch the bus or mark dirty.
+`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`. The dirty diagnostic
+status stores the raw register pointer in `detail`; the raw write itself still
+returns `Status::Ok()`. Invalid registers and read-only conversion register
+writes are rejected before I2C. If a raw write reaches the transport and returns
+an error, the dirty diagnostic preserves that transport status because hardware
+may still have accepted the write. Offline short-circuits do not touch the bus
+or mark dirty.
 
 Implementation status:
 
@@ -336,6 +337,33 @@ Documentation updates:
 - README raw diagnostics now documents the register pointer in dirty diagnostic
   detail.
 - CLI help for `wreg` now says diagnostic writes mark cache dirty.
+
+Prompt 04 re-verification on 2026-06-02 at current tip:
+
+- `raw-register-contract-agent`: confirmed Option A is explicit in
+  `writeRegister16()` and inherited by `writeRegister()`: public raw writes to
+  writable registers mark `HARDWARE_CONFIG_DIRTY` with register-pointer dirty
+  detail, while invalid and conversion-register writes are rejected before I2C.
+- `cache-consistency-agent`: confirmed `getSettings()` exposes dirty state,
+  typed setters do not accidentally use public raw dirty marking, dirty state
+  forces read-back during full apply, and failed recovery preserves dirty
+  visibility.
+- `tests-agent`: confirmed native tests cover raw CONFIG/`LO_THRESH`/`HI_THRESH`
+  dirty behavior, alias behavior, invalid/read-only rejection, failed raw write,
+  offline short-circuit, successful recover clearing, read-back-required
+  clearing, and failed recover preservation.
+- `docs-agent`: confirmed README, Doxygen, CLI help/runtime warning, and CLI
+  guard coverage. It identified and this entry corrects the report wording that
+  could imply returned `Status::detail` carries the raw register pointer.
+- `final-review-agent`: found no blocking Prompt 04 P0 issue and confirmed the
+  original Prompt 04 commit `8056c962a010b4db83551d2c4805514899886ee5` is on
+  the branch with bounded scope.
+
+Remaining gaps after Prompt 04:
+
+- No unresolved Prompt 04 P0 issue is known.
+- Dated hardware/HIL evidence is still required before field-grade validation
+  claims.
 
 ## Prompt 05 API Timing Contract
 
@@ -517,6 +545,17 @@ Note: an earlier non-verbose `esp32s2dev` build attempt in this prompt stopped
 at `firmware.elf Error 1` without linker diagnostics. A verbose rerun succeeded
 (`00:00:14.299`), followed by the exact required non-verbose command succeeding
 as recorded above.
+
+Prompt 04 re-verification validation on `hardening/ads1115-industry-standard-p0`
+after later Prompt 02/03 recovery commits:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python -m platformio test -e native` | `108 test cases: 108 succeeded in 00:00:12.629`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:45.723` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:15.207` |
 
 Prompt 05 validation on `hardening/ads1115-industry-standard-p0`:
 
