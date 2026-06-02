@@ -80,7 +80,7 @@ Status taxonomy additions in `include/ADS1115/Status.h` are append-only:
 
 Added or updated native tests. This table records the intentional test-first
 state from Prompt 02; the listed failing contracts were implemented in later
-prompts and all pass in the Prompt 08 native validation.
+prompts and all pass in the current 112-case native validation.
 
 | Test | Expected behavior | Prompt 02 historical status |
 | --- | --- | --- |
@@ -622,6 +622,39 @@ Prompt 06 validation on `hardening/ads1115-industry-standard-p0`:
 | `python -m platformio test -e native` | `106 test cases: 106 succeeded in 00:00:02.500`; environment `native`, status `PASSED` |
 | `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:17.975` |
 | `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:15.300` |
+| `python -m platformio pkg pack` | Exit code 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz`; artifact removed after validation |
+
+Prompt 06 recovery gap-fill on `hardening/ads1115-industry-standard-p0` after
+crash recovery:
+
+- Native Unity coverage increased from 110 to 112 registered cases in this
+  recovery pass. The original Prompt 06 expansion remains 88 to 106 cases.
+- Expanded `begin()` invalid-enum coverage to include `ComparatorMode`,
+  `ComparatorPolarity`, and `ComparatorLatch` validation without bus access.
+- Added direct `disableComparator()` rollback coverage on CONFIG write failure.
+- Added representative dirty-preservation coverage for failed config-only and
+  comparator setters while a prior raw CONFIG dirty diagnostic is already
+  visible.
+- Expanded `tools/check_core_timing_guard.py` ESP-IDF include rejection to cover
+  additional IDF-only core headers: `sdkconfig.h`, `soc/`, `hal/`, `rom/`,
+  `lwip/`, and `nvs_flash.h`.
+- Docs/release wording was re-checked: README/CHANGELOG avoid production-ready
+  overclaims, validation evidence remains pending where hardware logs are
+  missing, ADDR strap/pull-up/differential MUX/ALERT-RDY/PGA caveats remain
+  present, and current version metadata remains intentionally unbumped at
+  `1.0.0` on this hardening branch.
+
+Prompt 06 recovery validation on `hardening/ads1115-industry-standard-p0`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | `112 test cases: 112 succeeded in 00:00:02.412`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:15.527` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:13.813` |
 | `python -m platformio pkg pack` | Exit code 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz`; artifact removed after validation |
 
 Prompt 07 implementation on `hardening/ads1115-industry-standard-p0`:

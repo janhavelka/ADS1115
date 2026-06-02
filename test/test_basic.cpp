@@ -354,6 +354,39 @@ void test_begin_rejects_invalid_enum_values_without_bus_access() {
     FakeBus bus;
     ADS1115::ADS1115 dev;
     Config cfg = makeConfig(bus);
+    cfg.compMode = static_cast<ComparatorMode>(2);
+    Status st = dev.begin(cfg);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+                            static_cast<uint8_t>(st.code));
+    TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+    TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    Config cfg = makeConfig(bus);
+    cfg.compPolarity = static_cast<ComparatorPolarity>(2);
+    Status st = dev.begin(cfg);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+                            static_cast<uint8_t>(st.code));
+    TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+    TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    Config cfg = makeConfig(bus);
+    cfg.compLatch = static_cast<ComparatorLatch>(2);
+    Status st = dev.begin(cfg);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+                            static_cast<uint8_t>(st.code));
+    TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+    TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    Config cfg = makeConfig(bus);
     cfg.compQueue = static_cast<ComparatorQueue>(4);
     Status st = dev.begin(cfg);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
@@ -1825,6 +1858,23 @@ void test_comparator_setters_roll_back_each_cached_field_on_write_failure() {
   }
 }
 
+void test_disable_comparator_rolls_back_queue_on_write_failure() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  TEST_ASSERT_TRUE(dev.setComparatorQueue(ComparatorQueue::ASSERT_4).ok());
+  const ComparatorQueue oldValue = dev.getComparatorQueue();
+  resetIoCounters(bus);
+  bus.writeStatus = Status::Error(Err::I2C_ERROR, "disable comparator write failure", -70);
+
+  Status st = dev.disableComparator();
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_ERROR),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(oldValue),
+                          static_cast<uint8_t>(dev.getComparatorQueue()));
+}
+
 void test_enable_conversion_ready_pin_rolls_back_cache_on_write_failure() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -2004,6 +2054,80 @@ void test_failed_config_only_setter_preserves_prior_dirty_reason() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
                           static_cast<uint8_t>(st.code));
   assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+}
+
+void test_failed_config_and_comparator_setters_preserve_prior_dirty_reason() {
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+    TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, 0x1234).ok());
+    resetIoCounters(bus);
+    bus.writeStatus = Status::Error(Err::I2C_BUS, "mux write bus", -71);
+
+    Status st = dev.setMux(Mux::AIN2_GND);
+
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                            static_cast<uint8_t>(st.code));
+    assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+    TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, 0x1234).ok());
+    resetIoCounters(bus);
+    bus.writeStatus = Status::Error(Err::I2C_BUS, "gain write bus", -72);
+
+    Status st = dev.setGain(Gain::FSR_0_512V);
+
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                            static_cast<uint8_t>(st.code));
+    assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+    TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, 0x1234).ok());
+    resetIoCounters(bus);
+    bus.writeStatus = Status::Error(Err::I2C_BUS, "mode write bus", -73);
+
+    Status st = dev.setMode(Mode::CONTINUOUS);
+
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                            static_cast<uint8_t>(st.code));
+    assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+    TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, 0x1234).ok());
+    resetIoCounters(bus);
+    bus.writeStatus = Status::Error(Err::I2C_BUS, "comparator write bus", -74);
+
+    Status st = dev.setComparatorMode(ComparatorMode::WINDOW);
+
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                            static_cast<uint8_t>(st.code));
+    assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  }
+  {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+    TEST_ASSERT_TRUE(dev.setComparatorQueue(ComparatorQueue::ASSERT_2).ok());
+    TEST_ASSERT_TRUE(dev.writeRegister16(cmd::REG_CONFIG, 0x1234).ok());
+    resetIoCounters(bus);
+    bus.writeStatus = Status::Error(Err::I2C_BUS, "disable comparator bus", -75);
+
+    Status st = dev.disableComparator();
+
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                            static_cast<uint8_t>(st.code));
+    assertDirtyDiagnostic(dev, Err::HARDWARE_CONFIG_DIRTY, cmd::REG_CONFIG);
+  }
 }
 
 void test_invalid_raw_register_is_rejected_without_bus_access() {
@@ -2596,6 +2720,7 @@ int main() {
   RUN_TEST(test_set_thresholds_second_write_failure_preserves_cache_and_dirty_reason);
   RUN_TEST(test_comparator_setter_does_not_commit_cache_on_write_failure);
   RUN_TEST(test_comparator_setters_roll_back_each_cached_field_on_write_failure);
+  RUN_TEST(test_disable_comparator_rolls_back_queue_on_write_failure);
   RUN_TEST(test_enable_conversion_ready_pin_rolls_back_cache_on_write_failure);
   RUN_TEST(test_enable_conversion_ready_pin_partial_failure_rolls_back_cache_and_dirty_reason);
   RUN_TEST(test_apply_config_failure_on_first_write_preserves_error_not_dirty);
@@ -2606,6 +2731,7 @@ int main() {
   RUN_TEST(test_recover_success_clears_hardware_dirty_after_full_resync);
   RUN_TEST(test_successful_config_only_setter_does_not_clear_prior_dirty);
   RUN_TEST(test_failed_config_only_setter_preserves_prior_dirty_reason);
+  RUN_TEST(test_failed_config_and_comparator_setters_preserve_prior_dirty_reason);
   RUN_TEST(test_invalid_raw_register_is_rejected_without_bus_access);
   RUN_TEST(test_write_conversion_register_is_rejected_as_read_only);
   RUN_TEST(test_raw_config_write_marks_hardware_config_dirty_without_cache_commit);

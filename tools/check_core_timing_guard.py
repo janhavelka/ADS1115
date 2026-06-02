@@ -46,6 +46,12 @@ FORBIDDEN_INCLUDES = {
     "FreeRTOS": re.compile(r'^\s*#\s*include\s*[<"][^>"]*(?:FreeRTOS|freertos)/[^>"]*[>"]', re.MULTILINE),
     "ESP-IDF driver": re.compile(r'^\s*#\s*include\s*[<"]driver/[^>"]+[>"]', re.MULTILINE),
     "ESP-IDF esp_*": re.compile(r'^\s*#\s*include\s*[<"]esp_[^>"]+[>"]', re.MULTILINE),
+    "ESP-IDF sdkconfig": re.compile(r'^\s*#\s*include\s*[<"]sdkconfig\.h[>"]', re.MULTILINE),
+    "ESP-IDF soc": re.compile(r'^\s*#\s*include\s*[<"]soc/[^>"]+[>"]', re.MULTILINE),
+    "ESP-IDF hal": re.compile(r'^\s*#\s*include\s*[<"]hal/[^>"]+[>"]', re.MULTILINE),
+    "ESP-IDF rom": re.compile(r'^\s*#\s*include\s*[<"]rom/[^>"]+[>"]', re.MULTILINE),
+    "ESP-IDF lwip": re.compile(r'^\s*#\s*include\s*[<"]lwip/[^>"]+[>"]', re.MULTILINE),
+    "ESP-IDF nvs_flash": re.compile(r'^\s*#\s*include\s*[<"]nvs_flash\.h[>"]', re.MULTILINE),
 }
 BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 LINE_COMMENT_RE = re.compile(r"//[^\n]*")
