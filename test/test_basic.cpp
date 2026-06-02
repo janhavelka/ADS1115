@@ -496,16 +496,17 @@ void test_begin_strict_readback_mismatch_fails_without_initializing_and_preserve
 
   Status st = dev.begin(cfg);
 
+  const int32_t observed = static_cast<int32_t>(bus.reg[cmd::REG_CONFIG] ^ cmd::MASK_DR);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
                           static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(observed, st.detail);
   TEST_ASSERT_FALSE(dev.isInitialized());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
                           static_cast<uint8_t>(dev.state()));
   TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
                           static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
-  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(bus.reg[cmd::REG_CONFIG] ^ cmd::MASK_DR),
-                          dev.hardwareConfigDirtyError().detail);
+  TEST_ASSERT_EQUAL_INT32(observed, dev.hardwareConfigDirtyError().detail);
 }
 
 void test_begin_strict_low_threshold_readback_mismatch_reports_observed_detail() {
@@ -546,6 +547,8 @@ void test_begin_failure_after_first_apply_write_preserves_dirty_diagnostic() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
   Config cfg = makeConfig(bus);
+  cfg.compThresholdLow = -1234;
+  cfg.compThresholdHigh = 2345;
   bus.failWriteOnCall = 2;
   bus.failWriteStatus = Status::Error(Err::I2C_BUS, "second begin write bus", -52);
 
@@ -557,7 +560,10 @@ void test_begin_failure_after_first_apply_write_preserves_dirty_diagnostic() {
   TEST_ASSERT_FALSE(dev.isInitialized());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
                           static_cast<uint8_t>(dev.state()));
-  TEST_ASSERT_EQUAL_UINT16(cmd::LO_THRESH_DEFAULT, bus.reg[cmd::REG_LO_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(cfg.compThresholdLow),
+                           bus.reg[cmd::REG_LO_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::HI_THRESH_DEFAULT, bus.reg[cmd::REG_HI_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CONFIG_DEFAULT, bus.reg[cmd::REG_CONFIG]);
   assertDirtyDiagnostic(dev, Err::I2C_BUS, -52);
 }
 
@@ -565,6 +571,9 @@ void test_begin_failure_after_second_apply_write_preserves_dirty_diagnostic() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
   Config cfg = makeConfig(bus);
+  cfg.compThresholdLow = -2222;
+  cfg.compThresholdHigh = 2222;
+  cfg.dataRate = DataRate::SPS_860;
   bus.failWriteOnCall = 3;
   bus.failWriteStatus = Status::Error(Err::I2C_ERROR, "third begin write failure", -53);
 
@@ -576,9 +585,39 @@ void test_begin_failure_after_second_apply_write_preserves_dirty_diagnostic() {
   TEST_ASSERT_FALSE(dev.isInitialized());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
                           static_cast<uint8_t>(dev.state()));
-  TEST_ASSERT_EQUAL_UINT16(cmd::LO_THRESH_DEFAULT, bus.reg[cmd::REG_LO_THRESH]);
-  TEST_ASSERT_EQUAL_UINT16(cmd::HI_THRESH_DEFAULT, bus.reg[cmd::REG_HI_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(cfg.compThresholdLow),
+                           bus.reg[cmd::REG_LO_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(cfg.compThresholdHigh),
+                           bus.reg[cmd::REG_HI_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CONFIG_DEFAULT, bus.reg[cmd::REG_CONFIG]);
   assertDirtyDiagnostic(dev, Err::I2C_ERROR, -53);
+}
+
+void test_begin_failure_on_third_apply_write_preserves_original_status_and_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.compThresholdLow = -3456;
+  cfg.compThresholdHigh = 3456;
+  cfg.dataRate = DataRate::SPS_860;
+  bus.failWriteOnCall = 3;
+  bus.failWriteStatus = Status::Error(Err::I2C_NACK_DATA, "config write nack", -58);
+
+  Status st = dev.begin(cfg);
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_NACK_DATA),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(-58, st.detail);
+  TEST_ASSERT_EQUAL_UINT32(3u, bus.writeCalls);
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(cfg.compThresholdLow),
+                           bus.reg[cmd::REG_LO_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>(cfg.compThresholdHigh),
+                           bus.reg[cmd::REG_HI_THRESH]);
+  TEST_ASSERT_EQUAL_UINT16(cmd::CONFIG_DEFAULT, bus.reg[cmd::REG_CONFIG]);
+  assertDirtyDiagnostic(dev, Err::I2C_NACK_DATA, -58);
 }
 
 void test_begin_strict_readback_transport_failure_after_writes_preserves_dirty_diagnostic() {
@@ -679,13 +718,14 @@ void test_recover_strict_readback_mismatch_keeps_dirty_and_preserves_error() {
   bus.configReadXorMask = cmd::MASK_MODE;
   Status st = dev.recover();
 
+  const int32_t observed = static_cast<int32_t>(bus.reg[cmd::REG_CONFIG] ^ cmd::MASK_MODE);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
                           static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_INT32(observed, st.detail);
   TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
                           static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
-  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(bus.reg[cmd::REG_CONFIG] ^ cmd::MASK_MODE),
-                          dev.hardwareConfigDirtyError().detail);
+  TEST_ASSERT_EQUAL_INT32(observed, dev.hardwareConfigDirtyError().detail);
 }
 
 void test_recover_strict_low_threshold_mismatch_keeps_dirty_and_preserves_error() {
@@ -2422,6 +2462,7 @@ int main() {
   RUN_TEST(test_begin_strict_high_threshold_readback_mismatch_reports_observed_detail);
   RUN_TEST(test_begin_failure_after_first_apply_write_preserves_dirty_diagnostic);
   RUN_TEST(test_begin_failure_after_second_apply_write_preserves_dirty_diagnostic);
+  RUN_TEST(test_begin_failure_on_third_apply_write_preserves_original_status_and_dirty);
   RUN_TEST(test_begin_strict_readback_transport_failure_after_writes_preserves_dirty_diagnostic);
   RUN_TEST(test_successful_begin_clears_prior_failed_begin_dirty_diagnostic);
   RUN_TEST(test_failed_begin_dirty_survives_later_probe_failure);

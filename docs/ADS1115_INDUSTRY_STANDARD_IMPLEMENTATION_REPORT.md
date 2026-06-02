@@ -109,6 +109,54 @@ Implementation work required next:
 - Mark successful raw CONFIG/threshold diagnostic writes as cache/hardware dirty
   or stale using `HARDWARE_CONFIG_DIRTY`, while keeping typed cache unchanged.
 
+Prompt 02 crash-recovery verification on 2026-06-02:
+
+- `status-taxonomy-agent`: confirmed `OFFLINE`, `UNSUPPORTED_OPERATION`,
+  `READBACK_MISMATCH`, and `HARDWARE_CONFIG_DIRTY` are appended after
+  `I2C_BUS`, the native enum-order test pins their numeric values, and current
+  tests cover offline short-circuit, unsupported continuous-mode conversion
+  starts, strict read-back mismatch, structural dirty diagnostics, and raw
+  diagnostic write dirty behavior.
+- `begin-partial-state-test-agent`: confirmed failed-`begin()` tests cover
+  partial `_applyConfig()` writes, uninitialized diagnostic visibility, strict
+  read-back transport failures, successful retry clearing after full resync, and
+  failed retry preserving the dirty diagnostic. It noted that the third
+  `_applyConfig()` write failure was covered by behavior but not by a dedicated
+  test name, and that default threshold values made partial-write assertions
+  less explicit.
+- `strict-readback-test-agent`: confirmed config/threshold strict read-back
+  mismatch tests and strict transport-failure tests are present. It noted that
+  config mismatch tests did not assert returned `Status::detail`, only dirty
+  diagnostic detail.
+- `raw-register-contract-agent`: confirmed Option A is recorded and tested:
+  raw CONFIG/threshold writes are diagnostic writes that update hardware, leave
+  typed cache unchanged, and mark `HARDWARE_CONFIG_DIRTY`; invalid raw registers
+  and conversion-register writes remain rejected before bus access.
+- `compatibility-review-agent`: confirmed Prompt 02 commit
+  `7ce66d14cef39e5f2c6a7b497bcf02c65770c764` changed only the report,
+  `include/ADS1115/Status.h`, and `test/test_basic.cpp`; production
+  implementation was not overreached, `Status` layout was preserved, and enum
+  additions were append-only.
+
+Prompt 02 recovery test tightening:
+
+- Added
+  `test_begin_failure_on_third_apply_write_preserves_original_status_and_dirty`
+  to explicitly name and pin failure of the third `_applyConfig()` transaction
+  during `begin()`: original transport status/detail are returned, the driver
+  remains uninitialized, prior threshold writes are visible in fake hardware,
+  CONFIG remains unwritten, and the dirty diagnostic remains structural.
+- Strengthened first/second partial-`begin()` write tests with non-default
+  threshold/config values so fake hardware assertions prove which writes reached
+  hardware before the injected failure.
+- Strengthened config strict-read-back mismatch tests for `begin()` and
+  `recover()` to assert returned `Status::detail` carries the observed raw
+  register value, matching the existing low/high threshold detail contract.
+
+Current implementation work required next for Prompt 02 coverage: none. The
+historical test-first failures listed below were implemented by later prompts,
+and the recovery-tightened contracts now pass on the current branch.
+
 ## Prompt 03 Implementation Summary
 
 Implemented P0 status and dirty-diagnostic behavior:
@@ -352,6 +400,14 @@ Expected Prompt 02 native failures:
 - `test_raw_low_threshold_write_marks_hardware_config_dirty_without_cache_commit`: expected dirty diagnostic, got clean state.
 - `test_raw_high_threshold_write_marks_hardware_config_dirty_without_cache_commit`: expected dirty diagnostic, got clean state.
 - `test_shutdown_offline_returns_offline_without_bus_access`: expected `OFFLINE`, got `BUSY`.
+
+Prompt 02 recovery validation on `hardening/ads1115-industry-standard-p0` after
+contract test tightening:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python -m platformio test -e native` | `107 test cases: 107 succeeded in 00:00:02.465`; environment `native`, status `PASSED` |
 
 Prompt 03 validation on `hardening/ads1115-industry-standard-p0`:
 
