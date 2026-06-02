@@ -43,9 +43,11 @@ def ensure_missing(path: pathlib.Path, label: str) -> None:
 def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
+    hil_capture = ROOT / "tools" / "hil_ads1115_capture.py"
 
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
+    ensure_exists(hil_capture, "HIL capture helper")
 
     ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
     ensure_missing(
@@ -57,6 +59,7 @@ def main() -> int:
         ensure_exists(common_dir / name, f"common helper {name}")
 
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
+    hil_text = hil_capture.read_text(encoding="utf-8", errors="replace")
     readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
     for cmd in MANDATORY_COMMANDS:
@@ -74,9 +77,25 @@ def main() -> int:
         "writeRegister16",
         "hardwareConfigDirty",
         "marks cache dirty",
+        "requestedI2cAddress",
+        "lastAddressSelectionStatus",
+        "probeAddressRaw",
+        "Address note: requested",
+        "Address selection failed; initialized driver was left unchanged",
     ):
         if token not in text:
             fail(f"bringup CLI must include token: {token!r}")
+
+    for token in (
+        "RESTORE_COMMANDS",
+        "response_is_ready",
+        "command_is_functional",
+        "classify_address_response",
+        "Restore failed; aborting HIL capture before functional commands.",
+        "Address check",
+    ):
+        if token not in hil_text:
+            fail(f"HIL capture helper must include token: {token!r}")
 
     for token in (
         "diagnostic Arduino bring-up CLI",

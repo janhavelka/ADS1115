@@ -27,6 +27,8 @@ ADS1115::ADS1115 device;
 bool verboseMode = false;
 static constexpr uint8_t DEFAULT_ADS1115_ADDRESS = 0x48;
 uint8_t activeI2cAddress = DEFAULT_ADS1115_ADDRESS;
+uint8_t requestedI2cAddress = DEFAULT_ADS1115_ADDRESS;
+ADS1115::Status lastAddressSelectionStatus = ADS1115::Status::Ok();
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 
 // ============================================================================
@@ -474,6 +476,28 @@ bool isValidAds1115Address(uint32_t address) {
 
 void printActiveAddress() {
   Serial.printf("  Active ADS1115 address: 0x%02X\n", activeI2cAddress);
+  Serial.printf("  Requested ADS1115 address: 0x%02X\n", requestedI2cAddress);
+  if (device.isInitialized()) {
+    Serial.printf("  Initialized driver address: 0x%02X\n", activeI2cAddress);
+  } else {
+    Serial.println("  Initialized driver address: NONE");
+  }
+  if (requestedI2cAddress != activeI2cAddress) {
+    if (device.isInitialized()) {
+      Serial.printf("  Address note: requested 0x%02X is not initialized; functional commands use 0x%02X\n",
+                    requestedI2cAddress,
+                    activeI2cAddress);
+    } else {
+      Serial.printf("  Address note: requested 0x%02X is not initialized; no functional address is ready\n",
+                    requestedI2cAddress);
+    }
+  }
+  if (!lastAddressSelectionStatus.ok()) {
+    Serial.printf("  Last address selection error: %s detail=%ld msg=%s\n",
+                  errToStr(lastAddressSelectionStatus.code),
+                  static_cast<long>(lastAddressSelectionStatus.detail),
+                  lastAddressSelectionStatus.msg ? lastAddressSelectionStatus.msg : "");
+  }
 }
 
 ADS1115::Config makeDriverConfig(uint8_t address) {
@@ -493,17 +517,49 @@ ADS1115::Config makeDriverConfig(uint8_t address) {
   return cfg;
 }
 
+ADS1115::Status probeAddressRaw(uint8_t address) {
+  const uint8_t tx[1] = {ADS1115::cmd::REG_CONFIG};
+  uint8_t rx[2] = {0, 0};
+  ADS1115::Status st = transport::wireWriteRead(address,
+                                                tx,
+                                                sizeof(tx),
+                                                rx,
+                                                sizeof(rx),
+                                                board::I2C_TIMEOUT_MS,
+                                                &Wire);
+  if (st.code == ADS1115::Err::I2C_NACK_ADDR) {
+    return ADS1115::Status::Error(ADS1115::Err::DEVICE_NOT_FOUND,
+                                  "ADS1115 address not acknowledged",
+                                  st.detail);
+  }
+  return st;
+}
+
 ADS1115::Status beginDriverAtAddress(uint8_t address) {
   if (!isValidAds1115Address(address)) {
-    return ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM,
-                                  "Invalid ADS1115 address",
-                                  static_cast<int32_t>(address));
+    lastAddressSelectionStatus =
+        ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM,
+                               "Invalid ADS1115 address",
+                               static_cast<int32_t>(address));
+    return lastAddressSelectionStatus;
+  }
+
+  requestedI2cAddress = address;
+  ADS1115::Status st = probeAddressRaw(address);
+  if (!st.ok()) {
+    lastAddressSelectionStatus = st;
+    return st;
   }
 
   device.end();
-  activeI2cAddress = address;
   ADS1115::Config cfg = makeDriverConfig(address);
-  return device.begin(cfg);
+  st = device.begin(cfg);
+  lastAddressSelectionStatus = st;
+  if (st.ok()) {
+    activeI2cAddress = address;
+    requestedI2cAddress = address;
+  }
+  return st;
 }
 
 bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline,
@@ -1314,13 +1370,20 @@ void processCommand(const String& cmdLine) {
     printActiveAddress();
     if (st.ok()) {
       printDriverHealth();
+    } else {
+      LOGW("Address selection failed; initialized driver was left unchanged");
     }
   } else if (cmd == "probe") {
     printActiveAddress();
     LOGI("Probing device (no health tracking)...");
     HealthSnapshot<ADS1115::ADS1115> before;
     before.capture(device);
-    auto st = device.probe();
+    ADS1115::Status st = ADS1115::Status::Ok();
+    if (!device.isInitialized() || requestedI2cAddress != activeI2cAddress) {
+      st = probeAddressRaw(requestedI2cAddress);
+    } else {
+      st = device.probe();
+    }
     printStatus(st);
     HealthSnapshot<ADS1115::ADS1115> after;
     after.capture(device);
@@ -1668,6 +1731,9 @@ void processCommand(const String& cmdLine) {
     runStress(count);
   } else if (cmd == "config" || cmd == "cfg" || cmd == "settings") {
     printActiveAddress();
+    if (requestedI2cAddress != activeI2cAddress) {
+      LOGW("Requested address is not initialized; showing initialized driver config only");
+    }
     printConfig();
     printSettingsSnapshot();
   } else {

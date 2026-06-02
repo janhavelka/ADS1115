@@ -88,7 +88,12 @@ Capture logs manually or with:
 ```bash
 python tools/hil_ads1115_capture.py --dry-run --suite identity
 python tools/hil_ads1115_capture.py --port <PORT> --suite identity --suite address --out-dir hil_logs
+python tools/hil_ads1115_capture.py --port <PORT> --suite all --out-dir hil_logs
 ```
+
+The automated helper treats missing address checks as negative tests and
+restores `0x48` before functional groups. Functional evidence is valid only
+when the preceding `cfg` shows `Initialized: YES` and `State: READY`.
 
 ## Address Strap Tests
 
@@ -111,13 +116,24 @@ addr 0x49
 probe
 addr 0x4A
 probe
+cfg
+addr 0x48
+probe
+cfg
+selftest
 addr 0x4B
 probe
+cfg
+addr 0x48
+probe
+cfg
+selftest
 ```
 
 Expected evidence: the selected strapped address probes successfully; the other
-addresses fail with the adapter's observed transport/status mapping. Do not
-claim precise address-NACK unless the adapter and bus capture prove it.
+addresses fail with the adapter's observed transport/status mapping and do not
+corrupt the initialized driver address or transport callbacks. Do not claim
+precise address-NACK unless the adapter and bus capture prove it.
 
 ## MUX Raw And Voltage Tests
 

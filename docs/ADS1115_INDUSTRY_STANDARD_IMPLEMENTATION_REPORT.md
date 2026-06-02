@@ -752,3 +752,51 @@ after final-report freshness patch:
 
 Final release-readiness conclusions are recorded in
 `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md`.
+
+## Post-Prompt 08 HIL/CLI Address Handling Fix
+
+After uploading the diagnostic CLI to `COM19`, two automated transcripts were
+captured under ignored `hil_logs/`:
+
+- `ads1115_hil_20260602_125817.log`
+- `ads1115_hil_20260602_130040.log`
+
+The first full-suite transcript is not valid full hardware validation evidence:
+the helper selected absent `0x4A`/`0x4B` addresses and then continued functional
+tests while the CLI-requested address was not initialized. It remains useful
+only as partial address-probe evidence for `0x48`/`0x49` positive checks and
+`0x4A`/`0x4B` negative checks.
+
+The focused `0x48` transcript captured useful positive evidence: firmware
+identity at commit `cacff70`, READY state, clean hardware/cache state,
+single-ended and differential readings, mode commands, and short stress runs
+with `20/20` and `50/50` successful samples.
+
+Focused fix scope:
+
+- The Arduino CLI now distinguishes requested CLI address, initialized driver
+  address, and last address-selection error.
+- Failed address selection raw-probes the requested address before destroying
+  the initialized driver, so absent-device checks do not clear callbacks or
+  corrupt the known-good driver.
+- The `probe` command can probe a requested-but-not-initialized address without
+  health side effects or missing-callback errors.
+- The HIL helper restores `0x48` after negative address checks and enforces a
+  READY `cfg` precondition before functional command groups.
+- Guard checks now require these CLI/HIL sequencing tokens.
+
+Validation after the fix:
+
+- Local guards, native tests, and Arduino S2/S3 builds passed.
+- Uploading updated `esp32s3dev` firmware to `COM19` failed because esptool
+  could not configure the port.
+- Uploading updated `esp32s2dev` firmware to `COM19` succeeded and identified
+  the board as `ESP32-S2FH4`.
+- Releasing/opening `COM19` after upload failed with pySerial
+  `PermissionError(13, 'A device attached to the system is not functioning.')`.
+  The corrected HIL sequence could not be captured until the board/USB port is
+  physically reset, replugged, or otherwise recovered.
+
+Remaining HIL gaps are unchanged: ALERT/RDY scope captures, comparator hardware
+behavior, long soak/stress, fault injection, and full operator metadata still
+need dated evidence before release claims.

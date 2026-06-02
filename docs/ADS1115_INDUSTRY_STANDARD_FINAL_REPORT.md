@@ -228,9 +228,29 @@ contents against an allow/deny export policy.
 
 ## Hardware Validation Status
 
-Hardware validation has not been executed in this repository state. No dated HIL
-logs, oscilloscope captures, logic-analyzer traces, soak logs, or fault-injection
-transcripts are present.
+Hardware validation is still incomplete. An initial automated serial capture was
+run on 2026-06-02 after uploading the Arduino diagnostic CLI to `COM19`, but the
+first full-suite transcript is invalid as full validation because the helper
+selected absent addresses `0x4A`/`0x4B` and then continued functional tests while
+the driver was `UNINIT` at the requested address. That transcript may only be
+used as partial address-probe evidence.
+
+A second focused transcript restored `0x48` and captured useful positive
+evidence: firmware identity, `0x48` READY state, clean cache state, single-ended
+and differential read output, continuous/single-shot command paths, and short
+stress runs with `20/20` and `50/50` successful samples. Do not claim
+mux/gain/rate/stress/comparator validation from the invalid full-suite log.
+
+The HIL helper and CLI were later fixed to restore a known-good address after
+absent-address checks and to require READY state before functional command
+groups. Updated `esp32s2dev` firmware was uploaded to `COM19`, but the corrected
+HIL capture could not be completed because pySerial could not configure the
+port after upload. A physical reset/replug or USB driver recovery is required
+before collecting the corrected transcript.
+
+No oscilloscope captures, logic-analyzer traces, long soak logs, comparator
+validation records, ALERT/RDY captures, or fault-injection transcripts are
+present.
 
 Prepared artifacts:
 
@@ -258,6 +278,7 @@ Must fix before merge:
 Must validate before release:
 
 - Execute the HIL validation plan and attach dated logs/captures.
+- Rerun automated HIL with the corrected restore-before-functional sequence.
 - Capture ALERT/RDY timing evidence at 8, 128, and 860 SPS.
 - Validate comparator traditional/window, latch, polarity, and queue behavior.
 - Validate stuck bus, unplug/replug, brownout/reset, recover, and partial write

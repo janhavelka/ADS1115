@@ -2,8 +2,10 @@
 """Capture ADS1115 diagnostic CLI transcripts for HIL evidence.
 
 This helper sends predefined command lists to the Arduino diagnostic CLI and
-saves timestamped logs. It does not decide pass/fail; operators must review the
-captured output and fill the hardware validation results template.
+saves timestamped logs. It performs basic sequencing checks so functional
+commands are only sent after a READY initialized address. It does not replace
+operator review; operators must still review captured output and fill the
+hardware validation results template.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -31,15 +34,25 @@ SUITES = {
         "addr 0x48",
         "probe",
         "cfg",
+        "selftest",
         "addr 0x49",
         "probe",
         "cfg",
+        "selftest",
         "addr 0x4A",
         "probe",
         "cfg",
+        "addr 0x48",
+        "probe",
+        "cfg",
+        "selftest",
         "addr 0x4B",
         "probe",
         "cfg",
+        "addr 0x48",
+        "probe",
+        "cfg",
+        "selftest",
     ],
     "mux": [
         "gain 2",
@@ -158,6 +171,19 @@ SUITES = {
     ],
 }
 
+RESTORE_COMMANDS = ["addr 0x48", "probe", "cfg", "selftest"]
+
+NON_FUNCTIONAL_PREFIXES = (
+    "addr",
+    "cfg",
+    "drv",
+    "probe",
+    "recover",
+    "selftest",
+    "state",
+    "version",
+)
+
 
 def run_git(args: List[str]) -> str:
     try:
@@ -180,7 +206,10 @@ def build_commands(suites: Iterable[str], extra: Iterable[str]) -> List[str]:
     commands: List[str] = []
     for suite in suites:
         if suite == "all":
-            for name in SUITES:
+            commands.extend(SUITES["identity"])
+            commands.extend(SUITES["address"])
+            for name in ("mux", "gain", "rate", "mode", "comparator", "fault", "stress"):
+                commands.append("cfg")
                 commands.extend(SUITES[name])
             continue
         commands.extend(SUITES[suite])
@@ -215,6 +244,64 @@ def read_available(ser, quiet_s: float, max_s: float) -> str:
     return b"".join(chunks).decode("utf-8", errors="replace")
 
 
+def ansi_stripped(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def response_is_ready(response: str) -> bool:
+    plain = ansi_stripped(response)
+    if "Address note:" in plain or "Requested address is not initialized" in plain:
+        return False
+    if "Initialized: YES" in plain and "State: READY" in plain:
+        return True
+    if "State: READY" in plain and "Online: yes" in plain:
+        return True
+    return False
+
+
+def response_is_not_ready(response: str) -> bool:
+    plain = ansi_stripped(response)
+    return (
+        "NOT_INITIALIZED" in plain
+        or "State: UNINIT" in plain
+        or "Address note:" in plain
+        or "Requested address is not initialized" in plain
+    )
+
+
+def selftest_ok(response: str) -> bool:
+    plain = ansi_stripped(response)
+    match = re.search(r"Selftest result:\s+pass=(\d+)\s+fail=(\d+)\s+skip=(\d+)", plain)
+    if not match:
+        return "Selftest result:" not in plain
+    return int(match.group(2)) == 0
+
+
+def command_is_functional(command: str) -> bool:
+    token = command.strip().split(" ", 1)[0]
+    return token not in NON_FUNCTIONAL_PREFIXES
+
+
+def address_command_target(command: str) -> str | None:
+    parts = command.strip().split()
+    if len(parts) != 2 or parts[0] != "addr":
+        return None
+    return parts[1]
+
+
+def classify_address_response(command: str, response: str) -> str | None:
+    target = address_command_target(command)
+    if target is None:
+        return None
+    plain = ansi_stripped(response)
+    if "Status: OK" in plain:
+        return f"# Address check {target}: present/initialized OK\n"
+    status_match = re.search(r"Status:\s+([A-Z0-9_]+)", plain)
+    if status_match:
+        return f"# Address check {target}: absent/unavailable negative check ({status_match.group(1)})\n"
+    return f"# Address check {target}: no status parsed; review manually\n"
+
+
 def capture_serial(port: str, baud: int, commands: List[str], out_path: pathlib.Path,
                    per_command_delay_s: float, quiet_s: float, read_timeout_s: float) -> None:
     try:
@@ -245,7 +332,10 @@ def capture_serial(port: str, baud: int, commands: List[str], out_path: pathlib.
         if initial:
             write_log(initial)
 
-        for command in commands:
+        current_ready = response_is_ready(initial) if initial else False
+        restore_attempted_for_command = False
+
+        def send_command(command: str) -> str:
             write_log(f"\n>>> {command}\n")
             ser.write((command + "\r\n").encode("utf-8"))
             ser.flush()
@@ -253,6 +343,45 @@ def capture_serial(port: str, baud: int, commands: List[str], out_path: pathlib.
             response = read_available(ser, quiet_s=quiet_s, max_s=read_timeout_s)
             if response:
                 write_log(response)
+            return response
+
+        def restore_ready() -> bool:
+            nonlocal current_ready
+            write_log("\n# Restore precondition: addr 0x48, probe, cfg, selftest\n")
+            restored = False
+            selftest_passed = True
+            for restore_command in RESTORE_COMMANDS:
+                response = send_command(restore_command)
+                if restore_command == "cfg":
+                    restored = response_is_ready(response)
+                if restore_command == "selftest":
+                    selftest_passed = selftest_ok(response)
+            current_ready = restored and selftest_passed
+            if not current_ready:
+                write_log("# Restore failed; aborting HIL capture before functional commands.\n")
+            return current_ready
+
+        for command in commands:
+            if command_is_functional(command) and not current_ready:
+                if restore_attempted_for_command:
+                    write_log("# Functional precondition still failed after restore; aborting.\n")
+                    raise SystemExit(2)
+                restore_attempted_for_command = True
+                if not restore_ready():
+                    raise SystemExit(2)
+            else:
+                restore_attempted_for_command = False
+
+            response = send_command(command)
+            address_note = classify_address_response(command, response)
+            if address_note:
+                write_log(address_note)
+            if command == "cfg":
+                current_ready = response_is_ready(response)
+            elif response_is_not_ready(response):
+                current_ready = False
+            elif response_is_ready(response):
+                current_ready = True
 
 
 def main(argv: List[str]) -> int:
@@ -307,7 +436,7 @@ def main(argv: List[str]) -> int:
         read_timeout_s=args.read_timeout_s,
     )
     print(f"\nSaved transcript: {out_path}")
-    print("No pass/fail decision was made by this script.")
+    print("Basic sequencing/address classification was recorded; operator review is still required.")
     return 0
 
 
