@@ -621,23 +621,26 @@ void test_begin_failure_on_third_apply_write_preserves_original_status_and_dirty
 }
 
 void test_begin_strict_readback_transport_failure_after_writes_preserves_dirty_diagnostic() {
-  FakeBus bus;
-  ADS1115::ADS1115 dev;
-  Config cfg = makeConfig(bus);
-  cfg.strictInitVerify = true;
-  bus.failReadOnCall = 4;
-  bus.failReadStatus = Status::Error(Err::I2C_TIMEOUT, "strict config read timeout", -54);
+  const uint32_t failReadCalls[] = {2, 3, 4};
+  for (uint32_t failCall : failReadCalls) {
+    FakeBus bus;
+    ADS1115::ADS1115 dev;
+    Config cfg = makeConfig(bus);
+    cfg.strictInitVerify = true;
+    bus.failReadOnCall = failCall;
+    bus.failReadStatus = Status::Error(Err::I2C_TIMEOUT, "strict read timeout", -54);
 
-  Status st = dev.begin(cfg);
+    Status st = dev.begin(cfg);
 
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
-                          static_cast<uint8_t>(st.code));
-  TEST_ASSERT_EQUAL_INT32(-54, st.detail);
-  TEST_ASSERT_EQUAL_UINT32(3u, bus.writeCalls);
-  TEST_ASSERT_FALSE(dev.isInitialized());
-  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
-                          static_cast<uint8_t>(dev.state()));
-  assertDirtyDiagnostic(dev, Err::I2C_TIMEOUT, -54);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                            static_cast<uint8_t>(st.code));
+    TEST_ASSERT_EQUAL_INT32(-54, st.detail);
+    TEST_ASSERT_EQUAL_UINT32(3u, bus.writeCalls);
+    TEST_ASSERT_FALSE(dev.isInitialized());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                            static_cast<uint8_t>(dev.state()));
+    assertDirtyDiagnostic(dev, Err::I2C_TIMEOUT, -54);
+  }
 }
 
 void test_successful_begin_clears_prior_failed_begin_dirty_diagnostic() {
@@ -1054,6 +1057,31 @@ void test_start_conversion_in_continuous_mode_returns_unsupported_operation() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::UNSUPPORTED_OPERATION),
                           static_cast<uint8_t>(st.code));
   TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+}
+
+void test_start_conversion_while_single_shot_pending_returns_busy_without_bus_access() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::SINGLE_SHOT;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+
+  Status st = dev.startConversion();
+  TEST_ASSERT_TRUE(st.inProgress());
+  const uint32_t writesAfterStart = bus.writeCalls;
+  const Mux cachedMux = dev.getMux();
+
+  st = dev.startConversion();
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesAfterStart, bus.writeCalls);
+
+  st = dev.startConversion(Mux::AIN2_GND);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_UINT32(writesAfterStart, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(cachedMux),
+                          static_cast<uint8_t>(dev.getMux()));
 }
 
 void test_single_shot_timing_wraparound_reaches_ready() {
@@ -2482,6 +2510,7 @@ int main() {
   RUN_TEST(test_tracked_read_preserves_distinct_i2c_errors_and_updates_health);
   RUN_TEST(test_tracked_write_preserves_distinct_i2c_errors_and_updates_health);
   RUN_TEST(test_start_conversion_in_continuous_mode_returns_unsupported_operation);
+  RUN_TEST(test_start_conversion_while_single_shot_pending_returns_busy_without_bus_access);
   RUN_TEST(test_single_shot_timing_wraparound_reaches_ready);
   RUN_TEST(test_single_shot_raw_read_consumes_ready_before_voltage_read);
   RUN_TEST(test_read_conversion_ready_propagates_i2c_failure);

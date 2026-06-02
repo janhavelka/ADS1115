@@ -211,6 +211,47 @@ Additional Prompt 03 regression tests:
 - Failed-begin dirty state now survives a later retry that fails during probe,
   proving dirty state is not cleared merely by starting a new `begin()`.
 
+Prompt 03 crash-recovery verification on 2026-06-02:
+
+- `core-status-agent`: confirmed appended status values remain order-compatible,
+  example status string helpers cover the new names, offline tracked I2C
+  short-circuits before bus access, `recover()` is the offline bus-access
+  exception, continuous-mode `startConversion()` returns
+  `UNSUPPORTED_OPERATION`, and `BUSY`/`IN_PROGRESS` remain distinct.
+- `begin-dirty-agent`: confirmed failed `begin()` preserves dirty diagnostics
+  through `hardwareConfigDirty()`, `hardwareConfigDirtyError()`, and
+  `SettingsSnapshot` while leaving `_initialized == false`; dirty state clears
+  through a later successful `begin()` full apply. It noted `recover()` remains
+  unavailable after failed `begin()` because the driver is intentionally not
+  initialized.
+- `strict-readback-agent`: confirmed strict read-back mismatch handling for
+  CONFIG, `LO_THRESH`, and `HI_THRESH`, observed raw register details, CONFIG
+  OS-bit masking, and dirty diagnostic preservation. It noted begin transport
+  failure coverage was less symmetric than recover coverage.
+- `test-fault-agent`: confirmed current fault-injection coverage for Prompt 03
+  contracts and a passing native suite; it noted direct BUSY coverage for a
+  second pending single-shot start was indirect.
+- `api-compatibility-agent`: confirmed no `Status` layout change, no new public
+  dirty accessors or snapshot fields, no framework dependency in `include/` or
+  `src/`, and Doxygen/README/example string-helper updates. It noted the core
+  still intentionally has no public `Err`-to-string helper.
+- `final-review-agent`: confirmed original Prompt 03 commit
+  `effddc526ab51927488acb12ede1e6586cde00c0` exists on the remote branch and
+  found no unresolved Prompt 03 P0 implementation issue.
+
+Prompt 03 recovery test tightening:
+
+- Expanded
+  `test_begin_strict_readback_transport_failure_after_writes_preserves_dirty_diagnostic`
+  so failed `begin()` preserves original transport status/detail and dirty
+  diagnostics when strict read-back fails on any of the three verification reads:
+  `LO_THRESH`, `HI_THRESH`, or CONFIG.
+- Added
+  `test_start_conversion_while_single_shot_pending_returns_busy_without_bus_access`
+  to directly pin that an already-active single-shot conversion returns
+  `Err::BUSY` without another bus write, preserving the
+  `UNSUPPORTED_OPERATION`/`BUSY`/`IN_PROGRESS` distinction.
+
 Remaining gaps after Prompt 03:
 
 - Hardware validation evidence is still required before field-grade or
@@ -419,6 +460,18 @@ Prompt 03 validation on `hardening/ads1115-industry-standard-p0`:
 | `python -m platformio test -e native` | `69 test cases: 69 succeeded in 00:00:01.990`; environment `native`, status `PASSED` |
 | `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:24.048` |
 | `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:23.496` |
+
+Prompt 03 recovery validation on `hardening/ads1115-industry-standard-p0` after
+strict begin read-back transport and single-shot `BUSY` test tightening:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; metadata aligned at `1.0.0` |
+| `python -m platformio test -e native` | `108 test cases: 108 succeeded in 00:00:01.618`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:13.434` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:14.958` |
 
 Prompt 04 validation on `hardening/ads1115-industry-standard-p0`:
 
