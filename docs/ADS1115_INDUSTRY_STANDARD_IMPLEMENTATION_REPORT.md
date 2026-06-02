@@ -291,6 +291,45 @@ Prompt 01 validation on `hardening/ads1115-industry-standard-p0`:
 | `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h` |
 | `python -m platformio test -e native` | `57 test cases: 57 succeeded in 00:00:02.147`; environment `native`, status `PASSED` |
 
+Prompt 01 crash-recovery verification on 2026-06-02:
+
+Recovery startup commands:
+
+| Command | Result |
+| --- | --- |
+| `git status --short` | clean worktree; empty output |
+| `git branch --show-current` | `hardening/ads1115-industry-standard-p0` |
+| `git log --oneline -5` | `7d6032e docs: finalize ADS1115 industry-standard hardening report`; `c4558b2 docs: add ADS1115 integration and HIL validation plan`; `73f87fe test: expand ADS1115 edge coverage and core guards`; `3f4583b docs: clarify ADS1115 readiness and service timing contracts`; `8056c96 fix: mark ADS1115 raw register writes as cache-dirty` |
+
+- `repo-state-agent`: confirmed a clean worktree, current branch
+  `hardening/ads1115-industry-standard-p0`, remote tracking branch in sync, and
+  Prompt 01 commit `38e55ea` present with only `AGENTS.md` and this report
+  changed.
+- `audit-gap-agent`: confirmed required `AGENTS.md` rules, report structure,
+  Prompt 01 results row, and recorded Prompt 01 validation evidence; noted that
+  later prompts have since replaced the original final-report placeholder.
+- `datasheet-contract-agent`: confirmed the no-chip-ID, plausibility-only
+  read-back, dirty/partial hardware-state, raw diagnostic write, append-only
+  status-code, and transport-error visibility rules are captured.
+- `implementation-planner-agent`: confirmed branch, starting commit, source
+  audit report path, chunk plan, rules, prompt results table, and final report
+  section are present, with Prompt 01 still recorded as docs/rules only.
+- `final-review-agent`: confirmed branch baseline, Prompt 01 commit scope,
+  required `AGENTS.md` rules, report initialization, validation evidence, and
+  remote sync; noted the only repo-auditability gaps were the lost original
+  subagent and startup transcripts, now recorded in this recovery note.
+
+Prompt 01 recovery validation on `hardening/ads1115-industry-standard-p0` at
+pre-recovery tip `7d6032e`:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; metadata aligned at `1.0.0` |
+| `python -m platformio test -e native` | `106 test cases: 106 succeeded in 00:00:02.722`; environment `native`, status `PASSED` |
+
 Prompt 02 validation on `hardening/ads1115-industry-standard-p0`:
 
 | Command | Result |
