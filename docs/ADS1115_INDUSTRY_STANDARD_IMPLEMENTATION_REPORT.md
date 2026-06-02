@@ -125,9 +125,9 @@ Prompt 02 crash-recovery verification on 2026-06-02:
   test name, and that default threshold values made partial-write assertions
   less explicit.
 - `strict-readback-test-agent`: confirmed config/threshold strict read-back
-  mismatch tests and strict transport-failure tests are present. It noted that
-  config mismatch tests did not assert returned `Status::detail`, only dirty
-  diagnostic detail.
+  mismatch tests and strict transport-failure tests are present. It initially
+  noted that config mismatch tests did not assert returned `Status::detail`;
+  the Prompt 02 recovery test tightening below closed that gap.
 - `raw-register-contract-agent`: confirmed Option A is recorded and tested:
   raw CONFIG/threshold writes are diagnostic writes that update hardware, leave
   typed cache unchanged, and mark `HARDWARE_CONFIG_DIRTY`; invalid raw registers
@@ -156,6 +156,36 @@ Prompt 02 recovery test tightening:
 Current implementation work required next for Prompt 02 coverage: none. The
 historical test-first failures listed below were implemented by later prompts,
 and the recovery-tightened contracts now pass on the current branch.
+
+Prompt 02 re-verification on 2026-06-02 at current tip after Prompt 03 recovery:
+
+- `status-taxonomy-agent`: found no blocking taxonomy gaps. Append-only numeric
+  order remains pinned, and current tests cover offline no-bus-touch,
+  continuous-mode `UNSUPPORTED_OPERATION`, strict `READBACK_MISMATCH`, and
+  structural partial-state diagnostics.
+- `begin-partial-state-test-agent`: confirmed first/second/third begin partial
+  write failures, original status/detail preservation, uninitialized diagnostic
+  visibility, strict read-back transport failures for all three verification
+  reads, successful begin clearing, and probe-only retry preservation.
+- `strict-readback-test-agent`: confirmed CONFIG, `LO_THRESH`, and `HI_THRESH`
+  strict mismatch tests assert `READBACK_MISMATCH`, observed `Status::detail`,
+  CONFIG OS-bit masking, and structural dirty diagnostics.
+- `raw-register-contract-agent`: confirmed Option A raw-write behavior is
+  recorded and tested. Added an in-test comment documenting that raw writes are
+  diagnostic access that update hardware, leave typed cache unchanged, and mark
+  cache/hardware state dirty.
+- `compatibility-review-agent`: confirmed original Prompt 02 commit
+  `7ce66d14cef39e5f2c6a7b497bcf02c65770c764` was bounded to tests, report, and
+  `Status.h`; no production implementation was changed in that commit, current
+  tests do not invalidate the test-first record, and no compatibility blocker
+  remains.
+
+Prompt 02 re-verification validation:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python -m platformio test -e native` | `108 test cases: 108 succeeded in 00:00:02.178`; environment `native`, status `PASSED` |
 
 ## Prompt 03 Implementation Summary
 

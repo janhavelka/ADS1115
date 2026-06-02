@@ -1989,6 +1989,8 @@ void test_write_conversion_register_is_rejected_as_read_only() {
   TEST_ASSERT_EQUAL_UINT16(conversionBefore, bus.reg[cmd::REG_CONVERSION]);
 }
 
+// Option A contract: raw register writes are diagnostic access. They update
+// hardware but leave typed cache unchanged and mark cache/hardware state dirty.
 void test_raw_config_write_marks_hardware_config_dirty_without_cache_commit() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
