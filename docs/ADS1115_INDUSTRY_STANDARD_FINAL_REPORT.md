@@ -3,15 +3,23 @@
 Date: 2026-06-01
 Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
-Current head before this final report: `c4558b293a66975112a0db85c10a2cd8dde814b4`
-Final commit: report commit containing this file; the immutable hash is recorded in the final assistant response.
+Original final-report head: `c4558b293a66975112a0db85c10a2cd8dde814b4`
+Current recovery head before the repeated Prompt 07 report refresh:
+`80095e688e9432bd248e58c07b1511eb229a524e`
+Final commit: latest report-refresh commit containing this file; the immutable
+hash is recorded in the final assistant response.
 
 ## Executive Summary
 
 This hardening pass made the ADS1115 driver more production-oriented without
 redesigning the library. The core remains framework-neutral, I2C remains
 injected and non-owning, public failure paths now expose precise statuses, and
-native fault coverage expanded to 106 passing tests.
+the original final-report snapshot had 106 passing native tests.
+
+Later crash-recovery hardening re-ran Prompt 06/07 checks and expanded native
+coverage to 112 passing tests. The historical Prompt 08 command table below is
+kept as the original final-report evidence; current Prompt 07 recovery evidence
+is recorded in `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md`.
 
 Local validation passed for all available checks, native tests, Arduino
 ESP32-S2/S3 PlatformIO builds, and PlatformIO package packing. Local pure
@@ -160,7 +168,8 @@ Native tests now cover:
   diagnostics, and bounded blocking read polling.
 - Shutdown/end and offline behavior.
 
-Prompt 08 final-state native result: 106 test cases, 106 succeeded.
+Prompt 08 original final-state native result: 106 test cases, 106 succeeded.
+Current recovery native result: 112 test cases, 112 succeeded.
 
 ## Commands Run And Exact Results
 
@@ -169,7 +178,7 @@ Startup/diff review:
 | Command | Result |
 | --- | --- |
 | `git status --short` | Clean before Prompt 08 edits |
-| `git log --oneline --decorate -10` | Head was `c4558b2 (HEAD -> hardening/ads1115-industry-standard-p0, origin/hardening/ads1115-industry-standard-p0) docs: add ADS1115 integration and HIL validation plan`; previous hardening commits `73f87fe`, `3f4583b`, `8056c96`, `effddc5`, `7ce66d1`, `38e55ea`; base branch commit `65f6fdc` |
+| `git log --oneline --decorate -10` | Historical Prompt 08 snapshot: head was `c4558b2 (HEAD -> hardening/ads1115-industry-standard-p0, origin/hardening/ads1115-industry-standard-p0) docs: add ADS1115 integration and HIL validation plan`; previous hardening commits `73f87fe`, `3f4583b`, `8056c96`, `effddc5`, `7ce66d1`, `38e55ea`; base branch commit `65f6fdc`. Current recovery evidence is recorded in the implementation report. |
 | `git diff --stat` | No output before Prompt 08 edits |
 | `git diff --name-only origin/main...HEAD` | Succeeded; 33 files changed relative to merge-base |
 | `git merge-base origin/main HEAD` | `73569c4826607aa9b09a58f592f9cd9391bf8c1e` |
@@ -185,7 +194,7 @@ Validation:
 | `python tools/check_cli_contract.py` | `CLI contract PASSED` |
 | `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
 | `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
-| `python -m platformio test -e native` | `native` passed; `106 test cases: 106 succeeded in 00:00:02.166` |
+| `python -m platformio test -e native` | Historical Prompt 08 run: `native` passed; `106 test cases: 106 succeeded in 00:00:02.166`. Current recovery run: `112 test cases: 112 succeeded`; see implementation report for exact current timing. |
 | `python -m platformio run -e esp32s3dev` | `esp32s3dev` success in `00:00:14.457`; RAM `22320` of `327680` bytes, Flash `398994` of `1310720` bytes |
 | `python -m platformio run -e esp32s2dev` | `esp32s2dev` success in `00:00:14.952`; RAM `36752` of `327680` bytes, Flash `390933` of `1310720` bytes |
 | `python -m platformio pkg pack` | Exit code 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz` |

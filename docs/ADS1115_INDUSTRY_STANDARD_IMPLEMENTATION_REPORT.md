@@ -69,7 +69,7 @@ fixes and validation. The highest-priority follow-up work is:
 | 04 | `8056c962a010b4db83551d2c4805514899886ee5` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `test/test_basic.cpp`, `README.md`, `examples/01_basic_bringup_cli/main.cpp`, `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md` | Core/CLI guards, native tests, and Arduino builds passed | Raw diagnostic write cache/dirty contract closed with recovery tests and docs |
 | 05 | `3f4583b0138d4cf9694ceaeeb35e1ffa164db24b` | `src/ADS1115.cpp`, `include/ADS1115/ADS1115.h`, `include/ADS1115/Config.h`, `test/test_basic.cpp`, `README.md`, `docs`, `examples/01_basic_bringup_cli/main.cpp`, `tools/check_core_timing_guard.py` | Required guards, native tests, and Arduino builds passed | Readiness/status aliases, service timing, no-clock diagnostics, and blocking bounds clarified |
 | 06 | `73f87fee663473340a7d53428ab1f6bc113067bd` | `test/test_basic.cpp`, `tools/check_core_timing_guard.py`, `scripts/generate_version.py`, `README.md`, `CHANGELOG.md`, `docs`, `include/ADS1115/ADS1115.h` | Required guards, version check, native tests, Arduino builds, and package pack passed | Edge coverage, core leakage guards, version metadata sync, and documentation honesty expanded |
-| 07 | `c4558b293a66975112a0db85c10a2cd8dde814b4` | `examples`, `.github`, `tools`, `README.md`, `docs` | Required local guards/tests/builds passed; `idf.py` local availability recorded | Integration examples clarified, CI evidence strengthened, ESP-IDF mapping limits documented, and HIL operator plan/template/script added |
+| 07 | `c4558b293a66975112a0db85c10a2cd8dde814b4`; current recovery evidence through this Prompt 07 re-verification commit | `examples`, `.github`, `tools`, `README.md`, `docs` | Required local guards/tests/builds passed; `idf.py` local availability recorded; current native evidence is 112 tests | Integration examples clarified, CI evidence strengthened, ESP-IDF mapping limits documented, and HIL operator plan/template/script added/re-verified |
 | 08 | Report commit containing `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md` | `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md`, this report, `README.md`, `CHANGELOG.md`, `src/ADS1115.cpp` | Required local guards/tests/builds/package pack passed; `idf.py` unavailable; read-only merge-tree reports conflicts with current `origin/main` | Final readiness report added; branch requires rebase/merge conflict resolution before merge and dated HIL evidence before release claims |
 
 ## Prompt 02 Contract Tests
@@ -732,6 +732,21 @@ Prompt 07 recovery validation:
 | `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:14.001` |
 | `idf.py --version` | `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
 | `python tools/hil_ads1115_capture.py --dry-run --suite identity` | Exit code 0; printed branch `hardening/ads1115-industry-standard-p0`, commit `10016a276f42c5d6c8fb168dcce4fa68e67150f9`, and commands `version`, `addr`, `state`, `cfg`, `drv` |
+
+Prompt 07 repeated verification on `hardening/ads1115-industry-standard-p0`
+after final-report freshness patch:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | `112 test cases: 112 succeeded in 00:00:02.422`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:22.598` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:20.215` |
+| `idf.py --version` | `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
+| `python tools/hil_ads1115_capture.py --dry-run --suite identity` | Exit code 0; printed branch `hardening/ads1115-industry-standard-p0`, commit `80095e688e9432bd248e58c07b1511eb229a524e`, and commands `version`, `addr`, `state`, `cfg`, `drv` |
 
 ## Final Report
 
