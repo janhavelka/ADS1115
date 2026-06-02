@@ -206,9 +206,10 @@ Validation:
 - Pure ESP-IDF example container builds for ESP32-S3 and ESP32-S2.
 - PlatformIO package packing.
 
-The workflow triggers on pushes to `main` and pull requests targeting `main`.
-This branch currently has local command evidence and CI configuration evidence;
-a PR run URL should be recorded before claiming branch CI execution evidence.
+The workflow triggers on pushes to `main`, pushes to `hardening/**`, pull
+requests targeting `main`, and manual `workflow_dispatch` runs. This branch
+currently has local command evidence and CI configuration evidence; a CI run URL
+should be recorded before claiming branch CI execution evidence.
 
 Guard limitation: CLI and ESP-IDF contract guards are token/smoke checks, not
 full behavioral integration tests.

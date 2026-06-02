@@ -695,8 +695,9 @@ CI/build evidence after Prompt 07:
 - `.github/workflows/ci.yml` configures native tests, core guard, CLI guard, IDF
   example guard, version metadata check, package validation, and pure ESP-IDF
   example container builds for `esp32s3` and `esp32s2`.
-- The workflow runs on `main` push and pull requests targeting `main`; this
-  branch has local command evidence until a PR/CI run exists.
+- The workflow now runs on `main` pushes, `hardening/**` branch pushes, pull
+  requests targeting `main`, and manual `workflow_dispatch` runs. This branch
+  has local command evidence until a CI run URL is recorded.
 
 Remaining gaps after Prompt 07:
 
@@ -704,6 +705,33 @@ Remaining gaps after Prompt 07:
   validation claims.
 - Package archive contents are validated by `pio pkg pack` success, but there is
   not yet a separate package-contents allow/deny guard.
+
+Prompt 07 recovery re-verification on `hardening/ads1115-industry-standard-p0`
+after crash recovery and later Prompt 06 gap-fill:
+
+- CI workflow trigger coverage was expanded from `main`-only push/PR triggers
+  to include `hardening/**` branch pushes and manual `workflow_dispatch` runs.
+- README CI evidence text now states the same trigger scope.
+- Arduino and ESP-IDF example audits found no blocking gaps. The remaining
+  caveats are honest: Arduino glue uses global `Wire.setTimeOut()`, ESP-IDF
+  error mapping remains coarse unless instrumented, and current CI evidence is
+  local/configuration evidence until a run URL is recorded.
+- HIL plan/template/helper were re-verified. Results remain pending; no
+  hardware pass/fail result was fabricated.
+
+Prompt 07 recovery validation:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | `112 test cases: 112 succeeded in 00:00:01.668`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:15.016` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:14.001` |
+| `idf.py --version` | `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
+| `python tools/hil_ads1115_capture.py --dry-run --suite identity` | Exit code 0; printed branch `hardening/ads1115-industry-standard-p0`, commit `10016a276f42c5d6c8fb168dcce4fa68e67150f9`, and commands `version`, `addr`, `state`, `cfg`, `drv` |
 
 ## Final Report
 

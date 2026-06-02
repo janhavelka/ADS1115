@@ -383,7 +383,9 @@ intended checks.
 
 ## Validation
 
-CI-backed checks configured in `.github/workflows/ci.yml`:
+CI-backed checks configured in `.github/workflows/ci.yml` run on `main`,
+hardening branch pushes, pull requests targeting `main`, and manual
+`workflow_dispatch` runs:
 
 ```bash
 python tools/check_core_timing_guard.py
