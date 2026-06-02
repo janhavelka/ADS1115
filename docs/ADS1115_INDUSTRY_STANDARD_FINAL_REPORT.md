@@ -1,39 +1,32 @@
 # ADS1115 Industry-Standard Hardening Final Report
 
-Date: 2026-06-01
+Date: 2026-06-02
 Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
-Original final-report head: `c4558b293a66975112a0db85c10a2cd8dde814b4`
-Current recovery head before the repeated Prompt 07 report refresh:
-`80095e688e9432bd248e58c07b1511eb229a524e`
-Final commit: latest report-refresh commit containing this file; the immutable
-hash is recorded in the final assistant response.
+Pre-report head: `774fe87382b630dab810e8f2f34a5638845b8231`
+Final commit: pending this final report commit; immutable hash is recorded in
+the final assistant response.
 
 ## Executive Summary
 
 This hardening pass made the ADS1115 driver more production-oriented without
 redesigning the library. The core remains framework-neutral, I2C remains
-injected and non-owning, public failure paths now expose precise statuses, and
-the original final-report snapshot had 106 passing native tests.
-
-Later crash-recovery hardening re-ran Prompt 06/07 checks and expanded native
-coverage to 112 passing tests. The historical Prompt 08 command table below is
-kept as the original final-report evidence; current Prompt 07 recovery evidence
-is recorded in `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md`.
+injected and non-owning, public failure paths expose precise statuses, and
+native fault coverage now passes with 112 tests.
 
 Local validation passed for all available checks, native tests, Arduino
-ESP32-S2/S3 PlatformIO builds, and PlatformIO package packing. Local pure
-ESP-IDF builds were not run because `idf.py` is unavailable in this shell.
+ESP32-S2/S3 PlatformIO builds, and PlatformIO package packing. The generated
+package artifact was removed after validation. Local pure ESP-IDF builds were
+not run because `idf.py` is unavailable in this shell.
 
-The branch is not merge-ready directly against current `origin/main`: read-only
-`git merge-tree --write-tree HEAD origin/main` exited 1 and reported conflicts.
-Merge is recommended only after rebasing or merging current `origin/main`,
-resolving conflicts, and rerunning the validation set.
+The branch is internally validated but not ready to merge directly into current
+`origin/main`: read-only `git merge-tree --write-tree HEAD origin/main` exited 1
+and reported conflicts. Merge is recommended only after resolving those
+conflicts and rerunning the validation set on the resolved branch.
 
 The repository is not ready for production or field-grade release claims because
-dated hardware/HIL logs and captures are still pending. It is ready for the user
-to begin hardware validation using the prepared plan, results template, and
-capture helper.
+dated hardware/HIL logs and captures are still pending. It is ready for hardware
+validation using the prepared plan, results template, and capture helper.
 
 ## What Changed By Chunk
 
@@ -66,8 +59,9 @@ Prompt 07 clarified Arduino diagnostic CLI and ESP-IDF example evidence,
 documented ESP-IDF error mapping limits, expanded CI configuration, and added
 HIL validation plan/template plus `tools/hil_ads1115_capture.py`.
 
-Prompt 08 produced this final readiness report and closed the implementation
-report. Only documentation/comment consistency fixes were added.
+Prompt 08 refreshed this final readiness report, corrected one internal
+datasheet wording issue in `AGENTS.md`, and recorded the current validation and
+merge-readiness gate.
 
 ## Public API / Status Changes
 
@@ -99,7 +93,8 @@ Added or exposed public APIs and diagnostics:
 
 ## Compatibility Notes
 
-The status enum additions are append-only. Existing numeric values are preserved.
+The status enum additions are append-only. Existing numeric values are
+preserved.
 
 The bool-only readiness and void tick APIs remain available for source
 compatibility, but production callers should prefer status-returning APIs.
@@ -168,38 +163,43 @@ Native tests now cover:
   diagnostics, and bounded blocking read polling.
 - Shutdown/end and offline behavior.
 
-Prompt 08 original final-state native result: 106 test cases, 106 succeeded.
-Current recovery native result: 112 test cases, 112 succeeded.
+Current Prompt 08 native result: 112 test cases, 112 succeeded.
 
 ## Commands Run And Exact Results
 
-Startup/diff review:
+Startup and diff review:
 
 | Command | Result |
 | --- | --- |
-| `git status --short` | Clean before Prompt 08 edits |
-| `git log --oneline --decorate -10` | Historical Prompt 08 snapshot: head was `c4558b2 (HEAD -> hardening/ads1115-industry-standard-p0, origin/hardening/ads1115-industry-standard-p0) docs: add ADS1115 integration and HIL validation plan`; previous hardening commits `73f87fe`, `3f4583b`, `8056c96`, `effddc5`, `7ce66d1`, `38e55ea`; base branch commit `65f6fdc`. Current recovery evidence is recorded in the implementation report. |
-| `git diff --stat` | No output before Prompt 08 edits |
-| `git diff --name-only origin/main...HEAD` | Succeeded; 33 files changed relative to merge-base |
-| `git merge-base origin/main HEAD` | `73569c4826607aa9b09a58f592f9cd9391bf8c1e` |
-| `git merge-tree --write-tree HEAD origin/main` | Exit code 1. Reported conflicts in `.github/workflows/ci.yml`, `AGENTS.md`, `CHANGELOG.md`, `CMakeLists.txt`, `README.md`, `docs/IDF_PORT.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/esp_idf/basic/CMakeLists.txt`, `examples/esp_idf/basic/main/CMakeLists.txt`, `examples/esp_idf/basic/main/main.cpp`, `idf_component.yml`, `include/ADS1115/Config.h`, `tools/check_core_timing_guard.py`, and `tools/check_idf_example_contract.py` |
+| `git fetch origin main` | Exit 0; `From https://github.com/janhavelka/ADS1115`; `* branch main -> FETCH_HEAD` |
+| `git status --short` | Exit 0; no output, clean before Prompt 08 edits |
+| `git log --oneline --decorate -10` | Exit 0; head `774fe87 (HEAD -> hardening/ads1115-industry-standard-p0, origin/hardening/ads1115-industry-standard-p0) docs: add ADS1115 integration and HIL validation plan`; prior commits `80095e6`, `10016a2`, `6bef90e`, `e99ab38`, `d5442a0`, `f0b4d6e`, `22f8e66`, `3e8d60f`, `7d6032e` |
+| `git diff --stat` | Exit 0; no output before Prompt 08 edits |
+| `git diff --name-only origin/main...HEAD` | Exit 0; listed 33 files changed relative to merge-base |
+| `git merge-base origin/main HEAD` | Exit 0; `73569c4826607aa9b09a58f592f9cd9391bf8c1e` |
+| `git fetch origin hardening/ads1115-industry-readiness` | Exit 0; fetched `hardening/ads1115-industry-readiness -> FETCH_HEAD` |
+| `git merge-base origin/hardening/ads1115-industry-readiness HEAD` | Exit 0; `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7` |
+| `git diff --stat origin/hardening/ads1115-industry-readiness...HEAD` | Exit 0; 26 files changed, 4127 insertions, 169 deletions |
+| `git diff --name-only origin/hardening/ads1115-industry-readiness...HEAD` | Exit 0; listed 26 files changed |
+| `git diff --check` | Exit 0; no whitespace errors |
+| `git merge-tree --write-tree HEAD origin/main` | Exit 1; reported conflicts in `.github/workflows/ci.yml`, `AGENTS.md`, `CHANGELOG.md`, `CMakeLists.txt`, `README.md`, `docs/IDF_PORT.md`, `examples/01_basic_bringup_cli/main.cpp`, `examples/esp_idf/basic/CMakeLists.txt`, `examples/esp_idf/basic/main/CMakeLists.txt`, `examples/esp_idf/basic/main/main.cpp`, `idf_component.yml`, `include/ADS1115/Config.h`, `tools/check_core_timing_guard.py`, and `tools/check_idf_example_contract.py` |
 
 Validation:
 
 | Command | Result |
 | --- | --- |
-| `python --version` | `Python 3.13.12` |
-| `python -m platformio --version` | `PlatformIO Core, version 6.1.19` |
-| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
-| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
-| `python tools/check_idf_example_contract.py` | `IDF example contract PASSED` |
-| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
-| `python -m platformio test -e native` | Historical Prompt 08 run: `native` passed; `106 test cases: 106 succeeded in 00:00:02.166`. Current recovery run: `112 test cases: 112 succeeded`; see implementation report for exact current timing. |
-| `python -m platformio run -e esp32s3dev` | `esp32s3dev` success in `00:00:14.457`; RAM `22320` of `327680` bytes, Flash `398994` of `1310720` bytes |
-| `python -m platformio run -e esp32s2dev` | `esp32s2dev` success in `00:00:14.952`; RAM `36752` of `327680` bytes, Flash `390933` of `1310720` bytes |
-| `python -m platformio pkg pack` | Exit code 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz` |
-| Package artifact cleanup | `Removed ADS1115-1.0.0.tar.gz` |
-| `idf.py` availability/build command | `idf.py unavailable`; local pure ESP-IDF builds were not run |
+| `python --version` | Exit 0; `Python 3.13.12` |
+| `python -m platformio --version` | Exit 0; `PlatformIO Core, version 6.1.19` |
+| `python tools/check_core_timing_guard.py` | Exit 0; `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | Exit 0; `CLI contract PASSED` |
+| `python tools/check_idf_example_contract.py` | Exit 0; `IDF example contract PASSED` |
+| `python scripts/generate_version.py check` | Exit 0; `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | Exit 0; `native` passed in `00:00:02.152`; `112 test cases: 112 succeeded in 00:00:02.152` |
+| `python -m platformio run -e esp32s3dev` | Exit 0; `esp32s3dev` success in `00:00:18.440`; RAM `22320` of `327680` bytes; Flash `399010` of `1310720` bytes |
+| `python -m platformio run -e esp32s2dev` | Exit 0; `esp32s2dev` success in `00:00:15.420`; RAM `36752` of `327680` bytes; Flash `390941` of `1310720` bytes |
+| `python -m platformio pkg pack` | Exit 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz` |
+| `Remove-Item -LiteralPath .\ADS1115-1.0.0.tar.gz` | Exit 0; `removed ADS1115-1.0.0.tar.gz` |
+| `idf.py --version` | Exit 1; `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
 
 ## CI Coverage
 
@@ -278,7 +278,7 @@ Nice-to-have:
 
 - Broaden package validation to inspect `library.json` export behavior.
 - Add automated parsing for selected HIL transcripts while keeping raw logs.
-- Add a README pointer that the Prompt 08 final report supersedes older
+- Add a README pointer that this Prompt 08 final report supersedes older
   historical hardening reports.
 
 ## Release Wording Recommendation
@@ -346,6 +346,7 @@ changed:
 - `README.md`
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`
+- `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md`
 - `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md`
 - `docs/ADS1115_SELFTEST_POLISH_REPORT.md`
 - `docs/CODEX_PROMPT_ADS1115_DRIVER.md`
@@ -375,8 +376,5 @@ changed:
 
 Prompt 08 additionally changed:
 
+- `AGENTS.md`
 - `docs/ADS1115_INDUSTRY_STANDARD_FINAL_REPORT.md`
-- `docs/ADS1115_INDUSTRY_STANDARD_IMPLEMENTATION_REPORT.md`
-- `README.md`
-- `CHANGELOG.md`
-- `src/ADS1115.cpp`

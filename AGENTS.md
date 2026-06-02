@@ -133,8 +133,8 @@ struct Status {
 - I2C address configurable: 0x48 (ADDR->GND), 0x49 (ADDR->VDD), 0x4A (ADDR->SDA), 0x4B (ADDR->SCL).
 - Check device presence in `begin()` by reading config register.
 - Support input multiplexer configurations:
-  - 4 single-ended inputs (AIN0-AIN3 vs GND)
-  - 3 differential pairs (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
+  - 4 single-ended input selections (AIN0-AIN3 vs GND)
+  - 4 differential MUX selections (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
 - Configurable PGA (gain): +/-6.144V, +/-4.096V, +/-2.048V, +/-1.024V, +/-0.512V, +/-0.256V
 - Configurable data rate: 8, 16, 32, 64, 128, 250, 475, 860 SPS
 - Support operating modes:
