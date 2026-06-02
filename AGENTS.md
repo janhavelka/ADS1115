@@ -108,6 +108,8 @@ Rules:
 - Example adapters that are diagnostic-only must say so. Production examples
   must demonstrate shared-bus ownership, external serialization/locking, timeout
   policy, and nonblocking tick scheduling.
+- ESP-IDF adapters/examples own IDF bus handles and map `esp_err_t` to
+  `Status`; the core must never expose or store IDF handles.
 
 ---
 

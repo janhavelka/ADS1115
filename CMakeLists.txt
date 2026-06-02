@@ -1,6 +1,27 @@
+cmake_minimum_required(VERSION 3.16)
+
+file(READ "${CMAKE_CURRENT_LIST_DIR}/library.json" ADS1115_LIBRARY_JSON)
+string(REGEX MATCH "\"version\"[ \t\r\n]*:[ \t\r\n]*\"([0-9]+)\\.([0-9]+)\\.([0-9]+)\"" ADS1115_VERSION_MATCH "${ADS1115_LIBRARY_JSON}")
+if(NOT ADS1115_VERSION_MATCH)
+  message(FATAL_ERROR "Unable to parse ADS1115 version from library.json")
+endif()
+
+set(ADS1115_VERSION "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+set(ADS1115_VERSION_MAJOR "${CMAKE_MATCH_1}")
+set(ADS1115_VERSION_MINOR "${CMAKE_MATCH_2}")
+set(ADS1115_VERSION_PATCH "${CMAKE_MATCH_3}")
+math(EXPR ADS1115_VERSION_CODE "${ADS1115_VERSION_MAJOR} * 10000 + ${ADS1115_VERSION_MINOR} * 100 + ${ADS1115_VERSION_PATCH}")
+
+set(ADS1115_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+configure_file(
+  "${CMAKE_CURRENT_LIST_DIR}/cmake/ADS1115Version.h.in"
+  "${ADS1115_GENERATED_INCLUDE_DIR}/ADS1115/Version.h"
+  @ONLY
+)
+
 idf_component_register(
   SRCS "src/ADS1115.cpp"
-  INCLUDE_DIRS "include"
+  INCLUDE_DIRS "${ADS1115_GENERATED_INCLUDE_DIR}" "include"
 )
 
 target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)

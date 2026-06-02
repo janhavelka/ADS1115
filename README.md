@@ -9,6 +9,8 @@ that implement their bus ownership, locking, and timeout policy.
 
 - Injected I2C transport (no Wire dependency in library code)
 - Framework-neutral core: no Arduino or ESP-IDF headers in `include/` or `src/`
+- ESP-IDF component metadata and a native `i2c_master` example with the same
+  user-visible CLI coverage as the Arduino example
 - Health monitoring with READY / DEGRADED / OFFLINE states
 - Single-shot and continuous conversion modes
 - Configurable mux, gain, data rate, and comparator settings
@@ -31,6 +33,13 @@ lib_deps =
 ### Manual
 
 Copy `include/ADS1115/` and `src/` into your project.
+
+### ESP-IDF
+
+Use this repository as an ESP-IDF component, or use the native project under
+`examples/esp_idf/basic`. The IDF example owns the I2C master bus/device handle,
+GPIO setup, console glue, and timing callbacks, then passes only callbacks into
+`ADS1115::Config`.
 
 ## Quick Start
 
@@ -288,7 +297,7 @@ limits, and the ALERT/RDY pulse-capture strategy.
 ## Examples
 
 - `examples/01_basic_bringup_cli/` - diagnostic Arduino bring-up CLI for ADS1115 features
-- `examples/esp_idf/basic/` - native ESP-IDF build example with external bus context, mutex locking, timeout propagation, coarse ESP-IDF error mapping, and periodic `tick()` scheduling
+- `examples/esp_idf/basic/` - native ESP-IDF `i2c_master` CLI using `app_main`, fixed command buffers, `esp_timer`, FreeRTOS delays, IDF GPIO/I2C APIs, external bus context, timeout propagation, and coarse ESP-IDF error mapping
 - CLI address selection: `addr` prints the active ADS1115 address; `addr 0x48`,
   `addr 0x49`, `addr 0x4A`, or `addr 0x4B` reinitializes the diagnostic driver
   for that selected address. It does not automatically validate every detected
@@ -311,7 +320,7 @@ Not part of the library. These simulate project-level glue and keep examples sel
 
 | File | Purpose |
 |------|---------|
-| `BoardConfig.h` | Pin definitions and Wire init for supported boards |
+| `BoardConfig.h` | Pin definitions and Arduino example I2C/GPIO init |
 | `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
 | `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
 | `I2cTransport.h` | Diagnostic Wire-based I2C transport adapter (`wireWrite`, `wireWriteRead`, `initWire`) |
@@ -411,6 +420,7 @@ pending until dated logs or captures are produced with
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - HIL operator plan and evidence requirements
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - blank results template for dated hardware runs
+- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md` - limited COM19 HIL evidence for address handling, restore sequencing, selftests, and short stress
 - `include/ADS1115/CommandTable.h` - public register map, masks, and defaults
 - `docs/ADS111x_datasheet_revE.pdf` - TI datasheet copy used for driver verification
 - `docs/TI_registry_reference/README.md` - TI reference-driver extraction notes

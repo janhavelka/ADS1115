@@ -14,8 +14,9 @@ Last audited: 2026-06-01
   timing-based readiness checks need either `Config.nowMs`, externally supplied
   service time, or ALERT/RDY GPIO. Blocking reads return `INVALID_CONFIG` before
   starting conversion when no clock hook is configured.
-- A minimal pure ESP-IDF example exists at `examples/esp_idf/basic`. It is a
-  build/integration example with external bus context, mutex locking, timeout
+- A pure ESP-IDF example exists at `examples/esp_idf/basic`. The merged example
+  uses a native stdio CLI with command coverage matching the Arduino diagnostic
+  CLI, split IDF transport files, external bus context, mutex locking, timeout
   propagation, coarse ESP-IDF error mapping, and periodic `tick()` scheduling.
   Hardware behavior still requires board validation.
 

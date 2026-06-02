@@ -3,11 +3,12 @@
 /// @note This is an EXAMPLE, not part of the library. It is not a production
 /// shared-bus manager template.
 
-#include <Arduino.h>
 #include <cstdlib>
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_system.h>
 #endif
+
+#include <Arduino.h>
 
 #include "examples/common/BoardConfig.h"
 #include "examples/common/BusDiag.h"
@@ -504,7 +505,7 @@ ADS1115::Config makeDriverConfig(uint8_t address) {
   ADS1115::Config cfg;
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
-  cfg.i2cUser = &Wire;
+  cfg.i2cUser = transport::configUser();
   cfg.nowMs = transport::arduinoNowMs;
   cfg.cooperativeYield = transport::arduinoYield;
   cfg.i2cAddress = address;
@@ -526,7 +527,7 @@ ADS1115::Status probeAddressRaw(uint8_t address) {
                                                 rx,
                                                 sizeof(rx),
                                                 board::I2C_TIMEOUT_MS,
-                                                &Wire);
+                                                transport::configUser());
   if (st.code == ADS1115::Err::I2C_NACK_ADDR) {
     return ADS1115::Status::Error(ADS1115::Err::DEVICE_NOT_FOUND,
                                   "ADS1115 address not acknowledged",

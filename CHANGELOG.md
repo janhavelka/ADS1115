@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ESP-IDF component metadata, generated-version CMake support, and a native
+  ESP-IDF `i2c_master` example with full bring-up CLI command parity.
+- `tools/check_idf_example_contract.py` to guard ESP-IDF example structure,
+  native-driver dependencies, and CLI parity.
 - `SettingsSnapshot` struct for reading cached configuration and runtime state without I2C.
 - `getSettings(SettingsSnapshot&)` method to populate a settings snapshot.
 - `Status::is(Err)` method for type-safe error code comparison.
@@ -28,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Version metadata checks now verify `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h` agree.
 
 ### Changed
+- Driver core timing/yield ownership moved fully behind application callbacks;
+  Arduino examples now provide explicit timing hooks instead of relying on core fallbacks.
 - Doxyfile project metadata now matches `library.json`, and archived prompt
   metadata no longer contains placeholder ownership values.
 - Core guard script now rejects framework leakage and dynamic allocation patterns
@@ -42,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `Err::OFFLINE` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
 - Hardware validation wording now uses pending evidence rows instead of implying
   fresh HIL coverage.
+- The ESP-IDF example now exposes the same user-visible commands, help,
+  diagnostics, status output, register access, comparator controls, stress
+  paths, and self-test flow as the Arduino CLI without including Arduino CLI
+  sources or compatibility facades.
+- `examples/common/` is now Arduino example glue only; the IDF example owns its
+  native stdio CLI, GPIO, timing, scan, and transport code.
 
 ### Fixed
 - Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
@@ -53,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Promoted to v1.0.0 as a feature-complete, production-oriented API-stable candidate pending dated hardware validation evidence.
+- Hardware/build validation status must be tracked through explicit run logs,
+  not inferred from this changelog entry.
 
 ## [0.4.0] - 2026-04-05
 
