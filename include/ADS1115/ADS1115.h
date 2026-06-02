@@ -218,6 +218,9 @@ public:
   /// In continuous mode this is the latest register contents and does not wait
   /// for a fresh sample interval. In single-shot mode this bypasses readiness
   /// checks and should be used only when the caller has established readiness.
+  /// Read the conversion register immediately as a signed two's-complement sample.
+  /// This API does not check OS-bit readiness and does not wait for a fresh
+  /// continuous-mode data-rate interval.
   /// @param[out] out Signed conversion code.
   /// @return Status::Ok() on a successful register read.
   Status readLatestRaw(int16_t& out);

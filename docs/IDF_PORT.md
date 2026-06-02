@@ -1,9 +1,11 @@
 # ADS1115 ESP-IDF Portability Status
 
-Last audited: 2026-06-01
+Last audited: 2026-06-02
 
 ## Current Reality
 - Primary checked runtime remains PlatformIO + Arduino plus native host tests.
+  The repository also contains CI configuration and a native ESP-IDF example
+  path; a local ESP-IDF hardware run is still separate validation evidence.
 - Core I2C access is callback-based (`Config.i2cWrite`, `Config.i2cWriteRead`).
 - Timing hooks are supplied by the application (`Config.nowMs`,
   `Config.cooperativeYield`, `Config.timeUser`).

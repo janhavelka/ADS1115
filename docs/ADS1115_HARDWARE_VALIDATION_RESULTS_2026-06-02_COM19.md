@@ -23,6 +23,11 @@ The raw transcript was captured under ignored `hil_logs/` and copied into the
 tracked `docs/evidence/hil/2026-06-02_COM19/` directory so this limited run can
 count as repository evidence.
 
+Version note: this HIL run was captured before the final `1.1.0` release
+metadata bump. It is valid limited evidence for the exercised address-selection,
+restore, selftest, and short-stress behavior, but it is not a full `1.1.0`
+release hardware validation run.
+
 ## Hardware Setup
 
 | Field | Value |

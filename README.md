@@ -5,6 +5,10 @@ with a framework-neutral core suitable for ESP-IDF adapters. The core library
 does not own the I2C bus; production projects must provide transport callbacks
 that implement their bus ownership, locking, and timeout policy.
 
+Release status: production-oriented/API-stable driver with strong native fault
+coverage, Arduino ESP32-S2/S3 build coverage, and limited COM19 HIL evidence.
+Field-grade claims require the remaining hardware validation listed below.
+
 ## Features
 
 - Injected I2C transport (no Wire dependency in library code)
@@ -376,14 +380,14 @@ Before field release, validate at least:
 
 | Area | Cases | Current evidence |
 |------|-------|------------------|
-| I2C address | ADDR straps: GND `0x48`, VDD `0x49`, SDA `0x4A`, SCL `0x4B` | Pending dated HIL log/capture |
-| Modes | Single-shot, continuous, mode switching during operation | Pending dated HIL log/capture |
-| Mux/gain/rate | All muxes, all PGA ranges, all data rates | Pending dated HIL log/capture |
-| ALERT/RDY | Pull-up sizing/rise time, active-low/high, comparator mode, conversion-ready pulse capture | Pending dated HIL log/capture |
-| Comparator | Traditional/window, latching/non-latching, queue depths, raw threshold recalculation | Pending dated HIL log/capture |
-| Faults | Address NACK, data NACK, timeout, stuck bus, unplug/replug, brownout | Pending dated HIL log/capture |
-| Recovery | OFFLINE latch, manual `recover()`, dirty-state clearing | Pending dated HIL log/capture |
-| Platforms | Arduino ESP32-S2/S3, pure ESP-IDF adapter/build where used | Pending dated CI/HIL log/capture |
+| I2C address | ADDR straps: GND `0x48`, VDD `0x49`, SDA `0x4A`, SCL `0x4B` | Limited COM19 evidence: `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test. Full physical strap validation for all four addresses remains pending. |
+| Modes | Single-shot, continuous, mode switching during operation | Native tests and CLI selftest cover command behavior. Full measured hardware mode validation remains pending. |
+| Mux/gain/rate | All muxes, all PGA ranges, all data rates | Native boundary/scaling tests pass. Full sweep with measured input sources remains pending. |
+| ALERT/RDY | Pull-up sizing/rise time, active-low/high, comparator mode, conversion-ready pulse capture | Pending oscilloscope or logic-analyzer capture. |
+| Comparator | Traditional/window, latching/non-latching, queue depths, raw threshold recalculation | Native setter/cache tests pass. External electrical validation remains pending. |
+| Faults | Address NACK, data NACK, timeout, stuck bus, unplug/replug, brownout | Native fault-injection tests cover status/health paths. Hardware stuck-bus, unplug/replug, brownout, and partial-write injection remain pending. |
+| Recovery | OFFLINE latch, manual `recover()`, dirty-state clearing | Native tests cover recovery contracts; COM19 restore-after-absent-address sequence passed. Hardware recovery fault matrix remains pending. |
+| Platforms | Arduino ESP32-S2/S3, pure ESP-IDF adapter/build where used | Arduino S2/S3 builds pass; limited Arduino COM19 HIL captured. Pure ESP-IDF hardware run remains pending. |
 
 The diagnostic CLI `addr` command can select one ADS1115 address at a time for
 manual validation. A bus scan showing multiple ADS1115-range addresses is not a
@@ -410,20 +414,25 @@ idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
 Local optional checks depend on installed tools. If `idf.py` is unavailable,
-record that exactly rather than reporting a pass. Hardware/HIL validation remains
-pending until dated logs or captures are produced with
-`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` and the results template.
+record that exactly rather than reporting a pass. The limited COM19 HIL run is
+documented in `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`;
+remaining hardware validation must follow
+`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`.
 
 ## Documentation
 
+- `docs/README.md` - documentation map and current-vs-archive guidance
+- `docs/RELEASE_1_1_0.md` - release notes and wording guidance for `v1.1.0`
 - `CHANGELOG.md` - full release history
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - HIL operator plan and evidence requirements
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - blank results template for dated hardware runs
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md` - limited COM19 HIL evidence for address handling, restore sequencing, selftests, and short stress
+- `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log` - raw transcript for the limited COM19 HIL run
+- `docs/archive/` - historical audit, prompt, and hardening reports
 - `include/ADS1115/CommandTable.h` - public register map, masks, and defaults
-- `docs/ADS111x_datasheet_revE.pdf` - TI datasheet copy used for driver verification
-- `docs/TI_registry_reference/README.md` - TI reference-driver extraction notes
+- `docs/reference/ADS111x_datasheet_revE.pdf` - TI datasheet copy used for driver verification
+- `docs/reference/TI_registry_reference/README.md` - TI reference-driver extraction notes
 
 ## License
 

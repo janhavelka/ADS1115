@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No entries.
+
+## [1.1.0] - 2026-06-02
+
 ### Added
 - ESP-IDF component metadata, generated-version CMake support, and a native
   ESP-IDF `i2c_master` example with full bring-up CLI command parity.
@@ -30,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while `recover()` remains the explicit recovery path.
 - Native coverage for invalid config boundaries, tracked I2C status taxonomy, strict read-back recover branches, signed threshold/scaling boundaries, setter rollback variants, and dirty-state preservation.
 - Version metadata checks now verify `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h` agree.
+- Limited COM19 HIL evidence for address handling, restore sequencing,
+  initialized-address selftests, and short stress runs. The raw transcript is
+  tracked under `docs/evidence/hil/2026-06-02_COM19/`.
 
 ### Changed
 - Driver core timing/yield ownership moved fully behind application callbacks;
@@ -39,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core guard script now rejects framework leakage and dynamic allocation patterns
   in `include/` and `src/`, including Arduino/Wire symbols, ESP-IDF/FreeRTOS
   symbols, logging calls, `std::string`, `std::vector`, and heap allocation.
-- Reference documentation now uses a human-readable vendor PDF name and separates compact chip notes from full PDF extraction under `docs/extracted-md/` and `docs/pdf-extracted-md/`.
+- Reference documentation now uses a human-readable vendor PDF name and separates compact chip notes from full PDF extraction under `docs/reference/extracted-md/` and `docs/reference/pdf-extracted-md/`.
 - Explicit recovery bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
 - Continuous-mode readiness now tracks the configured data-rate interval instead of reporting ready immediately.
 - CLI `poll`, `selftest`, and mixed stress paths now handle `Err::IN_PROGRESS` correctly and preserve readiness I2C errors.
@@ -54,12 +61,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sources or compatibility facades.
 - `examples/common/` is now Arduino example glue only; the IDF example owns its
   native stdio CLI, GPIO, timing, scan, and transport code.
+- Release-facing documentation now has an explicit `docs/README.md` index.
+  Historical audit and hardening reports were moved under `docs/archive/`.
+- README validation wording now distinguishes limited COM19 HIL evidence from
+  hardware validation that remains pending.
 
 ### Fixed
 - Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
 - Raw register helpers now reject pointers outside the ADS1115 `0x00..0x03` map, and reject conversion-register writes to read-only `0x00`, before touching the bus.
 - Example diagnostic error strings now include granular `I2C_*` status codes.
 - `readBlocking()` now has a finite escape path if an injected clock hook stops advancing.
+- Arduino CLI address selection now preserves the previously initialized driver
+  and transport callbacks when probing an absent requested address.
+- HIL capture waits for the CLI prompt before sending the next command, avoiding
+  overlapped long-running stress commands.
 
 ## [1.0.0] - 2026-04-05
 
@@ -152,7 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...v0.3.0
