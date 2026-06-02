@@ -179,7 +179,6 @@ NON_FUNCTIONAL_PREFIXES = (
     "drv",
     "probe",
     "recover",
-    "selftest",
     "state",
     "version",
 )
@@ -295,10 +294,15 @@ def classify_address_response(command: str, response: str) -> str | None:
         return None
     plain = ansi_stripped(response)
     if "Status: OK" in plain:
-        return f"# Address check {target}: present/initialized OK\n"
+        return f"# Address check {target}: present/pass (initialized OK)\n"
     status_match = re.search(r"Status:\s+([A-Z0-9_]+)", plain)
     if status_match:
-        return f"# Address check {target}: absent/unavailable negative check ({status_match.group(1)})\n"
+        if target.lower() in ("0x4a", "0x4b"):
+            return (
+                f"# Address check {target}: absent/pass-as-negative-test "
+                f"({status_match.group(1)})\n"
+            )
+        return f"# Address check {target}: unavailable/review-expected-wiring ({status_match.group(1)})\n"
     return f"# Address check {target}: no status parsed; review manually\n"
 
 
@@ -362,6 +366,15 @@ def capture_serial(port: str, baud: int, commands: List[str], out_path: pathlib.
             return current_ready
 
         for command in commands:
+            if command.strip() == "selftest" and not current_ready:
+                write_log(
+                    "# Selftest precondition failed for the requested address; "
+                    "restoring 0x48 instead.\n"
+                )
+                if not restore_ready():
+                    raise SystemExit(2)
+                continue
+
             if command_is_functional(command) and not current_ready:
                 if restore_attempted_for_command:
                     write_log("# Functional precondition still failed after restore; aborting.\n")

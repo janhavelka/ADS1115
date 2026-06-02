@@ -194,12 +194,13 @@ Validation:
 | `python tools/check_cli_contract.py` | Exit 0; `CLI contract PASSED` |
 | `python tools/check_idf_example_contract.py` | Exit 0; `IDF example contract PASSED` |
 | `python scripts/generate_version.py check` | Exit 0; `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
-| `python -m platformio test -e native` | Exit 0; `native` passed in `00:00:02.152`; `112 test cases: 112 succeeded in 00:00:02.152` |
-| `python -m platformio run -e esp32s3dev` | Exit 0; `esp32s3dev` success in `00:00:18.440`; RAM `22320` of `327680` bytes; Flash `399010` of `1310720` bytes |
-| `python -m platformio run -e esp32s2dev` | Exit 0; `esp32s2dev` success in `00:00:15.420`; RAM `36752` of `327680` bytes; Flash `390941` of `1310720` bytes |
+| `python -m platformio test -e native` | Exit 0; `native` passed in `00:00:01.641`; `112 test cases: 112 succeeded in 00:00:01.641` |
+| `python -m platformio run -e esp32s3dev` | Exit 0; `esp32s3dev` success in `00:00:15.008`; RAM `22320` of `327680` bytes; Flash `399950` of `1310720` bytes |
+| `python -m platformio run -e esp32s2dev` | Exit 0; `esp32s2dev` success in `00:00:12.793`; RAM `36768` of `327680` bytes; Flash `391905` of `1310720` bytes |
 | `python -m platformio pkg pack` | Exit 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz` |
 | `Remove-Item -LiteralPath .\ADS1115-1.0.0.tar.gz` | Exit 0; `removed ADS1115-1.0.0.tar.gz` |
 | `idf.py --version` | Exit 1; `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
+| Corrected COM19 HIL sequence through `tools/hil_ads1115_capture.py` | Exit 1 before serial commands; pySerial could not configure `COM19`: `PermissionError(13, 'A device attached to the system is not functioning.', None, 31)` |
 
 ## CI Coverage
 
@@ -243,10 +244,14 @@ mux/gain/rate/stress/comparator validation from the invalid full-suite log.
 
 The HIL helper and CLI were later fixed to restore a known-good address after
 absent-address checks and to require READY state before functional command
-groups. Updated `esp32s2dev` firmware was uploaded to `COM19`, but the corrected
-HIL capture could not be completed because pySerial could not configure the
-port after upload. A physical reset/replug or USB driver recovery is required
-before collecting the corrected transcript.
+groups, including `selftest`. Address transcript annotations now separate
+`present/pass` from `absent/pass-as-negative-test`. Updated `esp32s2dev`
+firmware was uploaded to `COM19`, but the corrected HIL capture could not be
+completed because pySerial could not configure the port after upload. A physical
+reset/replug or USB driver recovery is required before collecting the corrected
+transcript. A retry after tightening helper selftest gating failed before any
+serial command was sent with the same `COM19` pySerial permission/configuration
+error.
 
 No oscilloscope captures, logic-analyzer traces, long soak logs, comparator
 validation records, ALERT/RDY captures, or fault-injection transcripts are

@@ -783,11 +783,22 @@ Focused fix scope:
   health side effects or missing-callback errors.
 - The HIL helper restores `0x48` after negative address checks and enforces a
   READY `cfg` precondition before functional command groups.
+- `selftest` is treated as a READY-gated command; if it follows an unavailable
+  requested address, the helper restores `0x48` instead of running selftest
+  against an uninitialized/requested address.
+- Address transcript notes explicitly classify initialized addresses as
+  `present/pass` and absent `0x4A`/`0x4B` checks as
+  `absent/pass-as-negative-test`.
 - Guard checks now require these CLI/HIL sequencing tokens.
 
 Validation after the fix:
 
-- Local guards, native tests, and Arduino S2/S3 builds passed.
+- Local guards, native tests, and Arduino S2/S3 builds passed:
+  `check_core_timing_guard.py`, `check_cli_contract.py`,
+  `check_idf_example_contract.py`, and `generate_version.py check` exited 0;
+  native tests reported `112 test cases: 112 succeeded in 00:00:01.641`;
+  `esp32s3dev` built successfully in `00:00:15.008`; `esp32s2dev` built
+  successfully in `00:00:12.793`.
 - Uploading updated `esp32s3dev` firmware to `COM19` failed because esptool
   could not configure the port.
 - Uploading updated `esp32s2dev` firmware to `COM19` succeeded and identified
@@ -796,6 +807,9 @@ Validation after the fix:
   `PermissionError(13, 'A device attached to the system is not functioning.')`.
   The corrected HIL sequence could not be captured until the board/USB port is
   physically reset, replugged, or otherwise recovered.
+- A follow-up retry after tightening selftest gating and explicit address
+  classification failed before any serial command was sent with the same
+  `COM19` pySerial `PermissionError`.
 
 Remaining HIL gaps are unchanged: ALERT/RDY scope captures, comparator hardware
 behavior, long soak/stress, fault injection, and full operator metadata still

@@ -91,6 +91,7 @@ def main() -> int:
         "response_is_ready",
         "command_is_functional",
         "classify_address_response",
+        "Selftest precondition failed for the requested address",
         "Restore failed; aborting HIL capture before functional commands.",
         "Address check",
     ):
