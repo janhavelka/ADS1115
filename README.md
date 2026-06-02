@@ -200,9 +200,11 @@ caller needs that immediate `Status`.
 `begin()` can succeed without `Config::nowMs`. In that no-clock mode,
 `SettingsSnapshot::timebaseAvailable` is false, health timestamps remain `0`,
 and direct timing-based readiness checks do not advance by elapsed time. Use
-`tick(nowMs)` / `service(nowMs)` from an external scheduler timebase, or use the
-ALERT/RDY GPIO readiness path. Blocking reads return `INVALID_CONFIG` before
-starting a conversion when `nowMs` is missing.
+`tick(nowMs)` / `service(nowMs)` from an external scheduler timebase. The
+ALERT/RDY GPIO readiness path remains supported in no-clock mode once that
+external service timebase has anchored and advanced the pending conversion.
+Blocking reads return `INVALID_CONFIG` before starting a conversion when `nowMs`
+is missing.
 
 ### Configuration
 

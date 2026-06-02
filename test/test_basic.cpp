@@ -1261,6 +1261,36 @@ void test_no_clock_direct_readiness_waits_for_service_timebase() {
   TEST_ASSERT_TRUE(dev.conversionReady());
 }
 
+void test_no_clock_alert_ready_pin_uses_external_service_timebase() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.nowMs = nullptr;
+  cfg.mode = Mode::SINGLE_SHOT;
+  cfg.alertRdyPin = 17;
+  cfg.gpioRead = fakeGpioRead;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  TEST_ASSERT_TRUE(dev.enableConversionReadyPin().ok());
+  TEST_ASSERT_TRUE(dev.startConversion().inProgress());
+  resetIoCounters(bus);
+
+  bus.gpioLevel = false;  // Default comparator polarity is active-low.
+  bus.nowMs += dev.getConversionTimeMs();
+  bool ready = true;
+  Status st = dev.readConversionReady(ready);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ready);
+
+  st = dev.service(bus.nowMs);
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(dev.conversionReady());
+
+  st = dev.service(bus.nowMs + dev.getConversionTimeMs());
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_TRUE(dev.conversionReady());
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+}
+
 void test_no_clock_health_timestamps_are_marked_unavailable() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -1366,6 +1396,27 @@ void test_continuous_read_raw_returns_latest_without_fresh_wait() {
 
   TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_EQUAL_INT16(0x1234, raw);
+}
+
+void test_read_blocking_continuous_returns_latest_immediately_without_fresh_wait() {
+  FakeBus bus;
+  bus.reg[cmd::REG_CONVERSION] = 0x4A2B;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.mode = Mode::CONTINUOUS;
+  cfg.dataRate = DataRate::SPS_8;
+  cfg.cooperativeYield = fakeYieldAdvanceMs;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+
+  int16_t raw = 0;
+  Status st = dev.readBlocking(raw, 200);
+
+  TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_EQUAL_INT16(0x4A2B, raw);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.readCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.yieldCalls);
 }
 
 void test_single_shot_elapsed_os_busy_remains_not_ready() {
@@ -2521,12 +2572,14 @@ int main() {
   RUN_TEST(test_service_returns_ready_poll_failure_and_updates_health);
   RUN_TEST(test_tick_discards_status_but_updates_health_on_ready_poll_failure);
   RUN_TEST(test_no_clock_direct_readiness_waits_for_service_timebase);
+  RUN_TEST(test_no_clock_alert_ready_pin_uses_external_service_timebase);
   RUN_TEST(test_no_clock_health_timestamps_are_marked_unavailable);
   RUN_TEST(test_read_raw_propagates_ready_poll_failure);
   RUN_TEST(test_read_raw_reconstructs_signed_conversion_register);
   RUN_TEST(test_continuous_readiness_waits_for_data_rate_interval);
   RUN_TEST(test_tick_marks_continuous_ready_without_config_poll_after_interval);
   RUN_TEST(test_continuous_read_raw_returns_latest_without_fresh_wait);
+  RUN_TEST(test_read_blocking_continuous_returns_latest_immediately_without_fresh_wait);
   RUN_TEST(test_single_shot_elapsed_os_busy_remains_not_ready);
   RUN_TEST(test_alert_ready_pin_path_does_not_poll_config_register);
   RUN_TEST(test_config_setters_write_expected_config_bits);

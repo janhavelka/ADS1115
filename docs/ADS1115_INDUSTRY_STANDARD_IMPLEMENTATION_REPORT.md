@@ -387,8 +387,9 @@ Timing and no-clock contract:
   return `Err::INVALID_CONFIG` before starting a conversion when it is missing.
 - Without `Config::nowMs`, direct timing-based readiness does not advance by
   elapsed time. Applications can drive pending conversions with
-  `tick(nowMs)`/`service(nowMs)` from an external scheduler timebase, or use the
-  ALERT/RDY GPIO path.
+  `tick(nowMs)`/`service(nowMs)` from an external scheduler timebase. The
+  ALERT/RDY GPIO readiness path remains supported in no-clock mode once that
+  external service timebase has anchored and advanced the pending conversion.
 - `tick()`/`service()` may perform one tracked CONFIG read when a single-shot
   conversion is pending and its data-rate interval has elapsed. `tick()` ignores
   the immediate `Status`; failures remain visible through health state,
@@ -409,8 +410,10 @@ Prompt 05 tests added:
 | `test_service_returns_ready_poll_failure_and_updates_health` | `service(nowMs)` returns immediate poll failure and updates health diagnostics. |
 | `test_tick_discards_status_but_updates_health_on_ready_poll_failure` | `tick(nowMs)` keeps source-compatible void behavior while tracked I2C failure updates health. |
 | `test_no_clock_direct_readiness_waits_for_service_timebase` | No-clock direct readiness stays conservative until service anchors and advances external time. |
+| `test_no_clock_alert_ready_pin_uses_external_service_timebase` | No-clock ALERT/RDY readiness stays conservative until the external service timebase passes the conversion interval, then reads GPIO without CONFIG polling. |
 | `test_no_clock_health_timestamps_are_marked_unavailable` | Snapshot exposes missing timebase so timestamp `0` is not presented as a real time. |
 | `test_tick_marks_continuous_ready_without_config_poll_after_interval` | Continuous-mode service readiness advances without CONFIG polling. |
+| `test_read_blocking_continuous_returns_latest_immediately_without_fresh_wait` | Continuous-mode `readBlocking()` reads the latest conversion register immediately without starting or waiting for a fresh conversion interval. |
 | `test_single_shot_elapsed_os_busy_remains_not_ready` | Elapsed single-shot readiness still respects OS busy read-back. |
 | `test_read_blocking_success_uses_cooperative_yield_cadence` | Blocking read succeeds with cooperative-yield-driven time advance. |
 | `test_read_blocking_tolerates_repeated_same_tick_before_clock_advances` | Repeated same millisecond observations before clock advance do not false-timeout. |
@@ -425,6 +428,10 @@ Compatibility notes:
 - Adding the overloaded `conversionReady(bool&)` can make uncast member-function
   pointer expressions for `conversionReady` ambiguous; normal calls to
   `conversionReady()` remain source-compatible.
+- Adding `SettingsSnapshot::timebaseAvailable` changes that public snapshot
+  struct layout and positional aggregate initialization shape. Normal
+  `getSettings()` field access remains source-compatible, but ABI-sensitive
+  consumers or aggregate initializers should be recompiled/updated.
 
 ## Validation Log
 
@@ -484,7 +491,8 @@ Prompt 02 validation on `hardening/ads1115-industry-standard-p0`:
 | `python tools/check_core_timing_guard.py` | `Core timing guard PASSED` |
 | `python -m platformio test -e native` | `ERRORED`; `67 test cases: 13 failed, 53 succeeded in 00:00:02.286` |
 
-Expected Prompt 02 native failures:
+Historical Prompt 02 expected native failures retained as test-first evidence;
+these are not current failures:
 
 - `test_begin_strict_readback_mismatch_fails_without_initializing_and_preserves_dirty`: expected `READBACK_MISMATCH`, got `I2C_ERROR`.
 - `test_begin_failure_after_first_apply_write_preserves_dirty_diagnostic`: expected dirty diagnostic, got clean state.
@@ -572,6 +580,18 @@ Note: an earlier `esp32s2dev` run during Prompt 05 stopped while compiling
 framework Arduino `esp32-hal-tinyusb.c.o` with `Error 1` and no compiler
 diagnostic in the captured output. Re-running the exact required command
 succeeded as recorded above.
+
+Prompt 05 recovery re-verification on `hardening/ads1115-industry-standard-p0`
+after crash recovery and gap-fill tests:
+
+| Command | Result |
+| --- | --- |
+| `python tools/check_core_timing_guard.py` | `Core timing/framework guard PASSED` |
+| `python tools/check_cli_contract.py` | `CLI contract PASSED` |
+| `python scripts/generate_version.py check` | `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
+| `python -m platformio test -e native` | `110 test cases: 110 succeeded in 00:00:01.685`; environment `native`, status `PASSED` |
+| `python -m platformio run -e esp32s3dev` | `SUCCESS`; environment `esp32s3dev`, duration `00:00:13.599` |
+| `python -m platformio run -e esp32s2dev` | `SUCCESS`; environment `esp32s2dev`, duration `00:00:13.253` |
 
 Prompt 06 implementation on `hardening/ads1115-industry-standard-p0`:
 

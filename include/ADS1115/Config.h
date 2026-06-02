@@ -126,7 +126,9 @@ struct Config {
   // === Timing Hooks (optional; required by blocking conversion APIs) ===
   /// Monotonic source. Required by readBlocking* and by direct timing-based
   /// readiness checks that should advance without tick(nowMs)/service(nowMs).
-  /// Without this hook, health timestamps are unavailable and report as 0.
+  /// Without this hook, health timestamps are unavailable and report as 0;
+  /// ALERT/RDY readiness still needs an external tick/service timebase to pass
+  /// the conversion interval before the GPIO path is evaluated.
   NowMsFn nowMs = nullptr;
   YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
   void* timeUser = nullptr;                ///< User context for timing hooks
