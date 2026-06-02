@@ -789,6 +789,8 @@ Focused fix scope:
 - Address transcript notes explicitly classify initialized addresses as
   `present/pass` and absent `0x4A`/`0x4B` checks as
   `absent/pass-as-negative-test`.
+- The HIL helper now waits for the CLI prompt before sending the next command
+  and applies longer command-specific timeouts for stress/selftest suites.
 - Guard checks now require these CLI/HIL sequencing tokens.
 
 Validation after the fix:
@@ -796,21 +798,41 @@ Validation after the fix:
 - Local guards, native tests, and Arduino S2/S3 builds passed:
   `check_core_timing_guard.py`, `check_cli_contract.py`,
   `check_idf_example_contract.py`, and `generate_version.py check` exited 0;
-  native tests reported `112 test cases: 112 succeeded in 00:00:01.641`;
-  `esp32s3dev` built successfully in `00:00:15.008`; `esp32s2dev` built
-  successfully in `00:00:12.793`.
+  native tests reported `112 test cases: 112 succeeded in 00:00:01.608`;
+  `esp32s3dev` built successfully in `00:00:11.756`; `esp32s2dev` built
+  successfully in `00:00:12.550`.
 - Uploading updated `esp32s3dev` firmware to `COM19` failed because esptool
   could not configure the port.
 - Uploading updated `esp32s2dev` firmware to `COM19` succeeded and identified
   the board as `ESP32-S2FH4`.
 - Releasing/opening `COM19` after upload failed with pySerial
   `PermissionError(13, 'A device attached to the system is not functioning.')`.
-  The corrected HIL sequence could not be captured until the board/USB port is
-  physically reset, replugged, or otherwise recovered.
+  The corrected HIL sequence could not be captured at that point.
 - A follow-up retry after tightening selftest gating and explicit address
   classification failed before any serial command was sent with the same
   `COM19` pySerial `PermissionError`.
+- After reuploading firmware and fixing the helper prompt wait, the corrected
+  HIL sequence completed successfully and saved
+  `hil_logs/ads1115_hil_20260602_205201.log`.
+- The successful HIL run recorded host helper commit
+  `e32822341e251a821febe4710a6879f1aff08312` and firmware/library commit
+  `9551bee` clean.
+- `0x48` and `0x49` were classified `present/pass`; `0x4A` and `0x4B` were
+  classified `absent/pass-as-negative-test (I2C_ERROR)`.
+- Failed `addr 0x4A` preserved initialized driver address `0x49`; failed
+  `addr 0x4B` preserved initialized driver address `0x48`; both showed the
+  requested address and last address-selection error.
+- Restores to `0x48` using `addr 0x48`, `probe`, `cfg`, and `selftest`
+  succeeded before later functional commands.
+- Selftests on initialized addresses reported `pass=29 fail=0 skip=0`.
+- `stress 500`, `stress_mix 200`, final `stress 1000`, and final
+  `stress_mix 200` all completed with zero errors; final `drv` reported
+  `READY`, total failures `0`, and last error `never`.
+- Dated results were added in
+  `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`.
 
-Remaining HIL gaps are unchanged: ALERT/RDY scope captures, comparator hardware
-behavior, long soak/stress, fault injection, and full operator metadata still
-need dated evidence before release claims.
+Remaining HIL gaps are narrowed but still material: ALERT/RDY scope captures,
+external comparator hardware behavior, full mux/gain/rate sweeps, long
+soak/stress, stuck-bus/unplug/brownout/fault injection, pure ESP-IDF hardware
+execution, and full operator/electrical metadata still need dated evidence
+before field-grade release claims.

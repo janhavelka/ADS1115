@@ -194,13 +194,14 @@ Validation:
 | `python tools/check_cli_contract.py` | Exit 0; `CLI contract PASSED` |
 | `python tools/check_idf_example_contract.py` | Exit 0; `IDF example contract PASSED` |
 | `python scripts/generate_version.py check` | Exit 0; `Up to date: C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\include\ADS1115\Version.h`; `Version metadata aligned: library.json=1.0.0, idf_component.yml=1.0.0, Doxyfile PROJECT_NUMBER=1.0.0, Version.h=1.0.0` |
-| `python -m platformio test -e native` | Exit 0; `native` passed in `00:00:01.641`; `112 test cases: 112 succeeded in 00:00:01.641` |
-| `python -m platformio run -e esp32s3dev` | Exit 0; `esp32s3dev` success in `00:00:15.008`; RAM `22320` of `327680` bytes; Flash `399950` of `1310720` bytes |
-| `python -m platformio run -e esp32s2dev` | Exit 0; `esp32s2dev` success in `00:00:12.793`; RAM `36768` of `327680` bytes; Flash `391905` of `1310720` bytes |
+| `python -m platformio test -e native` | Exit 0; `native` passed in `00:00:01.608`; `112 test cases: 112 succeeded in 00:00:01.608` |
+| `python -m platformio run -e esp32s3dev` | Exit 0; `esp32s3dev` success in `00:00:11.756`; RAM `22320` of `327680` bytes; Flash `399950` of `1310720` bytes |
+| `python -m platformio run -e esp32s2dev` | Exit 0; `esp32s2dev` success in `00:00:12.550`; RAM `36768` of `327680` bytes; Flash `391905` of `1310720` bytes |
 | `python -m platformio pkg pack` | Exit 0; wrote `C:\Users\HonzovoSpectre\Documents\Projects\ADS1115\ADS1115-1.0.0.tar.gz` |
 | `Remove-Item -LiteralPath .\ADS1115-1.0.0.tar.gz` | Exit 0; `removed ADS1115-1.0.0.tar.gz` |
 | `idf.py --version` | Exit 1; `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
-| Corrected COM19 HIL sequence through `tools/hil_ads1115_capture.py` | Exit 1 before serial commands; pySerial could not configure `COM19`: `PermissionError(13, 'A device attached to the system is not functioning.', None, 31)` |
+| Earlier corrected COM19 HIL attempt through `tools/hil_ads1115_capture.py` | Exit 1 before serial commands; pySerial could not configure `COM19`: `PermissionError(13, 'A device attached to the system is not functioning.', None, 31)` |
+| Corrected COM19 HIL sequence after prompt-wait helper fix | Exit 0; saved `hil_logs/ads1115_hil_20260602_205201.log`; `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test; final `stress 1000` reported `1000` success, `0` errors; final `stress_mix 200` reported `ok=200 fail=0`; final driver state `READY`, total failures `0`, last error `never` |
 
 ## CI Coverage
 
@@ -245,22 +246,35 @@ mux/gain/rate/stress/comparator validation from the invalid full-suite log.
 The HIL helper and CLI were later fixed to restore a known-good address after
 absent-address checks and to require READY state before functional command
 groups, including `selftest`. Address transcript annotations now separate
-`present/pass` from `absent/pass-as-negative-test`. Updated `esp32s2dev`
-firmware was uploaded to `COM19`, but the corrected HIL capture could not be
-completed because pySerial could not configure the port after upload. A physical
-reset/replug or USB driver recovery is required before collecting the corrected
-transcript. A retry after tightening helper selftest gating failed before any
-serial command was sent with the same `COM19` pySerial permission/configuration
-error.
+`present/pass` from `absent/pass-as-negative-test`. A follow-up helper fix made
+serial command reads wait for the CLI prompt before sending the next command, so
+long stress commands cannot overlap.
 
-No oscilloscope captures, logic-analyzer traces, long soak logs, comparator
-validation records, ALERT/RDY captures, or fault-injection transcripts are
-present.
+A corrected automated transcript was captured on 2026-06-02:
+
+- Raw local transcript: `hil_logs/ads1115_hil_20260602_205201.log`
+- Results report:
+  `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
+- `0x48` and `0x49` were initialized and classified as `present/pass`.
+- `0x4A` and `0x4B` were classified as `absent/pass-as-negative-test`.
+- Failed address selection preserved the initialized driver and did not destroy
+  callbacks.
+- Restores to `0x48` with `probe`, `cfg`, and `selftest` succeeded before later
+  functional commands.
+- Selftest reported `pass=29 fail=0 skip=0` on initialized addresses.
+- `stress 500`, `stress_mix 200`, final `stress 1000`, and final
+  `stress_mix 200` all completed with zero errors.
+- Final driver health was `READY`, total failures `0`, and last error `never`.
+
+No oscilloscope captures, logic-analyzer traces, long soak logs, external
+comparator validation records, ALERT/RDY captures, or fault-injection
+transcripts are present.
 
 Prepared artifacts:
 
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`
+- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
 - `tools/hil_ads1115_capture.py`
 
 The hardware validation plan covers branch/commit/version identity, ADS1115
@@ -282,8 +296,7 @@ Must fix before merge:
 
 Must validate before release:
 
-- Execute the HIL validation plan and attach dated logs/captures.
-- Rerun automated HIL with the corrected restore-before-functional sequence.
+- Complete the HIL validation plan and attach/archive dated raw logs/captures.
 - Capture ALERT/RDY timing evidence at 8, 128, and 860 SPS.
 - Validate comparator traditional/window, latch, polarity, and queue behavior.
 - Validate stuck bus, unplug/replug, brownout/reset, recover, and partial write
@@ -310,12 +323,13 @@ Nice-to-have:
 ## Release Wording Recommendation
 
 Acceptable wording if the final rebased branch passes checks but HIL remains
-incomplete:
+limited to the current COM19 transcript:
 
 > Production-oriented ADS1115 driver with framework-neutral core, injected I2C
 > transport, explicit timing/error contracts, strong native fault tests, Arduino
-> ESP32-S2/S3 build coverage, and prepared ESP-IDF/HIL validation paths.
-> Hardware/fault validation remains required before field-grade claims.
+> ESP32-S2/S3 build coverage, and limited automated COM19 HIL evidence for
+> address handling, restore sequencing, selftests, and short stress runs.
+> Full hardware/fault validation remains required before field-grade claims.
 
 Do not claim:
 
@@ -342,8 +356,8 @@ Ready with conditions after:
 Ready as pre-release/API-stable candidate only after merge conflicts are resolved
 and checks pass.
 
-Not ready for production or field-grade release claims until hardware validation
-evidence is complete.
+Not ready for production or field-grade release claims until the remaining
+hardware validation evidence is complete.
 
 Recommended version strategy: at least `1.1.0` for backward-compatible public
 API/status additions. Consider `2.0.0` only if exact status-behavior changes are
