@@ -16,10 +16,12 @@ COM19 setup. It is not full release hardware validation.
 | Library version reported by CLI | `1.0.0` |
 | Firmware build timestamp | 2026-06-02 20:47:43 |
 | Serial port | `COM19` |
-| Raw transcript | `hil_logs/ads1115_hil_20260602_205201.log` |
+| Raw transcript, tracked copy | `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log` |
+| Raw transcript, original local capture | `hil_logs/ads1115_hil_20260602_205201.log` |
 
-The raw transcript is stored under ignored `hil_logs/` in the working tree.
-Archive it with release evidence if this run is used for a release gate.
+The raw transcript was captured under ignored `hil_logs/` and copied into the
+tracked `docs/evidence/hil/2026-06-02_COM19/` directory so this limited run can
+count as repository evidence.
 
 ## Hardware Setup
 
@@ -105,6 +107,22 @@ drv
 - Pure ESP-IDF hardware run.
 - Complete operator metadata, wiring photos, pull-up values, VDD, and
   instrument records.
+
+## Transport Precision Limitation
+
+The Arduino diagnostic transport maps definite `Wire.endTransmission()` address
+NACKs to `I2C_NACK_ADDR`, which the core `probe()` path can report as
+`DEVICE_NOT_FOUND`. In this COM19 run, absent `0x4A` and `0x4B` reached the
+read phase and `Wire.requestFrom()` returned zero bytes. Arduino/ESP32 `Wire`
+does not expose whether that zero-byte read was an address NACK, timeout, bus
+fault, or another read-phase failure, so the adapter preserved the generic
+`I2C_ERROR` status with the message `I2C read length mismatch`.
+
+The HIL helper classified `0x4A` and `0x4B` as
+`absent/pass-as-negative-test` because those addresses were expected absent in
+this physical setup and subsequent restore checks passed. Do not treat this as
+proof that the Arduino adapter can precisely distinguish all absent-device,
+timeout, and bus-fault cases.
 
 ## Conclusion
 

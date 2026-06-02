@@ -201,7 +201,7 @@ Validation:
 | `Remove-Item -LiteralPath .\ADS1115-1.0.0.tar.gz` | Exit 0; `removed ADS1115-1.0.0.tar.gz` |
 | `idf.py --version` | Exit 1; `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
 | Earlier corrected COM19 HIL attempt through `tools/hil_ads1115_capture.py` | Exit 1 before serial commands; pySerial could not configure `COM19`: `PermissionError(13, 'A device attached to the system is not functioning.', None, 31)` |
-| Corrected COM19 HIL sequence after prompt-wait helper fix | Exit 0; saved `hil_logs/ads1115_hil_20260602_205201.log`; `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test; final `stress 1000` reported `1000` success, `0` errors; final `stress_mix 200` reported `ok=200 fail=0`; final driver state `READY`, total failures `0`, last error `never` |
+| Corrected COM19 HIL sequence after prompt-wait helper fix | Exit 0; saved tracked copy `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`; `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test; `selftest` reported `pass=29 fail=0`; `stress 500` and `stress 1000` reported zero errors; `stress_mix 200` reported `ok=200 fail=0`; final driver state `READY`, online `yes`, total failures `0`, last error `never` |
 
 ## CI Coverage
 
@@ -253,6 +253,8 @@ long stress commands cannot overlap.
 A corrected automated transcript was captured on 2026-06-02:
 
 - Raw local transcript: `hil_logs/ads1115_hil_20260602_205201.log`
+- Tracked transcript copy:
+  `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`
 - Results report:
   `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
 - `0x48` and `0x49` were initialized and classified as `present/pass`.
@@ -265,6 +267,14 @@ A corrected automated transcript was captured on 2026-06-02:
 - `stress 500`, `stress_mix 200`, final `stress 1000`, and final
   `stress_mix 200` all completed with zero errors.
 - Final driver health was `READY`, total failures `0`, and last error `never`.
+
+Transport precision limitation: absent `0x4A` and `0x4B` returned
+`I2C_ERROR` because the Arduino/ESP32 `Wire.requestFrom()` path exposed only a
+zero-byte read, not whether the read phase failed due to address NACK, timeout,
+or another bus condition. The HIL helper classified those addresses as
+`absent/pass-as-negative-test` based on the known physical setup and successful
+restore checks; this is not a general claim of precise Arduino read-phase NACK
+taxonomy.
 
 No oscilloscope captures, logic-analyzer traces, long soak logs, external
 comparator validation records, ALERT/RDY captures, or fault-injection

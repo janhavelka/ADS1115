@@ -814,6 +814,8 @@ Validation after the fix:
 - After reuploading firmware and fixing the helper prompt wait, the corrected
   HIL sequence completed successfully and saved
   `hil_logs/ads1115_hil_20260602_205201.log`.
+- The raw transcript was copied into tracked release evidence at
+  `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`.
 - The successful HIL run recorded host helper commit
   `e32822341e251a821febe4710a6879f1aff08312` and firmware/library commit
   `9551bee` clean.
@@ -830,6 +832,11 @@ Validation after the fix:
   `READY`, total failures `0`, and last error `never`.
 - Dated results were added in
   `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`.
+- Absent `0x4A` and `0x4B` returned `I2C_ERROR` in this Arduino run because the
+  read phase produced a zero-byte `Wire.requestFrom()` result without exposing
+  whether the cause was address NACK, timeout, or another bus condition. This is
+  documented as a diagnostic Arduino transport precision limitation rather than
+  globally remapped to `DEVICE_NOT_FOUND`.
 
 Remaining HIL gaps are narrowed but still material: ALERT/RDY scope captures,
 external comparator hardware behavior, full mux/gain/rate sweeps, long
