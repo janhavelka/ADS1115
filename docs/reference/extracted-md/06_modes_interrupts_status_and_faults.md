@@ -31,7 +31,10 @@ ADS1114 and ADS1115 include a programmable digital comparator. ADS1113 does not.
 | `COMP_QUE` | Number of successive threshold events before assertion, or disabled. |
 | `Lo_thresh`, `Hi_thresh` | Signed threshold values in conversion-code format. |
 
-The ALERT/RDY pin can also be configured for conversion-ready signaling by setting Hi_thresh MSB to 1 and Lo_thresh MSB to 0.
+The ALERT/RDY pin can also be configured for conversion-ready signaling by
+setting Hi_thresh MSB to 1 and Lo_thresh MSB to 0. In continuous conversion the
+ready pulse can be approximately 8 us, so polling tasks can miss it unless the
+hardware path uses an interrupt-capable input, latching, or OS-bit polling.
 
 Source: ADS111x datasheet Rev. E, pp. 16-17, 26-27.
 

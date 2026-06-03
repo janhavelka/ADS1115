@@ -39,3 +39,4 @@ wifi_credentials.h
 
 # Auto-generated files
 include/ADS1115/Version.h
+docs/doxygen/

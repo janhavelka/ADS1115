@@ -1,6 +1,6 @@
 # ADS111x Ultra-Small, Low-Power, I2 C-Compatible, 860SPS, 16-Bit ADCs with Internal Reference, Oscillator, and Programmable Comparator datasheet (Rev. E)
 
-- Source PDF: `ADS111x_datasheet_revE.pdf`
+- Source PDF: `../ADS111x_datasheet_revE.pdf`
 - Extraction tool: pdfplumber
 - Page count: 56
 - SHA256: `f305c7e7d003f476d1503e1542370486b50c7a7ef2924c589e6852e4b8a2e9b0`

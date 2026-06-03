@@ -1,5 +1,5 @@
-version: "1.0.0"
-description: "Production-grade ADS1115 16-bit ADC driver"
+version: "1.1.0"
+description: "Framework-neutral ADS1115 I2C driver"
 url: "https://github.com/janhavelka/ADS1115"
 repository: "https://github.com/janhavelka/ADS1115.git"
 license: "MIT"

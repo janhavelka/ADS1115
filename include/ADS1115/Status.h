@@ -14,7 +14,7 @@ enum class Err : uint8_t {
   I2C_ERROR,                 ///< I2C communication failure
   TIMEOUT,                   ///< Operation timed out
   INVALID_PARAM,             ///< Invalid parameter value
-  DEVICE_NOT_FOUND,          ///< ADS1115 not responding on I2C bus
+  DEVICE_NOT_FOUND,          ///< Device did not acknowledge a probe/read when absence is definite
   CONVERSION_NOT_READY,      ///< Conversion not yet complete
   MEASUREMENT_NOT_READY = CONVERSION_NOT_READY, ///< Alias for cross-library uniformity
   BUSY,                      ///< Device is busy with conversion
@@ -22,13 +22,17 @@ enum class Err : uint8_t {
   I2C_NACK_ADDR,             ///< I2C address phase was not acknowledged
   I2C_NACK_DATA,             ///< I2C data phase was not acknowledged
   I2C_TIMEOUT,               ///< I2C transaction timed out
-  I2C_BUS                    ///< I2C bus or arbitration error
+  I2C_BUS,                   ///< I2C bus or arbitration error
+  OFFLINE,                   ///< Driver is offline; normal public I2C paths are blocked until recover() succeeds
+  UNSUPPORTED_OPERATION,     ///< Requested operation is not valid for the current driver/device mode
+  READBACK_MISMATCH,         ///< Strict register read-back did not match the expected writable fields
+  HARDWARE_CONFIG_DIRTY      ///< Hardware/cache synchronization is known dirty or stale
 };
 
 /// @brief Status structure returned by all fallible operations.
 struct Status {
   Err code = Err::OK;
-  int32_t detail = 0;        ///< Implementation-specific detail (e.g., I2C error code)
+  int32_t detail = 0;        ///< Implementation-specific detail such as raw transport code or observed register value
   const char* msg = "";      ///< Static string describing the error
 
   constexpr Status() = default;

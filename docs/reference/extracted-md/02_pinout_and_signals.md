@@ -32,6 +32,8 @@ The datasheet says `ADDR` is sampled continuously. If `ADDR` is tied to SDA, hol
 
 ## Input signal notes
 
-- ADS1115 supports four single-ended inputs or two differential measurements through the MUX.
+- ADS1115 supports four single-ended inputs and four differential MUX selections:
+  AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, and AIN2-AIN3. The latter three share AIN3
+  as the negative input.
 - Analog input voltage must remain within the absolute input limits; PGA full-scale range does not override `GND - 0.3 V` to `VDD + 0.3 V` absolute limits.
 - If `ALERT/RDY` is unused, leave it unconnected or tie it to VDD with a weak pullup as appropriate for the board.

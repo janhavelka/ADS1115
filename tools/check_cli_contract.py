@@ -22,7 +22,7 @@ REQUIRED_COMMON = [
     "HealthDiag.h",
 ]
 
-MANDATORY_COMMANDS = ["help", "scan", "probe", "recover", "drv", "read", "verbose", "stress"]
+MANDATORY_COMMANDS = ["help", "scan", "probe", "recover", "drv", "read", "addr", "verbose", "stress"]
 
 
 def fail(msg: str) -> None:
@@ -43,9 +43,11 @@ def ensure_missing(path: pathlib.Path, label: str) -> None:
 def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
+    hil_capture = ROOT / "tools" / "hil_ads1115_capture.py"
 
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
+    ensure_exists(hil_capture, "HIL capture helper")
 
     ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
     ensure_missing(
@@ -59,6 +61,8 @@ def main() -> int:
     ensure_missing(common_dir / "IdfArduinoCompat.h", "Arduino compatibility facade")
 
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
+    hil_text = hil_capture.read_text(encoding="utf-8", errors="replace")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
     for cmd in MANDATORY_COMMANDS:
         if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
@@ -66,6 +70,47 @@ def main() -> int:
 
     if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
         fail("either 'cfg' or 'settings' command must be present")
+
+    for token in (
+        "beginDriverAtAddress",
+        "activeI2cAddress",
+        'cmd.startsWith("addr ")',
+        'cmd.startsWith("wreg ")',
+        "writeRegister16",
+        "hardwareConfigDirty",
+        "marks cache dirty",
+        "requestedI2cAddress",
+        "lastAddressSelectionStatus",
+        "probeAddressRaw",
+        "Address note: requested",
+        "Address selection failed; initialized driver was left unchanged",
+    ):
+        if token not in text:
+            fail(f"bringup CLI must include token: {token!r}")
+
+    for token in (
+        "RESTORE_COMMANDS",
+        "response_is_ready",
+        "command_is_functional",
+        "response_has_prompt",
+        "command_timeout_s",
+        "Command timed out before CLI prompt",
+        "classify_address_response",
+        "Selftest precondition failed for the requested address",
+        "Restore failed; aborting HIL capture before functional commands.",
+        "Address check",
+    ):
+        if token not in hil_text:
+            fail(f"HIL capture helper must include token: {token!r}")
+
+    for token in (
+        "diagnostic Arduino bring-up CLI",
+        "Current examples are diagnostic",
+        "Production applications should implement",
+        "Raw writes bypass the typed config helpers",
+    ):
+        if token not in readme:
+            fail(f"README must document example honesty token: {token!r}")
 
     print("CLI contract PASSED")
     return 0
