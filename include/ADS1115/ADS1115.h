@@ -20,6 +20,28 @@ enum class DriverState : uint8_t {
   OFFLINE    ///< consecutiveFailures >= offlineThreshold
 };
 
+/// State of the optional poll-chunked job executor.
+enum class JobState : uint8_t {
+  IDLE,                         ///< No job has been scheduled.
+  SINGLE_SHOT_WRITE_CONFIG,     ///< Next instruction writes config with OS/start bit.
+  SINGLE_SHOT_WAIT_CONVERSION,  ///< Waiting for conversion time or ALERT/RDY.
+  SINGLE_SHOT_POLL_READY,       ///< Next instruction reads config OS/ready bit.
+  SINGLE_SHOT_READ_CONVERSION,  ///< Next instruction reads conversion register.
+  APPLY_WRITE_LOW_THRESHOLD,    ///< Next instruction writes low threshold.
+  APPLY_WRITE_HIGH_THRESHOLD,   ///< Next instruction writes high threshold.
+  APPLY_WRITE_CONFIG,           ///< Next instruction writes config register.
+  COMPLETE,                     ///< Last job completed successfully.
+  FAILED                        ///< Last job failed; lastJobStatus() has details.
+};
+
+/// Result returned by poll-chunked job calls.
+struct PollResult {
+  Status status = Status::Ok();       ///< Current or terminal job status.
+  uint8_t instructionsUsed = 0;       ///< Transport callbacks used by this poll call.
+  bool done = true;                   ///< True when the job is no longer active.
+  JobState state = JobState::IDLE;    ///< State after this poll call.
+};
+
 /// Snapshot of driver configuration and runtime state without I2C access.
 struct SettingsSnapshot {
   bool initialized = false;
@@ -48,6 +70,9 @@ struct SettingsSnapshot {
   bool conversionReady = false;
   uint32_t conversionStartMs = 0;
   int16_t lastRawValue = 0;
+  bool hardwareConfigDirty = false;
+  bool hardwareConfigUncertain = false;
+  Status lastConfigApplyError = Status::Ok();
 };
 
 /// ADS1115 driver class
@@ -90,6 +115,9 @@ public:
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
   uint32_t totalFailures() const { return _totalFailures; }
   uint32_t totalSuccess() const { return _totalSuccess; }
+  bool isHardwareConfigDirty() const { return _hardwareConfigDirty; }
+  bool isHardwareConfigUncertain() const { return _hardwareConfigUncertain; }
+  Status lastConfigApplyError() const { return _lastConfigApplyError; }
 
   // === Conversion API ===
   Status startConversion();
@@ -99,6 +127,25 @@ public:
   Status readVoltage(float& volts);
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
   Status readBlockingVoltage(float& volts, uint32_t timeoutMs = 200);
+
+  /// Start a poll-chunked single-shot conversion job without performing I2C.
+  Status startSingleShot();
+  /// Start a poll-chunked single-shot conversion job for a mux without I2C.
+  Status startSingleShot(Mux mux);
+  /// Advance a single-shot job by at most maxInstructions transport callbacks.
+  PollResult pollSingleShot(uint32_t nowMs, uint8_t maxInstructions = 1);
+
+  /// Start a staged config-apply job using the currently cached config.
+  Status startApplyConfigJob();
+  /// Advance a config-apply job by at most maxInstructions transport callbacks.
+  PollResult pollApplyConfig(uint32_t nowMs, uint8_t maxInstructions = 1);
+
+  /// Cancel the active poll-chunked job without touching hardware.
+  void cancelJob();
+  bool jobActive() const { return _jobActive; }
+  JobState jobState() const { return _jobState; }
+  Status lastJobStatus() const { return _lastJobStatus; }
+  int16_t lastRawValue() const { return _lastRawValue; }
 
   // === Configuration ===
   Status setMux(Mux mux);
@@ -168,6 +215,8 @@ private:
 
   // === Register Access ===
   Status _readRegister16Raw(uint8_t reg, uint16_t& value);
+  Status _readRegister16Tracked(uint8_t reg, uint16_t& value);
+  Status _writeRegister16Tracked(uint8_t reg, uint16_t value);
 
   // === Health Tracking ===
   Status _updateHealth(const Status& st);
@@ -175,13 +224,34 @@ private:
   // === Internal ===
   Status _applyConfig();
   uint16_t _buildConfigRegister() const;
+  uint16_t _buildConfigRegisterForMux(Mux mux) const;
   uint32_t _nowMs() const;
   void _cooperativeYield() const;
+  uint8_t _instructionBudget(uint8_t maxInstructions) const;
+  PollResult _pollResult(Status status, uint8_t instructionsUsed, bool done) const;
+  PollResult _finishJob(uint8_t instructionsUsed);
+  PollResult _failJob(const Status& status, uint8_t instructionsUsed);
+  bool _isOffline() const;
+  Status _offlineStatus() const;
+  void _markHardwareConfigUncertain(const Status& st);
+  void _markHardwareConfigClean();
 
   // === State ===
+  static constexpr uint8_t MAX_JOB_INSTRUCTIONS = 3;
+
   Config _config;
   bool _initialized = false;
   DriverState _driverState = DriverState::UNINIT;
+
+  // === Poll-Chunked Job State ===
+  bool _jobActive = false;
+  JobState _jobState = JobState::IDLE;
+  Status _lastJobStatus = Status::Ok();
+  uint16_t _jobConfigRegister = 0;
+  int16_t _jobThresholdLow = 0;
+  int16_t _jobThresholdHigh = 0;
+  bool _jobMuxOverride = false;
+  Mux _jobMux = Mux::AIN0_GND;
 
   // === Health Counters ===
   uint32_t _lastOkMs = 0;
@@ -190,6 +260,9 @@ private:
   uint8_t _consecutiveFailures = 0;
   uint32_t _totalFailures = 0;
   uint32_t _totalSuccess = 0;
+  bool _hardwareConfigDirty = false;
+  bool _hardwareConfigUncertain = false;
+  Status _lastConfigApplyError = Status::Ok();
 
   // === Conversion State ===
   bool _conversionStarted = false;

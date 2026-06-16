@@ -3,8 +3,8 @@
 
 #include "ADS1115/ADS1115.h"
 
-#include <Arduino.h>
 #include <climits>
+#include <cstdint>
 
 namespace ADS1115 {
 
@@ -88,6 +88,15 @@ bool isValidConfigValue(uint16_t config) {
          compMode <= 1 && compPol <= 1 && compLat <= 1 && compQue <= 3;
 }
 
+bool isConfigStateRegister(uint8_t reg) {
+  return reg == cmd::REG_CONFIG || reg == cmd::REG_LO_THRESH ||
+         reg == cmd::REG_HI_THRESH;
+}
+
+bool elapsedAtLeast(uint32_t startMs, uint32_t intervalMs, uint32_t nowMs) {
+  return (nowMs - startMs) >= intervalMs;
+}
+
 } // namespace
 
 // ============================================================================
@@ -102,6 +111,14 @@ Status ADS1115::begin(const Config& config) {
   _conversionReady = false;
   _conversionStartMs = 0;
   _lastRawValue = 0;
+  _jobActive = false;
+  _jobState = JobState::IDLE;
+  _lastJobStatus = Status::Ok();
+  _jobConfigRegister = 0;
+  _jobThresholdLow = 0;
+  _jobThresholdHigh = 0;
+  _jobMuxOverride = false;
+  _jobMux = Mux::AIN0_GND;
 
   _lastOkMs = 0;
   _lastErrorMs = 0;
@@ -109,9 +126,15 @@ Status ADS1115::begin(const Config& config) {
   _consecutiveFailures = 0;
   _totalFailures = 0;
   _totalSuccess = 0;
+  _hardwareConfigDirty = false;
+  _hardwareConfigUncertain = false;
+  _lastConfigApplyError = Status::Ok();
 
   if (_config.i2cWrite == nullptr || _config.i2cWriteRead == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "I2C callbacks required");
+  }
+  if (_config.nowMs == nullptr) {
+    return Status::Error(Err::INVALID_CONFIG, "nowMs callback required");
   }
   if (_config.i2cTimeoutMs == 0) {
     return Status::Error(Err::INVALID_CONFIG, "Timeout must be > 0");
@@ -152,12 +175,12 @@ Status ADS1115::begin(const Config& config) {
 }
 
 void ADS1115::tick(uint32_t nowMs) {
-  if (!_initialized) {
+  if (!_initialized || _isOffline()) {
     return;
   }
 
   if (_config.mode == Mode::SINGLE_SHOT && _conversionStarted && !_conversionReady) {
-    if ((nowMs - _conversionStartMs) >= getConversionTimeMs()) {
+    if (elapsedAtLeast(_conversionStartMs, getConversionTimeMs(), nowMs)) {
       if (useAlertRdyPin(_config)) {
         if (isAlertRdyAsserted(_config)) {
           _conversionStarted = false;
@@ -195,6 +218,14 @@ void ADS1115::end() {
   _conversionReady = false;
   _conversionStartMs = 0;
   _lastRawValue = 0;
+  _jobActive = false;
+  _jobState = JobState::IDLE;
+  _lastJobStatus = Status::Ok();
+  _jobConfigRegister = 0;
+  _jobThresholdLow = 0;
+  _jobThresholdHigh = 0;
+  _jobMuxOverride = false;
+  _jobMux = Mux::AIN0_GND;
 }
 
 // ============================================================================
@@ -219,7 +250,7 @@ Status ADS1115::recover() {
   }
 
   uint16_t configReg = 0;
-  Status st = readRegister16(cmd::REG_CONFIG, configReg);
+  Status st = _readRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
     return st;
   }
@@ -263,6 +294,9 @@ Status ADS1115::getSettings(SettingsSnapshot& out) const {
   out.conversionReady = _conversionReady;
   out.conversionStartMs = _conversionStartMs;
   out.lastRawValue = _lastRawValue;
+  out.hardwareConfigDirty = _hardwareConfigDirty;
+  out.hardwareConfigUncertain = _hardwareConfigUncertain;
+  out.lastConfigApplyError = _lastConfigApplyError;
   return Status::Ok();
 }
 
@@ -286,6 +320,9 @@ Status ADS1115::startConversion() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::BUSY, "Continuous mode active");
   }
@@ -294,8 +331,9 @@ Status ADS1115::startConversion() {
   }
 
   uint16_t configReg = _buildConfigRegister() | cmd::OS_START;
-  Status st = writeRegister16(cmd::REG_CONFIG, configReg);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
     return st;
   }
 
@@ -308,6 +346,9 @@ Status ADS1115::startConversion() {
 Status ADS1115::startConversion(Mux mux) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
@@ -323,9 +364,10 @@ Status ADS1115::startConversion(Mux mux) {
   _config.mux = mux;
 
   uint16_t configReg = _buildConfigRegister() | cmd::OS_START;
-  Status st = writeRegister16(cmd::REG_CONFIG, configReg);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
     _config.mux = prevMux;
+    _markHardwareConfigUncertain(st);
     return st;
   }
 
@@ -337,6 +379,9 @@ Status ADS1115::startConversion(Mux mux) {
 
 bool ADS1115::conversionReady() {
   if (!_initialized) {
+    return false;
+  }
+  if (_isOffline()) {
     return false;
   }
   if (_config.mode == Mode::CONTINUOUS) {
@@ -351,7 +396,7 @@ bool ADS1115::conversionReady() {
 
   if (useAlertRdyPin(_config)) {
     uint32_t nowMs = _nowMs();
-    if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
+    if (!elapsedAtLeast(_conversionStartMs, getConversionTimeMs(), nowMs)) {
       return false;
     }
     if (isAlertRdyAsserted(_config)) {
@@ -363,7 +408,7 @@ bool ADS1115::conversionReady() {
   }
 
   uint32_t nowMs = _nowMs();
-  if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
+  if (!elapsedAtLeast(_conversionStartMs, getConversionTimeMs(), nowMs)) {
     return false;
   }
   uint16_t configReg = 0;
@@ -385,12 +430,15 @@ Status ADS1115::readRaw(int16_t& out) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
 
   if (_config.mode == Mode::SINGLE_SHOT) {
     if (!_conversionReady) {
       if (_conversionStarted) {
         uint32_t nowMs = _nowMs();
-        if ((nowMs - _conversionStartMs) < getConversionTimeMs()) {
+        if (!elapsedAtLeast(_conversionStartMs, getConversionTimeMs(), nowMs)) {
           return Status::Error(Err::CONVERSION_NOT_READY, "Conversion not ready");
         }
       }
@@ -454,22 +502,23 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     return st;
   }
 
-  const uint32_t nowMs = _nowMs();
+  const uint32_t startMs = _nowMs();
   const uint32_t convTimeMs = getConversionTimeMs();
-  const uint32_t deadlineMs = nowMs + timeoutMs;
 
   // Calculate expected ready time, accounting for existing conversion
-  uint32_t readyAtMs;
+  uint32_t readyDelayMs;
   if (st.code == Err::BUSY) {
-    const uint32_t elapsed = nowMs - _conversionStartMs;
-    readyAtMs = (elapsed >= convTimeMs) ? nowMs : (nowMs + convTimeMs - elapsed);
+    const uint32_t elapsed = startMs - _conversionStartMs;
+    readyDelayMs = (elapsed >= convTimeMs) ? 0U : (convTimeMs - elapsed);
   } else {
-    readyAtMs = nowMs + convTimeMs;
+    readyDelayMs = convTimeMs;
   }
 
-  while (static_cast<int32_t>(_nowMs() - deadlineMs) < 0) {
-    if (static_cast<int32_t>(_nowMs() - readyAtMs) < 0) {
-      _cooperativeYield();  // Feed watchdog, let other FreeRTOS tasks run
+  uint32_t loopNowMs = _nowMs();
+  while (!elapsedAtLeast(startMs, timeoutMs, loopNowMs)) {
+    if (!elapsedAtLeast(startMs, readyDelayMs, loopNowMs)) {
+      _cooperativeYield();  // Let a cooperative scheduler run.
+      loopNowMs = _nowMs();
       continue;
     }
 
@@ -480,6 +529,8 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     if (readSt.code != Err::CONVERSION_NOT_READY) {
       return readSt;
     }
+    _cooperativeYield();
+    loopNowMs = _nowMs();
   }
 
   // Timeout: clean up stale conversion state so startConversion() doesn't
@@ -499,6 +550,240 @@ Status ADS1115::readBlockingVoltage(float& volts, uint32_t timeoutMs) {
   return Status::Ok();
 }
 
+Status ADS1115::startSingleShot() {
+  return startSingleShot(_config.mux);
+}
+
+Status ADS1115::startSingleShot(Mux mux) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
+  if (!isValidMux(mux)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid mux");
+  }
+  if (_config.mode == Mode::CONTINUOUS) {
+    return Status::Error(Err::BUSY, "Continuous mode active");
+  }
+  if (_jobActive || _conversionStarted) {
+    return Status::Error(Err::BUSY, "Conversion already in progress");
+  }
+
+  _jobConfigRegister = _buildConfigRegisterForMux(mux) | cmd::OS_START;
+  _jobMuxOverride = (mux != _config.mux);
+  _jobMux = mux;
+  _jobThresholdLow = 0;
+  _jobThresholdHigh = 0;
+  _jobActive = true;
+  _jobState = JobState::SINGLE_SHOT_WRITE_CONFIG;
+  _lastJobStatus = Status{Err::IN_PROGRESS, 0, "Single-shot job started"};
+  return _lastJobStatus;
+}
+
+PollResult ADS1115::pollSingleShot(uint32_t nowMs, uint8_t maxInstructions) {
+  if (!_initialized) {
+    return _pollResult(Status::Error(Err::NOT_INITIALIZED, "Driver not initialized"),
+                       0, true);
+  }
+  if (!_jobActive) {
+    return _pollResult(_lastJobStatus, 0, true);
+  }
+  if (_isOffline()) {
+    return _failJob(_offlineStatus(), 0);
+  }
+  if (_jobState != JobState::SINGLE_SHOT_WRITE_CONFIG &&
+      _jobState != JobState::SINGLE_SHOT_WAIT_CONVERSION &&
+      _jobState != JobState::SINGLE_SHOT_POLL_READY &&
+      _jobState != JobState::SINGLE_SHOT_READ_CONVERSION) {
+    return _pollResult(Status::Error(Err::BUSY, "Different job active"), 0, false);
+  }
+
+  const uint8_t budget = _instructionBudget(maxInstructions);
+  uint8_t used = 0;
+
+  while (true) {
+    switch (_jobState) {
+      case JobState::SINGLE_SHOT_WRITE_CONFIG: {
+        if (used >= budget) {
+          return _pollResult(_lastJobStatus, used, false);
+        }
+        Status st = _writeRegister16Tracked(cmd::REG_CONFIG, _jobConfigRegister);
+        used++;
+        if (!st.ok()) {
+          return _failJob(st, used);
+        }
+        if (_jobMuxOverride) {
+          _config.mux = _jobMux;
+        }
+        _conversionStarted = true;
+        _conversionReady = false;
+        _conversionStartMs = nowMs;
+        _jobState = JobState::SINGLE_SHOT_WAIT_CONVERSION;
+        _lastJobStatus = Status{Err::IN_PROGRESS, 0, "Single-shot conversion started"};
+        return _pollResult(_lastJobStatus, used, false);
+      }
+
+      case JobState::SINGLE_SHOT_WAIT_CONVERSION:
+        if (useAlertRdyPin(_config)) {
+          if (!isAlertRdyAsserted(_config)) {
+            return _pollResult(_lastJobStatus, used, false);
+          }
+          _conversionStarted = false;
+          _conversionReady = true;
+          _jobState = JobState::SINGLE_SHOT_READ_CONVERSION;
+          continue;
+        }
+        if (!elapsedAtLeast(_conversionStartMs, getConversionTimeMs(), nowMs)) {
+          return _pollResult(_lastJobStatus, used, false);
+        }
+        _jobState = JobState::SINGLE_SHOT_POLL_READY;
+        continue;
+
+      case JobState::SINGLE_SHOT_POLL_READY: {
+        if (used >= budget) {
+          return _pollResult(_lastJobStatus, used, false);
+        }
+        uint16_t configReg = 0;
+        Status st = _readRegister16Tracked(cmd::REG_CONFIG, configReg);
+        used++;
+        if (!st.ok()) {
+          return _failJob(st, used);
+        }
+        if ((configReg & cmd::MASK_OS) != cmd::OS_IDLE) {
+          return _pollResult(_lastJobStatus, used, false);
+        }
+        _conversionStarted = false;
+        _conversionReady = true;
+        _jobState = JobState::SINGLE_SHOT_READ_CONVERSION;
+        continue;
+      }
+
+      case JobState::SINGLE_SHOT_READ_CONVERSION: {
+        if (used >= budget) {
+          return _pollResult(_lastJobStatus, used, false);
+        }
+        uint16_t rawReg = 0;
+        Status st = _readRegister16Tracked(cmd::REG_CONVERSION, rawReg);
+        used++;
+        if (!st.ok()) {
+          return _failJob(st, used);
+        }
+        _lastRawValue = static_cast<int16_t>(rawReg);
+        _conversionStarted = false;
+        _conversionReady = false;
+        return _finishJob(used);
+      }
+
+      default:
+        return _pollResult(Status::Error(Err::BUSY, "Different job active"), used, false);
+    }
+  }
+}
+
+Status ADS1115::startApplyConfigJob() {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
+  if (_jobActive) {
+    return Status::Error(Err::BUSY, "Job already active");
+  }
+  if (_conversionStarted) {
+    return Status::Error(Err::BUSY, "Conversion already in progress");
+  }
+
+  _jobThresholdLow = _config.compThresholdLow;
+  _jobThresholdHigh = _config.compThresholdHigh;
+  _jobConfigRegister = _buildConfigRegister();
+  _jobMuxOverride = false;
+  _jobMux = _config.mux;
+  _jobActive = true;
+  _jobState = JobState::APPLY_WRITE_LOW_THRESHOLD;
+  _lastJobStatus = Status{Err::IN_PROGRESS, 0, "Apply config job started"};
+  return _lastJobStatus;
+}
+
+PollResult ADS1115::pollApplyConfig(uint32_t nowMs, uint8_t maxInstructions) {
+  (void)nowMs;
+  if (!_initialized) {
+    return _pollResult(Status::Error(Err::NOT_INITIALIZED, "Driver not initialized"),
+                       0, true);
+  }
+  if (!_jobActive) {
+    return _pollResult(_lastJobStatus, 0, true);
+  }
+  if (_isOffline()) {
+    return _failJob(_offlineStatus(), 0);
+  }
+  if (_jobState != JobState::APPLY_WRITE_LOW_THRESHOLD &&
+      _jobState != JobState::APPLY_WRITE_HIGH_THRESHOLD &&
+      _jobState != JobState::APPLY_WRITE_CONFIG) {
+    return _pollResult(Status::Error(Err::BUSY, "Different job active"), 0, false);
+  }
+
+  const uint8_t budget = _instructionBudget(maxInstructions);
+  uint8_t used = 0;
+
+  while (used < budget) {
+    switch (_jobState) {
+      case JobState::APPLY_WRITE_LOW_THRESHOLD: {
+        Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH,
+                                            static_cast<uint16_t>(_jobThresholdLow));
+        used++;
+        if (!st.ok()) {
+          return _failJob(st, used);
+        }
+        _jobState = JobState::APPLY_WRITE_HIGH_THRESHOLD;
+        break;
+      }
+
+      case JobState::APPLY_WRITE_HIGH_THRESHOLD: {
+        Status st = _writeRegister16Tracked(cmd::REG_HI_THRESH,
+                                            static_cast<uint16_t>(_jobThresholdHigh));
+        used++;
+        if (!st.ok()) {
+          return _failJob(st, used);
+        }
+        _jobState = JobState::APPLY_WRITE_CONFIG;
+        break;
+      }
+
+      case JobState::APPLY_WRITE_CONFIG: {
+        Status st = _writeRegister16Tracked(cmd::REG_CONFIG, _jobConfigRegister);
+        used++;
+        if (!st.ok()) {
+          return _failJob(st, used);
+        }
+        _conversionStarted = false;
+        _conversionReady = false;
+        return _finishJob(used);
+      }
+
+      default:
+        return _pollResult(Status::Error(Err::BUSY, "Different job active"), used, false);
+    }
+  }
+
+  return _pollResult(_lastJobStatus, used, false);
+}
+
+void ADS1115::cancelJob() {
+  _jobActive = false;
+  _jobState = JobState::IDLE;
+  _lastJobStatus = Status::Ok();
+  _jobConfigRegister = 0;
+  _jobThresholdLow = 0;
+  _jobThresholdHigh = 0;
+  _jobMuxOverride = false;
+  _jobMux = _config.mux;
+  _conversionStarted = false;
+  _conversionReady = false;
+}
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -509,6 +794,9 @@ Status ADS1115::setMux(Mux mux) {
   }
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
   _config.mux = mux;
   return _applyConfig();
@@ -521,6 +809,9 @@ Status ADS1115::setGain(Gain gain) {
   if (!isValidGain(gain)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid gain");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   _config.gain = gain;
   return _applyConfig();
 }
@@ -532,6 +823,9 @@ Status ADS1115::setDataRate(DataRate rate) {
   if (!isValidDataRate(rate)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid data rate");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   _config.dataRate = rate;
   return _applyConfig();
 }
@@ -542,6 +836,9 @@ Status ADS1115::setMode(Mode mode) {
   }
   if (!isValidMode(mode)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mode");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
   _config.mode = mode;
   _conversionStarted = false;
@@ -563,9 +860,13 @@ Status ADS1115::writeConfig(uint16_t config) {
   if (!isValidConfigValue(config)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid config value");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
 
-  Status st = writeRegister16(cmd::REG_CONFIG, config);
+  Status st = _writeRegister16Tracked(cmd::REG_CONFIG, config);
   if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
     return st;
   }
 
@@ -598,15 +899,23 @@ Status ADS1115::setThresholds(int16_t low, int16_t high) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
 
   _config.compThresholdLow = low;
   _config.compThresholdHigh = high;
 
-  Status st = writeRegister16(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
+  Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
   if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
     return st;
   }
-  return writeRegister16(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
+  st = _writeRegister16Tracked(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
+  if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
+  }
+  return st;
 }
 
 Status ADS1115::getThresholds(int16_t& low, int16_t& high) {
@@ -639,6 +948,9 @@ Status ADS1115::setComparatorMode(ComparatorMode mode) {
   if (!isValidCompMode(mode)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator mode");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   _config.compMode = mode;
   return _applyConfig();
 }
@@ -649,6 +961,9 @@ Status ADS1115::setComparatorPolarity(ComparatorPolarity polarity) {
   }
   if (!isValidCompPolarity(polarity)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator polarity");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
   _config.compPolarity = polarity;
   return _applyConfig();
@@ -661,6 +976,9 @@ Status ADS1115::setComparatorLatch(ComparatorLatch latch) {
   if (!isValidCompLatch(latch)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator latch");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   _config.compLatch = latch;
   return _applyConfig();
 }
@@ -672,6 +990,9 @@ Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
   if (!isValidCompQueue(queue)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator queue");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   _config.compQueue = queue;
   return _applyConfig();
 }
@@ -679,6 +1000,9 @@ Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
 Status ADS1115::enableConversionReadyPin() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
 
   _config.compThresholdLow = 0;
@@ -693,6 +1017,9 @@ Status ADS1115::enableConversionReadyPin() {
 Status ADS1115::disableComparator() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
 
   _config.compQueue = ComparatorQueue::DISABLE;
@@ -756,6 +1083,52 @@ uint32_t ADS1115::getConversionTimeMs() const {
   return timeTable[index];
 }
 
+uint8_t ADS1115::_instructionBudget(uint8_t maxInstructions) const {
+  return (maxInstructions > MAX_JOB_INSTRUCTIONS) ? MAX_JOB_INSTRUCTIONS : maxInstructions;
+}
+
+PollResult ADS1115::_pollResult(Status status, uint8_t instructionsUsed, bool done) const {
+  PollResult result;
+  result.status = status;
+  result.instructionsUsed = instructionsUsed;
+  result.done = done;
+  result.state = _jobState;
+  return result;
+}
+
+PollResult ADS1115::_finishJob(uint8_t instructionsUsed) {
+  if (_jobState == JobState::APPLY_WRITE_CONFIG) {
+    _markHardwareConfigClean();
+  }
+  _jobActive = false;
+  _jobState = JobState::COMPLETE;
+  _lastJobStatus = Status::Ok();
+  _jobConfigRegister = 0;
+  _jobThresholdLow = 0;
+  _jobThresholdHigh = 0;
+  _jobMuxOverride = false;
+  _jobMux = _config.mux;
+  return _pollResult(_lastJobStatus, instructionsUsed, true);
+}
+
+PollResult ADS1115::_failJob(const Status& status, uint8_t instructionsUsed) {
+  if (_jobState == JobState::SINGLE_SHOT_WRITE_CONFIG ||
+      _jobState == JobState::APPLY_WRITE_LOW_THRESHOLD ||
+      _jobState == JobState::APPLY_WRITE_HIGH_THRESHOLD ||
+      _jobState == JobState::APPLY_WRITE_CONFIG) {
+    _markHardwareConfigUncertain(status);
+  }
+  _jobActive = false;
+  _jobState = JobState::FAILED;
+  _lastJobStatus = status;
+  _jobConfigRegister = 0;
+  _jobThresholdLow = 0;
+  _jobThresholdHigh = 0;
+  _jobMuxOverride = false;
+  _jobMux = _config.mux;
+  return _pollResult(_lastJobStatus, instructionsUsed, true);
+}
+
 // ============================================================================
 // Transport Wrappers
 // ============================================================================
@@ -806,6 +1179,36 @@ Status ADS1115::_i2cWriteTracked(const uint8_t* buf, size_t len) {
 // ============================================================================
 
 Status ADS1115::readRegister16(uint8_t reg, uint16_t& value) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
+  return _readRegister16Tracked(reg, value);
+}
+
+Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
+
+  Status st = _writeRegister16Tracked(reg, value);
+  if (isConfigStateRegister(reg)) {
+    if (st.ok()) {
+      _hardwareConfigDirty = true;
+      _hardwareConfigUncertain = true;
+    } else {
+      _markHardwareConfigUncertain(st);
+    }
+  }
+  return st;
+}
+
+Status ADS1115::_readRegister16Tracked(uint8_t reg, uint16_t& value) {
   uint8_t rx[2] = {0, 0};
   Status st = _i2cWriteReadTracked(&reg, 1, rx, sizeof(rx));
   if (!st.ok()) {
@@ -815,7 +1218,7 @@ Status ADS1115::readRegister16(uint8_t reg, uint16_t& value) {
   return Status::Ok();
 }
 
-Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
+Status ADS1115::_writeRegister16Tracked(uint8_t reg, uint16_t value) {
   uint8_t tx[3] = {
     reg,
     static_cast<uint8_t>((value >> 8) & 0xFF),
@@ -878,30 +1281,59 @@ Status ADS1115::_updateHealth(const Status& st) {
 // Internal
 // ============================================================================
 
+bool ADS1115::_isOffline() const {
+  return _initialized && _driverState == DriverState::OFFLINE;
+}
+
+Status ADS1115::_offlineStatus() const {
+  return Status::Error(Err::OFFLINE, "Driver offline; call recover()",
+                       _consecutiveFailures);
+}
+
+void ADS1115::_markHardwareConfigUncertain(const Status& st) {
+  _hardwareConfigDirty = true;
+  _hardwareConfigUncertain = true;
+  _lastConfigApplyError = st;
+}
+
+void ADS1115::_markHardwareConfigClean() {
+  _hardwareConfigDirty = false;
+  _hardwareConfigUncertain = false;
+  _lastConfigApplyError = Status::Ok();
+}
+
 Status ADS1115::_applyConfig() {
-  Status st = writeRegister16(cmd::REG_LO_THRESH,
-                              static_cast<uint16_t>(_config.compThresholdLow));
+  Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH,
+                                      static_cast<uint16_t>(_config.compThresholdLow));
   if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
     return st;
   }
-  st = writeRegister16(cmd::REG_HI_THRESH,
-                       static_cast<uint16_t>(_config.compThresholdHigh));
+  st = _writeRegister16Tracked(cmd::REG_HI_THRESH,
+                               static_cast<uint16_t>(_config.compThresholdHigh));
   if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
     return st;
   }
-  st = writeRegister16(cmd::REG_CONFIG, _buildConfigRegister());
+  st = _writeRegister16Tracked(cmd::REG_CONFIG, _buildConfigRegister());
   if (!st.ok()) {
+    _markHardwareConfigUncertain(st);
     return st;
   }
 
   _conversionStarted = false;
   _conversionReady = false;
+  _markHardwareConfigClean();
   return Status::Ok();
 }
 
 uint16_t ADS1115::_buildConfigRegister() const {
+  return _buildConfigRegisterForMux(_config.mux);
+}
+
+uint16_t ADS1115::_buildConfigRegisterForMux(Mux mux) const {
   uint16_t config = 0;
-  config |= (static_cast<uint16_t>(_config.mux) << cmd::BIT_MUX) & cmd::MASK_MUX;
+  config |= (static_cast<uint16_t>(mux) << cmd::BIT_MUX) & cmd::MASK_MUX;
   config |= (static_cast<uint16_t>(_config.gain) << cmd::BIT_PGA) & cmd::MASK_PGA;
   config |= (static_cast<uint16_t>(_config.mode) << cmd::BIT_MODE) & cmd::MASK_MODE;
   config |= (static_cast<uint16_t>(_config.dataRate) << cmd::BIT_DR) & cmd::MASK_DR;
@@ -916,15 +1348,13 @@ uint32_t ADS1115::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);
   }
-  return millis();
+  return 0;
 }
 
 void ADS1115::_cooperativeYield() const {
   if (_config.cooperativeYield != nullptr) {
     _config.cooperativeYield(_config.timeUser);
-    return;
   }
-  yield();
 }
 
 } // namespace ADS1115

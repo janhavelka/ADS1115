@@ -26,6 +26,14 @@ static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 // Helper Functions
 // ============================================================================
 
+uint32_t arduinoNowMs(void*) {
+  return millis();
+}
+
+void arduinoYield(void*) {
+  yield();
+}
+
 const char* errToStr(ADS1115::Err err) {
   using ADS1115::Err;
   switch (err) {
@@ -39,6 +47,11 @@ const char* errToStr(ADS1115::Err err) {
     case Err::CONVERSION_NOT_READY: return "CONVERSION_NOT_READY";
     case Err::BUSY:                 return "BUSY";
     case Err::IN_PROGRESS:          return "IN_PROGRESS";
+    case Err::I2C_NACK_ADDR:        return "I2C_NACK_ADDR";
+    case Err::I2C_NACK_DATA:        return "I2C_NACK_DATA";
+    case Err::I2C_TIMEOUT:          return "I2C_TIMEOUT";
+    case Err::I2C_BUS:              return "I2C_BUS";
+    case Err::OFFLINE:              return "OFFLINE";
     default:                        return "UNKNOWN";
   }
 }
@@ -222,8 +235,8 @@ void printHelp() {
   helpItem("help / ?", "Show this help");
   helpItem("version / ver", "Print firmware and library version info");
   helpItem("scan", "Scan I2C bus");
-  helpItem("read", "Read single conversion (blocking)");
-  helpItem("readv", "Read single conversion as voltage (blocking)");
+  helpItem("read", "Read single conversion (bounded blocking convenience)");
+  helpItem("readv", "Read single conversion as voltage (bounded blocking convenience)");
   helpItem("read N", "Read N conversions");
   helpItem("start", "Start single-shot conversion");
   helpItem("poll", "Check if conversion ready");
@@ -1385,6 +1398,8 @@ void setup() {
   cfg.i2cWrite = transport::wireWrite;
   cfg.i2cWriteRead = transport::wireWriteRead;
   cfg.i2cUser = &Wire;
+  cfg.nowMs = arduinoNowMs;
+  cfg.cooperativeYield = arduinoYield;
   cfg.i2cAddress = 0x48;
   cfg.i2cTimeoutMs = board::I2C_TIMEOUT_MS;
   cfg.offlineThreshold = 5;

@@ -119,8 +119,8 @@ struct Config {
   I2cWriteReadFn i2cWriteRead = nullptr;
   void* i2cUser = nullptr;
 
-  // === Timing Hooks (optional) ===
-  NowMsFn nowMs = nullptr;                 ///< Monotonic millisecond source
+  // === Timing Hooks ===
+  NowMsFn nowMs = nullptr;                 ///< Required monotonic millisecond source
   YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
   void* timeUser = nullptr;                ///< User context for timing hooks
 
