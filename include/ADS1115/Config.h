@@ -46,7 +46,7 @@ using NowMsFn = uint32_t (*)(void* user);
 /// @param user User context pointer passed through from Config
 using YieldFn = void (*)(void* user);
 
-/// Input multiplexer configuration
+/// @brief Input multiplexer configuration.
 enum class Mux : uint8_t {
   AIN0_AIN1 = 0,  ///< Differential: AIN0 - AIN1 (default)
   AIN0_AIN3 = 1,  ///< Differential: AIN0 - AIN3
@@ -58,7 +58,11 @@ enum class Mux : uint8_t {
   AIN3_GND  = 7   ///< Single-ended: AIN3
 };
 
-/// Programmable Gain Amplifier (full-scale range)
+/// @brief Programmable gain amplifier full-scale range.
+///
+/// These values set ADC full-scale conversion range only. They do not increase
+/// ADS1115 analog input absolute maximum ratings; keep all inputs within the
+/// datasheet electrical limits for the powered device.
 enum class Gain : uint8_t {
   FSR_6_144V = 0,  ///< +/-6.144V (LSB = 187.5uV)
   FSR_4_096V = 1,  ///< +/-4.096V (LSB = 125uV)
@@ -68,7 +72,7 @@ enum class Gain : uint8_t {
   FSR_0_256V = 5   ///< +/-0.256V (LSB = 7.8125uV)
 };
 
-/// Data rate (samples per second)
+/// @brief Output data rate in samples per second.
 enum class DataRate : uint8_t {
   SPS_8   = 0,   ///<   8 SPS
   SPS_16  = 1,   ///<  16 SPS
@@ -80,31 +84,31 @@ enum class DataRate : uint8_t {
   SPS_860 = 7    ///< 860 SPS
 };
 
-/// Operating mode
+/// @brief ADS1115 operating mode.
 enum class Mode : uint8_t {
   CONTINUOUS  = 0,  ///< Continuous conversion mode
   SINGLE_SHOT = 1   ///< Single-shot / power-down mode (default)
 };
 
-/// Comparator mode
+/// @brief Comparator mode.
 enum class ComparatorMode : uint8_t {
   TRADITIONAL = 0,  ///< Traditional comparator (default)
   WINDOW      = 1   ///< Window comparator
 };
 
-/// Comparator polarity
+/// @brief ALERT/RDY comparator polarity.
 enum class ComparatorPolarity : uint8_t {
   ACTIVE_LOW  = 0,  ///< ALERT/RDY active low (default)
   ACTIVE_HIGH = 1   ///< ALERT/RDY active high
 };
 
-/// Comparator latch
+/// @brief Comparator latch behavior.
 enum class ComparatorLatch : uint8_t {
   NON_LATCHING = 0,  ///< Non-latching (default)
   LATCHING     = 1   ///< Latching
 };
 
-/// Comparator queue (assertions before ALERT)
+/// @brief Comparator queue depth before ALERT assertion.
 enum class ComparatorQueue : uint8_t {
   ASSERT_1 = 0,  ///< Assert after 1 conversion
   ASSERT_2 = 1,  ///< Assert after 2 conversions
@@ -112,21 +116,27 @@ enum class ComparatorQueue : uint8_t {
   DISABLE  = 3   ///< Disable comparator (default), ALERT/RDY high-Z
 };
 
-/// Configuration for ADS1115 driver
+/// @brief Configuration for ADS1115 driver.
 struct Config {
   // === I2C Transport (required) ===
   I2cWriteFn i2cWrite = nullptr;
   I2cWriteReadFn i2cWriteRead = nullptr;
   void* i2cUser = nullptr;
 
-  // === Timing Hooks ===
-  NowMsFn nowMs = nullptr;                 ///< Required monotonic millisecond source
+  // === Timing Hooks (optional; required by blocking conversion APIs) ===
+  /// Monotonic source. Required by readBlocking* and by direct timing-based
+  /// readiness checks that should advance without tick(nowMs)/service(nowMs).
+  /// Without this hook, health timestamps are unavailable and report as 0;
+  /// ALERT/RDY readiness still needs an external tick/service timebase to pass
+  /// the conversion interval before the GPIO path is evaluated.
+  NowMsFn nowMs = nullptr;
   YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
   void* timeUser = nullptr;                ///< User context for timing hooks
 
   // === Device Settings ===
   uint8_t i2cAddress = 0x48;       ///< 0x48-0x4B based on ADDR pin
   uint32_t i2cTimeoutMs = 50;      ///< I2C transaction timeout in ms
+  bool strictInitVerify = false;   ///< Optional read-back plausibility check after full apply
 
   // === Conversion Settings ===
   Mux mux = Mux::AIN0_GND;               ///< Input multiplexer

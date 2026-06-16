@@ -2,9 +2,12 @@
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - hardening/**
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -68,8 +71,31 @@ jobs:
       - name: Enforce core timing guard
         run: python tools/check_core_timing_guard.py
 
+      - name: Check version metadata
+        run: python scripts/generate_version.py check
+
       - name: Run native tests
         run: pio test -e native
+
+  esp-idf-build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.3
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - esp32s3
+          - esp32s2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ESP-IDF example (${{ matrix.target }})
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -C examples/esp_idf/basic set-target ${{ matrix.target }} build
 
   validate-library:
     runs-on: ubuntu-latest
@@ -87,6 +113,12 @@ jobs:
 
       - name: Enforce example CLI contract
         run: python tools/check_cli_contract.py
+
+      - name: Enforce ESP-IDF example contract
+        run: python tools/check_idf_example_contract.py
+
+      - name: Check version metadata
+        run: python scripts/generate_version.py check
 
       - name: Validate library package
         run: pio pkg pack

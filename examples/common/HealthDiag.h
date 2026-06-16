@@ -46,6 +46,14 @@ inline const char* errToString(ADS1115::Err err) {
     case ADS1115::Err::CONVERSION_NOT_READY: return "CONVERSION_NOT_READY";
     case ADS1115::Err::BUSY:                 return "BUSY";
     case ADS1115::Err::IN_PROGRESS:          return "IN_PROGRESS";
+    case ADS1115::Err::I2C_NACK_ADDR:        return "I2C_NACK_ADDR";
+    case ADS1115::Err::I2C_NACK_DATA:        return "I2C_NACK_DATA";
+    case ADS1115::Err::I2C_TIMEOUT:          return "I2C_TIMEOUT";
+    case ADS1115::Err::I2C_BUS:              return "I2C_BUS";
+    case ADS1115::Err::OFFLINE:               return "OFFLINE";
+    case ADS1115::Err::UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
+    case ADS1115::Err::READBACK_MISMATCH:     return "READBACK_MISMATCH";
+    case ADS1115::Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
     default:                                  return "UNKNOWN";
   }
 }

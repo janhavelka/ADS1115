@@ -2,7 +2,9 @@
  * @file I2cScanner.h
  * @brief Simple I2C bus scanner utility for examples.
  *
- * NOT part of the library API. This is a diagnostic tool for examples.
+ * NOT part of the library API. This is an invasive diagnostic tool for
+ * examples: it can reset Wire and mutate bus timeout settings. Do not use it as
+ * a production shared-bus scanner without adapting ownership and locking.
  */
 
 #pragma once
@@ -99,6 +101,10 @@ inline void scan(TwoWire& wire, uint16_t timeoutMs = 50) {
   if (count > 0) {
     LOGI("Common addresses: 0x3C/0x3D=OLED, 0x48-0x4B=ADS1115, 0x51=RV3032, 0x76/0x77=BME280");
   }
+}
+
+inline void scanDefault(uint16_t timeoutMs = 50) {
+  scan(Wire, timeoutMs);
 }
 
 }  // namespace i2c_scanner

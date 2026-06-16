@@ -2,7 +2,7 @@
 # Generated and maintained for unified API documentation.
 
 PROJECT_NAME           = "ADS1115"
-PROJECT_NUMBER         = "0.3.0"
+PROJECT_NUMBER         = "1.1.0"
 PROJECT_BRIEF          = "ADS1115 embedded library API documentation"
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO
@@ -31,10 +31,17 @@ REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
 STRIP_CODE_COMMENTS    = NO
 
-INPUT                  = README.md CHANGELOG.md AGENTS.md CONTRIBUTING.md include docs/UNIFICATION_STANDARD.md docs/IDF_PORT.md
+INPUT                  = README.md \
+                         CHANGELOG.md \
+                         include \
+                         docs/README.md \
+                         docs/IDF_PORT.md \
+                         docs/ADS1115_HARDWARE_VALIDATION_PLAN.md \
+                         docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md \
+                         docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/*
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/archive/* */docs/evidence/* */docs/reference/* */docs/_pdf_extracts/*
 EXAMPLE_PATH           = examples/01_basic_bringup_cli
 
 USE_MDFILE_AS_MAINPAGE = README.md

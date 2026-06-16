@@ -3,9 +3,37 @@
 ## Role and Target
 You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
 
-- Target: ESP32-S2 / ESP32-S3, Arduino framework, PlatformIO.
+- Target: ESP32-S2 / ESP32-S3, Arduino and ESP-IDF consumers, PlatformIO/ESP-IDF.
 - Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
 - These rules are binding.
+
+## Chunked Hardening Workflow
+
+- Work chunk-by-chunk; do not perform broad refactors during hardening prompts.
+- Keep implementation changes scoped to the current prompt and the existing
+  architecture unless the prompt explicitly authorizes a wider change.
+- Preserve the framework-neutral core in `include/` and `src/`.
+- No Arduino, Wire, ESP-IDF, FreeRTOS, logging framework, global bus, pin
+  ownership, task, or framework delay dependencies may be introduced into the
+  core library.
+- Core I2C stays injected and non-owning. Bus handles, pins, clock rate,
+  timeout policy, locking, and recovery policy stay in application or adapter
+  code.
+- Public fallible APIs must return meaningful `Status`; when changing or adding
+  production APIs, do not hide transport errors behind bool-only or void APIs.
+- Do not reorder existing status enum values unless the compatibility impact is
+  explicitly documented. Prefer appending new status codes.
+- ADS1115 has no chip-ID register. Strict init and read-back are only
+  plausibility/read-back verification, not identity verification.
+- Multi-register writes can partially reach hardware. Dirty or partial
+  hardware-state diagnostics must be explicit.
+- Raw diagnostic register writes must either update the cache safely or mark
+  cache/hardware state dirty.
+- Public APIs are not ISR-safe, and driver instances are not internally
+  thread-safe unless explicitly proven, documented, and tested.
+- Hardware validation claims require dated logs or captures.
+- CI/build claims require actual command output or CI configuration evidence.
+- Each hardening prompt must end with a commit and push/sync.
 
 ---
 
@@ -36,6 +64,12 @@ Rules:
 - No board-specific pins/bus in library code; only in `Config`.
 - Public headers only in `include/ADS1115/`.
 - Examples demonstrate usage and may use `examples/common/BoardConfig.h`.
+- Arduino examples may use Arduino APIs and `examples/common/` helpers.
+- ESP-IDF examples must be native IDF code. They must use `app_main`,
+  `driver/i2c_master.h`, `esp_timer`, FreeRTOS delays, IDF GPIO, and fixed C
+  buffers or native console APIs. They must not include Arduino example sources
+  or use `Arduino.h`, `Wire.h`, `String`, `Serial`, `TwoWire`,
+  `ArduinoCompat`, or `IdfArduinoCompat` facades.
 - Keep the layout boring and predictable.
 
 ---
@@ -48,6 +82,17 @@ Rules:
 - No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
 - No logging in library code; examples may log.
 - No macros for constants; use `static constexpr`. Macros only for conditional compile or logging helpers.
+- Public/core library headers and `src/` must not require Arduino or ESP-IDF
+  framework headers unless a platform-specific adapter is explicitly documented.
+- The core library is not thread-safe and is not ISR-safe. Applications must
+  externally serialize all calls into a driver instance and must not call public
+  APIs from interrupt context.
+- Public fallible APIs must return `Status`; silent failure is unacceptable.
+- Multi-register hardware updates must be explicit about partial hardware state.
+  If a later transaction fails after an earlier register write may have reached
+  the chip, the driver must preserve the original transport error, expose a
+  hardware-config-dirty diagnostic, and clear it only after a successful full
+  resync/recover path.
 
 ---
 
@@ -57,6 +102,14 @@ Rules:
 - `Config` MUST accept a transport adapter (function pointers or abstract interface).
 - Transport errors MUST map to `Status` (no leaking `Wire`, `esp_err_t`, etc.).
 - The library MUST NOT configure bus timeouts or pins.
+- The library MUST remain transport-injected and non-owning of the I2C bus.
+  Bus handles, pins, clock rate, timeout policy, bus recovery, and locking
+  belong to the application or example adapter, not the core library.
+- Example adapters that are diagnostic-only must say so. Production examples
+  must demonstrate shared-bus ownership, external serialization/locking, timeout
+  policy, and nonblocking tick scheduling.
+- ESP-IDF adapters/examples own IDF bus handles and map `esp_err_t` to
+  `Status`; the core must never expose or store IDF handles.
 
 ---
 
@@ -82,8 +135,8 @@ struct Status {
 - I2C address configurable: 0x48 (ADDR->GND), 0x49 (ADDR->VDD), 0x4A (ADDR->SDA), 0x4B (ADDR->SCL).
 - Check device presence in `begin()` by reading config register.
 - Support input multiplexer configurations:
-  - 4 single-ended inputs (AIN0-AIN3 vs GND)
-  - 3 differential pairs (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
+  - 4 single-ended input selections (AIN0-AIN3 vs GND)
+  - 4 differential MUX selections (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
 - Configurable PGA (gain): +/-6.144V, +/-4.096V, +/-2.048V, +/-1.024V, +/-0.512V, +/-0.256V
 - Configurable data rate: 8, 16, 32, 64, 128, 250, 475, 860 SPS
 - Support operating modes:
@@ -162,6 +215,26 @@ Transport callbacks (Config::i2cWrite, i2cWriteRead)
 - `_lastError` - most recent error Status
 - `_consecutiveFailures` - failures since last success (resets on success)
 - `_totalFailures` / `_totalSuccess` - lifetime counters (wrap at max)
+
+---
+
+## Hardening Subagent Roles
+
+When using subagents for hardening work, split responsibilities as follows:
+
+- **Core Contracts Agent**: public API compatibility, framework neutrality,
+  transport injection, timeout semantics, strict init/read-back behavior,
+  dirty-state tracking, shutdown semantics, and copy/move prevention.
+- **Tests/Fault Injection Agent**: native fake-transport tests for missing
+  clocks, partial write failures, dirty-state clearing, probe error mapping,
+  strict read-back masking, continuous-mode semantics, shutdown behavior, and
+  compile-time copy/move prevention.
+- **Docs/Examples/CI Agent**: README/Doxygen/API latency documentation,
+  example honesty, ALERT/RDY/PGA/comparator warnings, hardware validation
+  matrix, PlatformIO/ESP-IDF build coverage, and CI command accuracy.
+- **Final Integration Review Agent**: verify all changes together, check that
+  guard scripts and builds match claimed results, identify remaining hardware
+  validation gaps, and ensure no unrelated churn was introduced.
 
 ---
 

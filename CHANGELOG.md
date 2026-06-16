@@ -7,17 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No entries.
+
+## [1.1.0] - 2026-06-02
+
 ### Added
+- ESP-IDF component metadata, generated-version CMake support, and a native
+  ESP-IDF `i2c_master` example with full bring-up CLI command parity.
+- `tools/check_idf_example_contract.py` to guard ESP-IDF example structure,
+  native-driver dependencies, and CLI parity.
 - `SettingsSnapshot` struct for reading cached configuration and runtime state without I2C.
 - `getSettings(SettingsSnapshot&)` method to populate a settings snapshot.
 - `Status::is(Err)` method for type-safe error code comparison.
 - `Status::operator bool()` explicit conversion for concise success checks.
 - `readRegister()` and `writeRegister()` compatibility aliases for `readRegister16()` / `writeRegister16()`.
+- `readConversionReady(bool&)` for conversion readiness checks with explicit transport error reporting.
+- `conversionReady(bool&)` status-returning alias while keeping the existing bool-only convenience overload.
+- `service(uint32_t)` status-returning periodic service while keeping `tick(uint32_t)` for compatibility.
+- `shutdown()` public API for explicit best-effort single-shot idle handling before `end()`.
+- `readLatestRaw(int16_t&)` for continuous-mode latest-register reads without promising a fresh sample.
+- `Config::strictInitVerify` for optional writable-register read-back plausibility checks.
+- `hardwareConfigDirty()` and `hardwareConfigDirtyError()` diagnostics for partial apply and raw diagnostic writes.
+- Appended `Err::OFFLINE`, `Err::UNSUPPORTED_OPERATION`, `Err::READBACK_MISMATCH`, and `Err::HARDWARE_CONFIG_DIRTY` without reordering existing status values.
+- Datasheet PGA alias handling for raw CONFIG writes: encodings `110` and `111` are accepted as `+/-0.256 V`.
+- Native coverage for register-modeled conversion reads, readiness failures, ALERT/RDY readiness, setter rollback, register validation, and stalled-clock blocking timeouts.
+- Native coverage proving latched `OFFLINE` blocks normal I2C operations without touching the bus while `recover()` remains the explicit recovery path.
+- Native coverage for invalid config boundaries, tracked I2C status taxonomy, strict read-back recover branches, signed threshold/scaling boundaries, setter rollback variants, and dirty-state preservation.
+- Version metadata checks now verify `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h` agree.
+- Limited COM19 HIL evidence for address handling, restore sequencing,
+  initialized-address selftests, and short stress runs. The raw transcript is
+  tracked under `docs/evidence/hil/2026-06-02_COM19/`.
+
+### Changed
+- Driver core timing/yield ownership moved fully behind application callbacks;
+  Arduino examples now provide explicit timing hooks instead of relying on core fallbacks.
+- Doxyfile project metadata now matches `library.json`, and archived prompt
+  metadata no longer contains placeholder ownership values.
+- Core guard script now rejects framework leakage and dynamic allocation patterns
+  in `include/` and `src/`, including Arduino/Wire symbols, ESP-IDF/FreeRTOS
+  symbols, logging calls, `std::string`, `std::vector`, and heap allocation.
+- Reference documentation now uses a human-readable vendor PDF name and separates compact chip notes from full PDF extraction under `docs/reference/extracted-md/` and `docs/reference/pdf-extracted-md/`.
+- Explicit recovery bypass internals now use the shared `ScopedOfflineI2cAllowance` / `_reassertOfflineLatch()` procedure so failed recovery attempts that begin from `OFFLINE` keep the latch asserted.
+- Continuous-mode readiness now tracks the configured data-rate interval instead of reporting ready immediately.
+- CLI `poll`, `selftest`, and mixed stress paths now handle `Err::IN_PROGRESS` correctly and preserve readiness I2C errors.
+- README now documents conversion, configuration, comparator, ALERT/RDY, and configuration constraint APIs.
+- `begin()` failure now clears stale cached configuration/runtime state, and successful startup no longer seeds runtime health counters.
+- Health behavior is now standardized on latched `OFFLINE`: normal public I2C operations return `Err::OFFLINE` with `Driver is offline; call recover()` and do not touch I2C until `recover()` succeeds.
+- Hardware validation wording now uses pending evidence rows instead of implying
+  fresh HIL coverage.
+- The ESP-IDF example now exposes the same user-visible commands, help,
+  diagnostics, status output, register access, comparator controls, stress
+  paths, and self-test flow as the Arduino CLI without including Arduino CLI
+  sources or compatibility facades.
+- `examples/common/` is now Arduino example glue only; the IDF example owns its
+  native stdio CLI, GPIO, timing, scan, and transport code.
+- Release-facing documentation now has an explicit `docs/README.md` index.
+  Historical audit and hardening reports were moved under `docs/archive/`.
+- README validation wording now distinguishes limited COM19 HIL evidence from
+  hardware validation that remains pending.
+
+### Fixed
+- Typed config and comparator setters no longer commit cached configuration changes when their I2C writes fail.
+- Raw register helpers now reject pointers outside the ADS1115 `0x00..0x03` map, and reject conversion-register writes to read-only `0x00`, before touching the bus.
+- Example diagnostic error strings now include granular `I2C_*` status codes.
+- `readBlocking()` now has a finite escape path if an injected clock hook stops advancing.
+- Arduino CLI address selection now preserves the previously initialized driver
+  and transport callbacks when probing an absent requested address.
+- HIL capture waits for the CLI prompt before sending the next command, avoiding
+  overlapped long-running stress commands.
 
 ## [1.0.0] - 2026-04-05
 
 ### Changed
-- Promoted to v1.0.0 — the library is fully featured and production-ready.
+- Promoted to v1.0.0 as a feature-complete, production-oriented API-stable candidate pending dated hardware validation evidence.
+- Hardware/build validation status must be tracked through explicit run logs,
+  not inferred from this changelog entry.
 
 ## [0.4.0] - 2026-04-05
 
@@ -71,7 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Unified example framework helpers under `examples/common/*` (`BuildConfig`, `BusDiag`, `CliShell`, `HealthView`, `TransportAdapter`).
-- `docs/IDF_PORT.md` and `docs/UNIFICATION_STANDARD.md` for standardized porting and unification guidance.
+- `docs/IDF_PORT.md` for standardized ESP-IDF portability guidance.
 - CLI/timing contract checks via `tools/check_cli_contract.py` and `tools/check_core_timing_guard.py`.
 
 ### Changed
@@ -103,7 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...v0.3.0

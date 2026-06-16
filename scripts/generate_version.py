@@ -88,6 +88,14 @@ def _parse_semver(version: str) -> Tuple[int, int, int]:
     return tuple(int(part) for part in match.groups())
 
 
+def _extract_first_group(path: Path, pattern: str, label: str) -> str:
+    text = _read_text(path)
+    match = re.search(pattern, text, re.MULTILINE)
+    if not match:
+        raise ValueError(f"Unable to read {label} from {path}")
+    return match.group(1).strip()
+
+
 def _bump_semver(version: str, part: str) -> str:
     major, minor, patch = _parse_semver(version)
     if part == "major":
@@ -373,6 +381,56 @@ def _expected_outputs(project_root: Path) -> Dict[Path, str]:
     return outputs
 
 
+def _expected_version(project_root: Path) -> str:
+    library_data = _load_library_json(project_root / "library.json")
+    version = str(library_data.get("version", "0.0.0"))
+    _parse_semver(version)
+    return version
+
+
+def _check_version_metadata(project_root: Path, quiet: bool) -> bool:
+    expected = _expected_version(project_root)
+    sources: Dict[str, str] = {"library.json": expected}
+
+    idf_component = project_root / "idf_component.yml"
+    if idf_component.exists():
+        sources["idf_component.yml"] = _extract_first_group(
+            idf_component,
+            r'^\s*version\s*:\s*["\']?([^"\'\s#]+)',
+            "idf_component.yml version",
+        )
+
+    doxyfile = project_root / "Doxyfile"
+    if doxyfile.exists():
+        sources["Doxyfile PROJECT_NUMBER"] = _extract_first_group(
+            doxyfile,
+            r"^\s*PROJECT_NUMBER\s*=\s*\"?([^\"\n#]+)",
+            "Doxyfile PROJECT_NUMBER",
+        )
+
+    version_header = _resolve_namespace_dir(project_root) / "Version.h"
+    if version_header.exists():
+        sources["Version.h"] = _extract_first_group(
+            version_header,
+            r'^\s*#\s*define\s+\w+_VERSION_STRING\s+"([^"]+)"',
+            "Version.h version string",
+        )
+
+    clean = True
+    for source, observed in sources.items():
+        if observed != expected:
+            clean = False
+            print(f"Version mismatch: {source} observed={observed}, expected={expected}")
+
+    if clean and not quiet:
+        print(
+            "Version metadata aligned: "
+            + ", ".join(f"{source}={version}" for source, version in sources.items())
+        )
+
+    return clean
+
+
 def _sync_outputs(project_root: Path, check_only: bool, quiet: bool) -> bool:
     outputs = _expected_outputs(project_root)
     clean = True
@@ -401,6 +459,35 @@ def _set_version(project_root: Path, new_version: str) -> str:
     data = _load_library_json(library_json)
     data["version"] = new_version
     _write_library_json(library_json, data)
+
+    idf_component = project_root / "idf_component.yml"
+    if idf_component.exists():
+        text = _read_text(idf_component)
+        updated = re.sub(
+            r'^(\s*version\s*:\s*)["\']?([^"\'\s#]+)["\']?',
+            rf'\1"{new_version}"',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if updated == text:
+            raise ValueError(f"Unable to update version in {idf_component}")
+        _write_text(idf_component, updated)
+
+    doxyfile = project_root / "Doxyfile"
+    if doxyfile.exists():
+        text = _read_text(doxyfile)
+        updated = re.sub(
+            r"^(\s*PROJECT_NUMBER\s*=\s*).*$",
+            rf'\1"{new_version}"',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if updated == text:
+            raise ValueError(f"Unable to update PROJECT_NUMBER in {doxyfile}")
+        _write_text(doxyfile, updated)
+
     return new_version
 
 
@@ -428,7 +515,9 @@ def main(args: List[str]) -> int:
         _sync_outputs(project_root, check_only=False, quiet=False)
         return 0
     if command == "check":
-        return 0 if _sync_outputs(project_root, check_only=True, quiet=False) else 1
+        outputs_clean = _sync_outputs(project_root, check_only=True, quiet=False)
+        metadata_clean = _check_version_metadata(project_root, quiet=False)
+        return 0 if outputs_clean and metadata_clean else 1
     if command == "bump":
         if len(args) != 2:
             print(_usage(), file=sys.stderr)

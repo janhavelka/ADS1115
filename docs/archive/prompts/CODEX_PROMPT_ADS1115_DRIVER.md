@@ -1,13 +1,16 @@
-﻿# Codex Prompt: Production-Grade ADS1115 I2C Driver Library (ESP32 Arduino / PlatformIO)
+﻿# Codex Prompt: Production-Oriented ADS1115 I2C Driver Library (ESP32 Arduino / PlatformIO)
 
-You are an expert embedded engineer. Implement a **production-grade, reusable ADS1115 16-bit ADC driver library** for **ESP32-S2 / ESP32-S3** using **Arduino framework** under **PlatformIO**.
+Historical prompt text for building a **production-oriented, reusable ADS1115
+16-bit ADC driver library** for **ESP32-S2 / ESP32-S3** using **Arduino
+framework** under **PlatformIO**. Current release-readiness claims are governed
+by the README and hardening reports, not this archived prompt.
 
 ---
 
 ## Baseline Contracts (DO NOT RESTATE)
 
 - **`AGENTS.md`** defines: repository layout, non-blocking architecture, injected I2C transport rules, deterministic tick behavior, managed synchronous driver pattern, transport wrapper architecture, health tracking, and DriverState model.
-- **`ADS1115_Register_Reference.md`** is the authoritative register map (if provided).
+- **`include/ADS1115/CommandTable.h`** is the authoritative register map.
 - **Do not duplicate those requirements.** Implement them and only document what is *not already covered*.
 
 ---
@@ -562,15 +565,15 @@ extra_scripts = pre:scripts/generate_version.py
 {
   "name": "ADS1115",
   "version": "1.0.0",
-  "description": "Production-grade ADS1115 16-bit ADC driver",
+  "description": "Production-oriented ADS1115 16-bit ADC driver",
   "keywords": ["ads1115", "adc", "analog", "i2c", "16-bit"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/ADS1115.git"
+    "url": "https://github.com/janhavelka/ADS1115.git"
   },
   "authors": [
     {
-      "name": "Your Name"
+      "name": "Thymos Solution s.r.o"
     }
   ],
   "license": "MIT",
@@ -597,7 +600,7 @@ extra_scripts = pre:scripts/generate_version.py
 
 ## Final Output
 
-Generate all repository files with correct, compile-ready, production-quality code.
-Ensure examples build for ESP32-S3.
+Generate all repository files with correct, compile-ready, production-oriented code.
+Ensure examples are buildable for ESP32-S3.
 
 **Now implement the full library.**
