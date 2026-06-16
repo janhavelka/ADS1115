@@ -8,8 +8,7 @@ material and raw evidence.
 | Document | Purpose |
 | --- | --- |
 | `../README.md` | Primary user documentation, API behavior, examples, and validation summary. |
-| `../CHANGELOG.md` | Release history and migration notes. |
-| `RELEASE_1_1_0.md` | Release notes, validation scope, and wording guidance for `v1.1.0`. |
+| `../CHANGELOG.md` | Release history, release notes, and migration notes. |
 | `IDF_PORT.md` | ESP-IDF integration contract, adapter requirements, and error-mapping limits. |
 | `ADS1115_HARDWARE_VALIDATION_PLAN.md` | Operator procedure for complete hardware validation. |
 | `ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` | Blank template for dated hardware validation runs. |

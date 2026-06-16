@@ -19,11 +19,11 @@ Source: ADS111x datasheet Rev. E, pp. 1, 3, 12, 25-27.
 | Byte order | Big-endian, MSB first. |
 | Address range | `0x48` to `0x4B`. |
 | Default Config | `0x8583`. |
+| Clock stretching | ADS111x does not perform clock stretching and never pulls SCL low; other devices on the same bus still may. |
 
 ## Not documented in PDFs
 
 | Missing or ambiguous fact | Source status |
 | --- | --- |
 | A dedicated ADS1115 device-ID register | The ADS111x register map has no ID register. Presence checks must use I2C acknowledgement or sane register read/write behavior. |
-| Clock stretching behavior | The datasheet states ADS111x cannot drive SCL as targets; it does not document clock-stretch timing. |
 | Read data from unlisted pointer values | Pointer bits are only `00b` through `11b`; bits 7:2 are write-only reserved and must be zero. |

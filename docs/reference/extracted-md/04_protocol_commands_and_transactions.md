@@ -49,7 +49,11 @@ Source: ADS111x datasheet Rev. E, p. 20.
 
 ## SMBus alert response
 
-ADS1114 and ADS1115 can respond to the SMBus alert response when `ALERT/RDY` is asserted. The lowest-address asserting device wins arbitration and clears according to comparator/ready behavior.
+ADS1114 and ADS1115 can respond to the SMBus alert response when `ALERT/RDY`
+is asserted by the comparator. In latching comparator mode, the lowest-address
+asserting device wins arbitration and a successful alert response clears the
+latch. Do not treat SMBus alert response as the normal conversion-ready clear
+path.
 
 Source: ADS111x datasheet Rev. E, pp. 16-17.
 

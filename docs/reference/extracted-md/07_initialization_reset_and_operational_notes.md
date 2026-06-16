@@ -22,6 +22,8 @@ Source: ADS111x datasheet Rev. E, pp. 18, 20.
 2. Set pointer to Conversion register.
 3. Read conversion samples at or below the selected data rate.
 4. If changing MUX or PGA, write a new Config value and allow a new conversion period before trusting the result.
+5. A config change during continuous conversion completes the current conversion
+   with the previous settings before the new settings affect later conversions.
 
 ## Operational cautions
 

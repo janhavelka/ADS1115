@@ -465,8 +465,7 @@ remaining hardware validation must follow
 ## Documentation
 
 - `docs/README.md` - documentation map and current-vs-archive guidance
-- `docs/RELEASE_1_1_0.md` - release notes and wording guidance for `v1.1.0`
-- `CHANGELOG.md` - full release history
+- `CHANGELOG.md` - full release history, release notes, and migration notes
 - `docs/IDF_PORT.md` - ESP-IDF portability guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - HIL operator plan and evidence requirements
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - blank results template for dated hardware runs

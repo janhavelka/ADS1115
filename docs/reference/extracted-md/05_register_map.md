@@ -4,7 +4,7 @@ Source: ADS111x datasheet Rev. E, pp. 24-27.
 
 | Pointer | Register | Access | Reset | Driver notes |
 | --- | --- | --- | --- | --- |
-| `00b` | Conversion | R | `0x0000` | Last conversion result, signed two's-complement. |
+| `00b` | Conversion | R | `0x0000` | Last conversion result, signed two's-complement; remains reset value until the first conversion completes. |
 | `01b` | Config | R/W | `0x8583` | OS/status, MUX, PGA, mode, data rate, comparator config. |
 | `10b` | Lo_thresh | R/W | `0x8000` | Comparator low threshold; ADS1114/ADS1115 only. |
 | `11b` | Hi_thresh | R/W | `0x7FFF` | Comparator high threshold; ADS1114/ADS1115 only. |
@@ -40,7 +40,12 @@ Source: ADS111x datasheet Rev. E, p. 25.
 
 ## Threshold registers
 
-The comparator thresholds are signed two's-complement values in the same code format as the conversion register. When PGA settings change, threshold codes must be recalculated. Conversion-ready mode is enabled by setting the Hi_thresh MSB to 1 and Lo_thresh MSB to 0.
+The comparator thresholds are signed two's-complement values in the same code
+format as the conversion register. When PGA settings change, threshold codes
+must be recalculated. Conversion-ready mode is enabled by setting the
+Hi_thresh MSB to 1 and Lo_thresh MSB to 0, with `COMP_QUE` set to an enabled
+value instead of `11b`. `COMP_POL` still controls ready-pulse polarity;
+`COMP_MODE` and `COMP_LAT` do not control the ready-pulse behavior.
 
 Source: ADS111x datasheet Rev. E, p. 27.
 

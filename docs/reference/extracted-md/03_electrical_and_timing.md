@@ -47,4 +47,12 @@ Source: ADS111x datasheet Rev. E, p. 26.
 
 - In single-shot mode, write `OS=1` to start a conversion, then poll `OS` or wait based on data rate.
 - At 860 SPS, a conversion takes about 1.2 ms; lower rates take longer.
+- The data-rate oscillator tolerance is about +/-10%; deadline calculations
+  should include margin for the slow side or verify completion by polling `OS`.
 - High-speed I2C requires the controller-code entry sequence `00001XXXb` before transfers at up to 3.4 MHz.
+
+## Input source impedance
+
+The ADS111x analog input is a switched-capacitor front end. Source impedance,
+external filtering, and mux changes can affect settling and accuracy. Buffer
+high-impedance sources or allow adequate settling when measured accuracy matters.

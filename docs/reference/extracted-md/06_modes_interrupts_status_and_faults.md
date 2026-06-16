@@ -35,6 +35,10 @@ The ALERT/RDY pin can also be configured for conversion-ready signaling by
 setting Hi_thresh MSB to 1 and Lo_thresh MSB to 0. In continuous conversion the
 ready pulse can be approximately 8 us, so polling tasks can miss it unless the
 hardware path uses an interrupt-capable input, latching, or OS-bit polling.
+Ready signaling also requires `COMP_QUE` to be enabled; `COMP_QUE=11b`
+disables the output. `COMP_POL` controls active-low versus active-high
+ready-pulse polarity, and the open-drain pin needs a pullup. `COMP_MODE` and
+`COMP_LAT` do not affect conversion-ready behavior.
 
 Source: ADS111x datasheet Rev. E, pp. 16-17, 26-27.
 
