@@ -160,7 +160,7 @@ detail and document any coarse mappings in the adapter.
 
 | Method | Description |
 |--------|-------------|
-| `probe()` | Check device presence without updating health counters; preserves distinguishable I2C errors except definite address NACK maps to `DEVICE_NOT_FOUND` |
+| `probe()` | Check initialized-address CONFIG-register reachability without updating health counters; preserves distinguishable I2C errors except definite address NACK maps to `DEVICE_NOT_FOUND` |
 | `recover()` | Re-validate comms, clear conversion state, and re-apply cached config |
 | `getSettings(snap)` | Populate a `SettingsSnapshot` with cached config, hook availability, and runtime state (no I2C) |
 | `readRegister16(reg, value)` | Read a raw 16-bit register using tracked I2C |
@@ -192,7 +192,7 @@ the cached settings are fully rewritten and read back successfully.
 | `readRaw(out)` | Read signed two's-complement conversion data |
 | `readLatestRaw(out)` | Read the conversion register immediately without readiness checks |
 | `readVoltage(volts)` | Read conversion data and scale it using the active gain |
-| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion and wait with a finite deadline; requires `Config::nowMs`; continuous mode returns the latest register value immediately |
+| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion and wait with a finite deadline; requires `Config::nowMs` and `1 <= timeoutMs <= INT32_MAX`; continuous mode returns the latest register value immediately |
 | `readBlockingVoltage(volts, timeoutMs)` | Blocking read with voltage scaling; requires `Config::nowMs` |
 | `startSingleShot(...)` / `pollSingleShot(nowMs, maxInstructions)` | Poll-chunked single-shot job with explicit per-poll transport budget |
 | `startApplyConfigJob()` / `pollApplyConfig(nowMs, maxInstructions)` | Poll-chunked cached-config apply job with optional strict/dirty readback |
@@ -222,7 +222,8 @@ and direct timing-based readiness checks do not advance by elapsed time. Use
 ALERT/RDY GPIO readiness path remains supported in no-clock mode once that
 external service timebase has anchored and advanced the pending conversion.
 Blocking reads return `INVALID_CONFIG` before starting a conversion when `nowMs`
-is missing.
+is missing. Invalid timeout values (`0` or values above `INT32_MAX`) return
+`INVALID_PARAM` before starting a conversion.
 
 ### Poll-Chunked Execution
 
@@ -277,6 +278,11 @@ If a multi-register update is partially written and then fails, the driver sets
 `hardwareConfigDirtyError()`. `getSettings()` exposes the same fields. Dirty
 state clears only after a successful full resync, such as `recover()` or another
 successful full apply path.
+Single-register CONFIG or threshold write attempts that return an uncertain
+transport error also mark clean hardware/cache state dirty, because the device
+may have accepted the bytes before the adapter reported failure. Existing dirty
+diagnostics are preserved until a later partial apply failure or successful full
+resync provides clearer evidence.
 The compatibility names `isHardwareConfigDirty()`, `isHardwareConfigUncertain()`,
 `lastConfigApplyError()`, `SettingsSnapshot::hardwareConfigUncertain`, and
 `SettingsSnapshot::lastConfigApplyError` map to the same dirty diagnostic.
@@ -357,7 +363,7 @@ policies in their transport callbacks.
 | Example | Intent | Evidence/limits |
 | --- | --- | --- |
 | Arduino CLI | Diagnostic bring-up and HIL operator interface. | Reports active address, version, driver state, cached settings, and raw-write dirty diagnostics. Uses Arduino `Wire` global timeout rather than a production shared-bus manager. |
-| ESP-IDF basic | Native build/integration template. | Owns bus context in the adapter, locks I2C transactions with a mutex, propagates timeout values, and uses coarse `esp_err_t` mapping. It does not prove precise address-NACK/data-NACK taxonomy; see `docs/IDF_PORT.md`. |
+| ESP-IDF basic | Native build/integration template. | Owns bus context in the adapter, propagates timeout values, and uses coarse `esp_err_t` mapping. It is externally serialized and does not include a shared-bus mutex; see `docs/IDF_PORT.md`. |
 
 ### Example Helpers (`examples/common/`)
 
@@ -437,6 +443,13 @@ manual validation. A bus scan showing multiple ADS1115-range addresses is not a
 validation result until the operator explicitly selects each address and runs the
 intended checks.
 
+`tools/run_i2c_hil.py` is the standardized serial HIL runner for the diagnostic
+CLI. It drives the existing commands `version`, `scan`, `addr`, `probe`,
+`settings`, `drv` (health), and one bounded `read`, then classifies only serial
+tokens and health counters. It does not flash firmware, fake a device, or prove
+analog accuracy. Use `tools/hil_ads1115_capture.py` for the broader operator
+transcript suites used by the hardware validation plan.
+
 ## Validation
 
 CI-backed checks configured in `.github/workflows/ci.yml` run on `main`,
@@ -449,6 +462,8 @@ python scripts/generate_version.py check
 pio test -e native
 python tools/check_idf_example_contract.py
 python tools/check_cli_contract.py
+python tools/run_i2c_hil.py --parser-test
+python tools/run_i2c_hil.py --dry-run
 pio run -e esp32s3dev
 pio run -e esp32s2dev
 pio pkg pack

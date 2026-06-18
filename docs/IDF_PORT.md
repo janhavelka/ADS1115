@@ -18,9 +18,10 @@ Last audited: 2026-06-02
   starting conversion when no clock hook is configured.
 - A pure ESP-IDF example exists at `examples/esp_idf/basic`. The merged example
   uses a native stdio CLI with command coverage matching the Arduino diagnostic
-  CLI, split IDF transport files, external bus context, mutex locking, timeout
-  propagation, coarse ESP-IDF error mapping, and periodic `tick()` scheduling.
-  Hardware behavior still requires board validation.
+  CLI, split IDF transport files, external bus context, timeout propagation,
+  coarse ESP-IDF error mapping, and periodic `tick()` scheduling. It is
+  externally serialized and does not include a shared-bus mutex. Hardware
+  behavior still requires board validation.
 
 ## ESP-IDF Adapter Requirements
 To run under pure ESP-IDF, provide:
@@ -71,7 +72,7 @@ target, and bus instrumentation prove a finer distinction.
 | ESP-IDF error/fault | Current mapping | Precision limitation | Production recommendation |
 | --- | --- | --- | --- |
 | `ESP_OK` | `Err::OK` | None for transaction success. | Keep as success. |
-| `ESP_ERR_TIMEOUT` or mutex take timeout | `Err::I2C_TIMEOUT` | Cannot by itself distinguish clock stretch, missing device, arbitration, or a held bus. | Log ESP-IDF error, bus state, target address, and recovery action; add bus-level diagnostics where needed. |
+| `ESP_ERR_TIMEOUT` | `Err::I2C_TIMEOUT` | Cannot by itself distinguish clock stretch, missing device, arbitration, or a held bus. | Log ESP-IDF error, bus state, target address, and recovery action; add bus-level diagnostics where needed. |
 | `ESP_ERR_INVALID_STATE`, `ESP_ERR_INVALID_ARG` | `Err::I2C_BUS` or validation error before I2C | Usually adapter/configuration or bus state, not a proven ADS1115 fault. | Treat as integration/configuration failure; fix adapter setup before hardware conclusions. |
 | Address NACK / missing target | Usually `Err::I2C_ERROR` or `Err::I2C_TIMEOUT` from the example | The example does not prove reliable `I2C_NACK_ADDR` classification. | Validate with scope/logic analyzer or target-specific IDF diagnostics before mapping to `I2C_NACK_ADDR`. |
 | Data NACK during payload | Usually `Err::I2C_ERROR` from the example | The example does not prove reliable `I2C_NACK_DATA` classification. | Only map to `I2C_NACK_DATA` if the adapter can prove payload-phase NACK. |

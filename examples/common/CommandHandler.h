@@ -20,6 +20,10 @@ namespace cmd {
  * @return true if a complete line was read, false otherwise.
  */
 inline bool readLine(char* buffer, size_t bufSize) {
+  if (buffer == nullptr || bufSize == 0) {
+    return false;
+  }
+
   static char cmdBuf[128];
   static size_t cmdLen = 0;
 

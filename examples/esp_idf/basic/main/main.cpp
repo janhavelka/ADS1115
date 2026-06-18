@@ -147,6 +147,10 @@ const char* errToStr(ADS1115::Err err) {
     case Err::I2C_NACK_DATA: return "I2C_NACK_DATA";
     case Err::I2C_TIMEOUT: return "I2C_TIMEOUT";
     case Err::I2C_BUS: return "I2C_BUS";
+    case Err::OFFLINE: return "OFFLINE";
+    case Err::UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
+    case Err::READBACK_MISMATCH: return "READBACK_MISMATCH";
+    case Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
     default: return "UNKNOWN";
   }
 }
@@ -321,7 +325,7 @@ void printDriverHealth() {
   const uint32_t now = nowMs();
   const uint32_t ok = device.totalSuccess();
   const uint32_t fail = device.totalFailures();
-  const uint32_t total = ok + fail;
+  const uint64_t total = static_cast<uint64_t>(ok) + static_cast<uint64_t>(fail);
   const float rate = total > 0U ? (100.0f * static_cast<float>(ok)) / static_cast<float>(total) : 0.0f;
   const ADS1115::Status lastErr = device.lastError();
 
@@ -358,7 +362,7 @@ void printDriverHealth() {
 void printCompactHealth() {
   const uint32_t ok = device.totalSuccess();
   const uint32_t fail = device.totalFailures();
-  const uint32_t total = ok + fail;
+  const uint64_t total = static_cast<uint64_t>(ok) + static_cast<uint64_t>(fail);
   const float rate = total > 0U ? (100.0f * static_cast<float>(ok)) / static_cast<float>(total) : 0.0f;
   std::printf("Health: state=%s online=%s consec=%u ok=%lu fail=%lu rate=%.1f%%\n",
               stateToStr(device.state()),

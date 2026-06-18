@@ -121,8 +121,12 @@ inline void printHealthVerbose(ADS1115::ADS1115& driver) {
   const bool online = driver.isOnline();
   const uint32_t totalSuccess = driver.totalSuccess();
   const uint32_t totalFailures = driver.totalFailures();
-  uint32_t total = totalSuccess + totalFailures;
-  float successRate = (total > 0) ? (100.0f * totalSuccess / total) : 0.0f;
+  const uint64_t total = static_cast<uint64_t>(totalSuccess) +
+                         static_cast<uint64_t>(totalFailures);
+  const float successRate =
+      (total > 0U)
+          ? (100.0f * static_cast<float>(totalSuccess) / static_cast<float>(total))
+          : 0.0f;
 
   LOG_SERIAL.println();
   LOGI("=== Driver Health ===");

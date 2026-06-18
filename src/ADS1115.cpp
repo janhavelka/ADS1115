@@ -110,6 +110,14 @@ bool isDefiniteAddressAbsence(Err err) {
   return err == Err::I2C_NACK_ADDR;
 }
 
+bool isUncertainWriteFailure(Err err) {
+  return err == Err::I2C_ERROR ||
+         err == Err::TIMEOUT ||
+         err == Err::I2C_NACK_DATA ||
+         err == Err::I2C_TIMEOUT ||
+         err == Err::I2C_BUS;
+}
+
 bool elapsedAtLeast(uint32_t startMs, uint32_t intervalMs, uint32_t nowMs) {
   return (nowMs - startMs) >= intervalMs;
 }
@@ -214,7 +222,7 @@ Status ADS1115::begin(const Config& config) {
     return failure;
   };
 
-  Status st = probe();
+  Status st = _probeRaw();
   if (!st.ok()) {
     return failBeginAfterConfig(st);
   }
@@ -285,6 +293,7 @@ Status ADS1115::shutdown() {
 
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
 
@@ -300,6 +309,13 @@ Status ADS1115::shutdown() {
 // ============================================================================
 
 Status ADS1115::probe() {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  return _probeRaw();
+}
+
+Status ADS1115::_probeRaw() {
   uint16_t configReg = 0;
   Status st = _readRegister16Raw(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
@@ -402,6 +418,9 @@ Status ADS1115::startConversion() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_isOffline()) {
+    return _offlineStatus();
+  }
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
@@ -412,6 +431,7 @@ Status ADS1115::startConversion() {
   uint16_t configReg = _buildConfigRegister() | cmd::OS_START;
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
 
@@ -424,6 +444,9 @@ Status ADS1115::startConversion() {
 Status ADS1115::startConversion(Mux mux) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
@@ -442,6 +465,7 @@ Status ADS1115::startConversion(Mux mux) {
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, configReg);
   if (!st.ok()) {
     _config.mux = prevMux;
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
 
@@ -470,6 +494,9 @@ Status ADS1115::_readConversionReadyAt(uint32_t nowMs, bool& ready) {
   ready = false;
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_isOffline()) {
+    return _offlineStatus();
   }
   if (_conversionReady) {
     ready = true;
@@ -579,6 +606,9 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
   }
   if (_config.nowMs == nullptr) {
     return Status::Error(Err::INVALID_CONFIG, "nowMs required for blocking reads");
+  }
+  if (timeoutMs == 0 || timeoutMs > static_cast<uint32_t>(INT32_MAX)) {
+    return Status::Error(Err::INVALID_PARAM, "Invalid blocking timeout");
   }
   if (_config.mode == Mode::CONTINUOUS) {
     return readRaw(out);
@@ -1042,6 +1072,7 @@ Status ADS1115::writeConfig(uint16_t config) {
 
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, config);
   if (!st.ok()) {
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
 
@@ -1077,6 +1108,7 @@ Status ADS1115::setThresholds(int16_t low, int16_t high) {
 
   Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
   if (!st.ok()) {
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
   st = _writeRegister16Tracked(cmd::REG_HI_THRESH, static_cast<uint16_t>(high));
@@ -1312,13 +1344,18 @@ PollResult ADS1115::_finishJob(uint8_t instructionsUsed) {
 PollResult ADS1115::_failJob(const Status& status, uint8_t instructionsUsed) {
   const bool mayHaveTouchedConfig =
       _jobState == JobState::SINGLE_SHOT_WRITE_CONFIG ||
+      _jobState == JobState::APPLY_WRITE_LOW_THRESHOLD ||
       _jobState == JobState::APPLY_WRITE_HIGH_THRESHOLD ||
       _jobState == JobState::APPLY_WRITE_CONFIG ||
       _jobState == JobState::APPLY_VERIFY_LOW_THRESHOLD ||
       _jobState == JobState::APPLY_VERIFY_HIGH_THRESHOLD ||
       _jobState == JobState::APPLY_VERIFY_CONFIG;
   if (instructionsUsed > 0 && mayHaveTouchedConfig && status.code != Err::OFFLINE) {
-    _markHardwareConfigDirty(status);
+    if (_jobState == JobState::APPLY_WRITE_LOW_THRESHOLD) {
+      _markHardwareConfigDirtyIfClean(status);
+    } else {
+      _markHardwareConfigDirty(status);
+    }
   }
 
   _jobActive = false;
@@ -1529,6 +1566,7 @@ Status ADS1115::_applyConfig() {
   Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH,
                                       static_cast<uint16_t>(_config.compThresholdLow));
   if (!st.ok()) {
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
   st = _writeRegister16Tracked(cmd::REG_HI_THRESH,
@@ -1568,6 +1606,7 @@ Status ADS1115::_applyConfig() {
 Status ADS1115::_writeConfigOnly() {
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, _buildConfigRegister());
   if (!st.ok()) {
+    _markHardwareConfigDirtyIfClean(st);
     return st;
   }
 
@@ -1640,6 +1679,13 @@ Status ADS1115::_verifyJobReadback(uint8_t reg, uint16_t expected, const char* m
 void ADS1115::_markHardwareConfigDirty(const Status& st) {
   _hardwareConfigDirty = true;
   _hardwareConfigDirtyError = st;
+}
+
+void ADS1115::_markHardwareConfigDirtyIfClean(const Status& st) {
+  if (_hardwareConfigDirty || !isUncertainWriteFailure(st.code)) {
+    return;
+  }
+  _markHardwareConfigDirty(st);
 }
 
 void ADS1115::_clearHardwareConfigDirty() {

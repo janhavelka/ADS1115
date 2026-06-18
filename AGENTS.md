@@ -12,6 +12,20 @@ You are a professional embedded software engineer building a production-grade AD
 - Work chunk-by-chunk; do not perform broad refactors during hardening prompts.
 - Keep implementation changes scoped to the current prompt and the existing
   architecture unless the prompt explicitly authorizes a wider change.
+- Prefer simplicity, clarity, correctness, robustness, safety, and readability
+  over clever abstractions or speculative flexibility.
+- Before coding, inspect whether existing code can be simplified, reused, or
+  deleted.
+- Prefer deleting unnecessary code over adding new code.
+- Prefer extending existing owners, modules, APIs, and contracts over creating
+  parallel abstractions.
+- Before adding a new service, class, file, interface, or abstraction, check
+  whether an existing owner or module is the correct home.
+- Add abstractions only for a concrete current need with a clear caller or test.
+- Do not add placeholder classes, future stubs, empty managers, broad
+  frameworks, plugin systems, registries, generic layers, or speculative
+  extension points unless the current task explicitly requires them.
+- Preserve dirty user changes; never revert unrelated work.
 - Preserve the framework-neutral core in `include/` and `src/`.
 - No Arduino, Wire, ESP-IDF, FreeRTOS, logging framework, global bus, pin
   ownership, task, or framework delay dependencies may be introduced into the
@@ -77,11 +91,21 @@ Rules:
 ## Core Engineering Rules (Mandatory)
 
 - Deterministic: no unbounded loops/waits; all timeouts via deadlines, never `delay()` in library code.
+- No unbounded waits, retries, loops, allocations, queues, or buffers in steady
+  paths.
 - Non-blocking lifecycle: `Status begin(const Config&)`, `void tick(uint32_t nowMs)`, `void end()`.
 - Any I/O that can exceed ~1-2 ms must be split into state machine steps driven by `tick()`.
 - No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
+- Avoid dynamic allocation in steady embedded paths unless it is already an
+  accepted local pattern and the bound is clear.
 - No logging in library code; examples may log.
 - No macros for constants; use `static constexpr`. Macros only for conditional compile or logging helpers.
+- Every hardware operation that can block must have a timeout and an observable
+  failure path.
+- Recovery logic must be bounded, deterministic, and testable.
+- Prefer explicit state, explicit ownership, and small local helpers over hidden
+  global state.
+- Do not hide hardware failures behind silent retries or fake success.
 - Public/core library headers and `src/` must not require Arduino or ESP-IDF
   framework headers unless a platform-specific adapter is explicitly documented.
 - The core library is not thread-safe and is not ISR-safe. Applications must
@@ -98,13 +122,23 @@ Rules:
 
 ## I2C Manager + Transport (Required)
 
+- The I2C bus must have one clear owner.
 - The library MUST NOT own I2C. It never touches `Wire` directly.
 - `Config` MUST accept a transport adapter (function pointers or abstract interface).
+- I2C transactions must be timeout-bounded and report errors clearly.
 - Transport errors MUST map to `Status` (no leaking `Wire`, `esp_err_t`, etc.).
 - The library MUST NOT configure bus timeouts or pins.
 - The library MUST remain transport-injected and non-owning of the I2C bus.
   Bus handles, pins, clock rate, timeout policy, bus recovery, and locking
   belong to the application or example adapter, not the core library.
+- Device drivers must not directly own or reconfigure a shared bus unless this
+  repository's architecture explicitly says so.
+- Keep chip-level protocol code inside the driver or wrapper. Keep application
+  policy outside the chip driver.
+- Do not implement chip protocols manually if an existing hardened project
+  library already provides the needed timeout, recovery, and testability
+  behavior.
+- Do not add fake devices, simulated buses, or test doubles to production paths.
 - Example adapters that are diagnostic-only must say so. Production examples
   must demonstrate shared-bus ownership, external serialization/locking, timeout
   policy, and nonblocking tick scheduling.

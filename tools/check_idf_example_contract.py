@@ -137,6 +137,13 @@ def main() -> int:
         if token in transport:
             fail(f"ESP-IDF transport contains forbidden Arduino/facade token '{token}'")
 
+    readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
+    idf_docs = (ROOT / "docs" / "IDF_PORT.md").read_text(encoding="utf-8", errors="replace")
+    for label, text in (("README", readme), ("IDF_PORT", idf_docs)):
+        if "mutex locking" in text or "locks I2C transactions with a mutex" in text:
+            fail(f"{label} claims ESP-IDF mutex locking that the example does not implement")
+        require_token(text, "does not include a shared-bus mutex", label)
+
     cli = (ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp").read_text(
         encoding="utf-8", errors="replace"
     )

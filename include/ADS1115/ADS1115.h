@@ -147,7 +147,11 @@ public:
   const Config& getConfig() const { return _config; }
 
   // === Diagnostics (no health tracking) ===
-  /// Probe the device without updating health counters.
+  /// Probe ADS1115 CONFIG-register reachability without updating health counters.
+  /// ADS1115 has no chip-ID register; this is a diagnostic I2C/register
+  /// plausibility check, not identity proof.
+  /// Requires a successfully initialized driver. begin() uses the same raw
+  /// CONFIG-register probe internally before the driver is marked initialized.
   /// Address NACK maps to DEVICE_NOT_FOUND; distinguishable timeout, bus, data
   /// NACK, and generic I2C failures are preserved.
   /// Transaction count: one CONFIG read.
@@ -167,6 +171,8 @@ public:
   // === Driver State ===
   /// @return Current coarse driver state.
   DriverState state() const { return _driverState; }
+  /// @return Compatibility alias for state().
+  DriverState driverState() const { return state(); }
   /// @return true when the driver is READY or DEGRADED.
   bool isOnline() const {
     return _driverState == DriverState::READY ||
@@ -504,10 +510,12 @@ private:
 
   // === Internal ===
   Status _readConversionReadyAt(uint32_t nowMs, bool& ready);
+  Status _probeRaw();
   Status _applyConfig();
   Status _writeConfigOnly();
   Status _verifyConfigReadback();
   void _markHardwareConfigDirty(const Status& st);
+  void _markHardwareConfigDirtyIfClean(const Status& st);
   void _clearHardwareConfigDirty();
   uint16_t _buildConfigRegister() const;
   uint16_t _buildConfigRegisterForMux(Mux mux) const;
