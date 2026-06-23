@@ -28,7 +28,7 @@ static constexpr int I2C_SDA = 8;
 static constexpr int I2C_SCL = 9;
 static constexpr uint32_t I2C_FREQ_HZ = 400000U;
 static constexpr uint16_t I2C_TIMEOUT_MS = 50U;
-static constexpr uint8_t ADS1115_I2C_ADDR = 0x48U;
+static constexpr uint8_t DEFAULT_ADS1115_ADDRESS = 0x48U;
 static constexpr int ALERT_RDY_PIN = -1;
 static constexpr size_t MAX_LINE_LEN = 128U;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
@@ -41,6 +41,9 @@ static constexpr const char* COLOR_CYAN = "\033[36m";
 
 ADS1115::ADS1115 device;
 bool verboseMode = false;
+uint8_t activeI2cAddress = DEFAULT_ADS1115_ADDRESS;
+uint8_t requestedI2cAddress = DEFAULT_ADS1115_ADDRESS;
+ADS1115::Status lastAddressSelectionStatus = ADS1115::Status::Ok();
 
 uint32_t nowMs() {
   return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
@@ -130,6 +133,10 @@ bool parseBool01(const char* token, bool& out) {
   return true;
 }
 
+bool isValidAds1115Address(uint32_t address) {
+  return address >= 0x48U && address <= 0x4BU;
+}
+
 const char* errToStr(ADS1115::Err err) {
   using ADS1115::Err;
   switch (err) {
@@ -151,8 +158,104 @@ const char* errToStr(ADS1115::Err err) {
     case Err::UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
     case Err::READBACK_MISMATCH: return "READBACK_MISMATCH";
     case Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
+    case Err::CLOCK_STALLED: return "CLOCK_STALLED";
     default: return "UNKNOWN";
   }
+}
+
+void printActiveAddress() {
+  std::printf("  Active ADS1115 address: 0x%02X\n", activeI2cAddress);
+  std::printf("  Requested ADS1115 address: 0x%02X\n", requestedI2cAddress);
+  if (device.isInitialized()) {
+    std::printf("  Initialized driver address: 0x%02X\n", activeI2cAddress);
+  } else {
+    std::printf("  Initialized driver address: NONE\n");
+  }
+  if (requestedI2cAddress != activeI2cAddress) {
+    if (device.isInitialized()) {
+      std::printf("  Address note: requested 0x%02X is not initialized; functional commands use 0x%02X\n",
+                  requestedI2cAddress,
+                  activeI2cAddress);
+    } else {
+      std::printf("  Address note: requested 0x%02X is not initialized; no functional address is ready\n",
+                  requestedI2cAddress);
+    }
+  }
+  if (!lastAddressSelectionStatus.ok()) {
+    std::printf("  Last address selection error: %s detail=%ld msg=%s\n",
+                errToStr(lastAddressSelectionStatus.code),
+                static_cast<long>(lastAddressSelectionStatus.detail),
+                lastAddressSelectionStatus.msg ? lastAddressSelectionStatus.msg : "");
+  }
+}
+
+ADS1115::Config makeDriverConfig(uint8_t address) {
+  ADS1115::Config cfg;
+  cfg.i2cWrite = ads1115IdfWrite;
+  cfg.i2cWriteRead = ads1115IdfWriteRead;
+  cfg.i2cUser = &ads1115IdfTransportContext();
+  cfg.nowMs = ads1115IdfNowMs;
+  cfg.cooperativeYield = ads1115IdfYield;
+  cfg.i2cAddress = address;
+  cfg.i2cTimeoutMs = I2C_TIMEOUT_MS;
+  cfg.offlineThreshold = 5;
+  if (ALERT_RDY_PIN >= 0) {
+    cfg.alertRdyPin = ALERT_RDY_PIN;
+    cfg.gpioRead = readAlertRdyPin;
+  }
+  return cfg;
+}
+
+ADS1115::Status probeAddressRaw(uint8_t address) {
+  Ads1115IdfI2cTransport& ctx = ads1115IdfTransportContext();
+  if (ctx.bus == nullptr) {
+    return ADS1115::Status::Error(ADS1115::Err::INVALID_CONFIG, "IDF I2C bus missing");
+  }
+  const esp_err_t err = i2c_master_probe(ctx.bus, address, I2C_TIMEOUT_MS);
+  if (err == ESP_OK) {
+    return ADS1115::Status::Ok();
+  }
+  if (err == ESP_ERR_TIMEOUT) {
+    return ADS1115::Status::Error(ADS1115::Err::I2C_TIMEOUT, "ESP-IDF I2C probe timeout", err);
+  }
+  if (err == ESP_ERR_INVALID_ARG || err == ESP_ERR_INVALID_STATE) {
+    return ADS1115::Status::Error(ADS1115::Err::I2C_BUS, "ESP-IDF I2C probe bus error", err);
+  }
+  return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "ESP-IDF I2C probe error", err);
+}
+
+ADS1115::Status beginDriverAtAddress(uint8_t address) {
+  if (!isValidAds1115Address(address)) {
+    lastAddressSelectionStatus =
+        ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM,
+                               "Invalid ADS1115 address",
+                               static_cast<int32_t>(address));
+    return lastAddressSelectionStatus;
+  }
+
+  requestedI2cAddress = address;
+  ADS1115::Status st = probeAddressRaw(address);
+  if (!st.ok()) {
+    lastAddressSelectionStatus = st;
+    return st;
+  }
+
+  device.end();
+  if (!ads1115IdfInitI2c(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS, address)) {
+    lastAddressSelectionStatus =
+        ADS1115::Status::Error(ADS1115::Err::I2C_BUS,
+                               "ESP-IDF I2C address reinit failed",
+                               ads1115IdfLastError());
+    return lastAddressSelectionStatus;
+  }
+
+  st = device.begin(makeDriverConfig(address));
+  lastAddressSelectionStatus = st;
+  if (st.ok()) {
+    activeI2cAddress = address;
+    requestedI2cAddress = address;
+  }
+  return st;
 }
 
 const char* stateToStr(ADS1115::DriverState state) {
@@ -403,6 +506,7 @@ void printHelp() {
   printHelpItem("help / ?", "Show this help");
   printHelpItem("version / ver", "Print firmware and library version info");
   printHelpItem("scan", "Scan I2C bus");
+  printHelpItem("addr [0x48..0x4B]", "Show or select ADS1115 address");
   printHelpItem("read", "Read single conversion (blocking)");
   printHelpItem("readv", "Read single conversion as voltage (blocking)");
   printHelpItem("read N", "Read N conversions");
@@ -477,7 +581,7 @@ void scanBus() {
   for (uint8_t addr = 0x08U; addr <= 0x77U; ++addr) {
     const esp_err_t err = i2c_master_probe(ctx.bus, addr, I2C_TIMEOUT_MS);
     if (err == ESP_OK) {
-      std::printf("  0x%02X%s\n", addr, addr == ADS1115_I2C_ADDR ? " (ADS1115 configured)" : "");
+      std::printf("  0x%02X%s\n", addr, addr == activeI2cAddress ? " (ADS1115 active)" : "");
       ++found;
     }
   }
@@ -540,7 +644,12 @@ void printConfig() {
 
 void printSettingsSnapshot() {
   ADS1115::SettingsSnapshot snap;
-  (void)device.getSettings(snap);
+  ADS1115::Status st = device.getSettings(snap);
+  if (!st.ok()) {
+    printStatus(st);
+    return;
+  }
+
   std::printf("=== Cached Settings ===\n");
   std::printf("  Initialized: %s\n", snap.initialized ? "YES" : "NO");
   std::printf("  State: %s\n", stateToStr(snap.state));
@@ -551,6 +660,19 @@ void printSettingsSnapshot() {
               snap.hasNowMsHook ? "YES" : "NO",
               snap.hasGpioReadHook ? "YES" : "NO",
               snap.hasCooperativeYieldHook ? "YES" : "NO");
+  std::printf("  Timebase available: %s\n",
+              snap.timebaseAvailable ? "YES" : "NO");
+  std::printf("  Hardware/cache dirty: %s\n",
+              snap.hardwareConfigDirty ? "YES" : "NO");
+  if (snap.hardwareConfigDirty) {
+    std::printf("  Dirty error: %s detail=%ld msg=%s\n",
+                errToStr(snap.hardwareConfigDirtyError.code),
+                static_cast<long>(snap.hardwareConfigDirtyError.detail),
+                snap.hardwareConfigDirtyError.msg ? snap.hardwareConfigDirtyError.msg : "");
+    if (snap.hardwareConfigDirtyAddress != 0x00U) {
+      std::printf("  Dirty address: 0x%02X\n", snap.hardwareConfigDirtyAddress);
+    }
+  }
   std::printf("  Alert pin: %d\n", snap.alertRdyPin);
   std::printf("  ALERT/RDY pin configured: %s\n", snap.alertRdyPinConfigured ? "YES" : "NO");
   std::printf("  Conversion-ready mode: %s\n", snap.conversionReadyModeEnabled ? "YES" : "NO");
@@ -768,16 +890,24 @@ void runStressMix(uint32_t count) {
         break;
       }
     }
-    if (st.ok() || st.inProgress() || st.code == ADS1115::Err::CONVERSION_NOT_READY) {
+    const bool operationOk =
+        st.ok() || st.inProgress() || st.code == ADS1115::Err::CONVERSION_NOT_READY;
+    ADS1115::Status serviceStatus = device.service(nowMs());
+    const bool serviceOk = serviceStatus.ok();
+    if (!serviceOk && verboseMode) {
+      std::printf("service() reported an I2C/status issue during stress_mix\n");
+      printStatus(serviceStatus);
+    }
+    if (operationOk && serviceOk) {
       ++ok;
     } else {
       ++fail;
+      const ADS1115::Status failure = operationOk ? serviceStatus : st;
       if (firstFailure.ok()) {
-        firstFailure = st;
+        firstFailure = failure;
       }
-      lastFailure = st;
+      lastFailure = failure;
     }
-    device.tick(nowMs());
     printStressProgress(i + 1U, count, ok, fail);
   }
 
@@ -885,7 +1015,10 @@ void runSelfTest() {
       if (!pollStatus.ok() || ready) {
         break;
       }
-      device.tick(nowMs());
+      pollStatus = device.service(nowMs());
+      if (!pollStatus.ok()) {
+        break;
+      }
       sleepMs(1U);
     }
     reportSelftest(stats, "poll after start", pollStatus.ok() && ready,
@@ -1004,14 +1137,40 @@ void processCommand(char* cmd) {
   } else if (std::strcmp(cmd, "scan") == 0) {
     scanBus();
   } else if (std::strcmp(cmd, "state") == 0) {
+    printActiveAddress();
     printCompactHealth();
+  } else if (std::strcmp(cmd, "addr") == 0) {
+    printActiveAddress();
+  } else if ((arg = argAfter(cmd, "addr ")) != nullptr) {
+    uint32_t address = 0;
+    if (!parseU32(arg, address) || !isValidAds1115Address(address)) {
+      std::printf("Usage: addr [0x48|0x49|0x4A|0x4B]\n");
+      return;
+    }
+    std::printf("Selecting ADS1115 address 0x%02lX\n",
+                static_cast<unsigned long>(address));
+    ADS1115::Status st = beginDriverAtAddress(static_cast<uint8_t>(address));
+    printStatus(st);
+    printActiveAddress();
+    if (st.ok()) {
+      printDriverHealth();
+    } else {
+      std::printf("Address selection failed; initialized driver was left unchanged\n");
+    }
   } else if (std::strcmp(cmd, "drv") == 0) {
+    printActiveAddress();
     printDriverHealth();
   } else if (std::strcmp(cmd, "probe") == 0) {
+    printActiveAddress();
     std::printf("Probing device (no health tracking)...\n");
     HealthSnapshot before;
     before.capture();
-    ADS1115::Status st = device.probe();
+    ADS1115::Status st = ADS1115::Status::Ok();
+    if (!device.isInitialized() || requestedI2cAddress != activeI2cAddress) {
+      st = probeAddressRaw(requestedI2cAddress);
+    } else {
+      st = device.probe();
+    }
     printStatus(st);
     HealthSnapshot after;
     after.capture();
@@ -1235,31 +1394,21 @@ void processCommand(char* cmd) {
 bool initDriver() {
   std::printf("=== ADS1115 ESP-IDF Bringup Example ===\n");
   if (!ads1115IdfInitI2c(I2C_SDA, I2C_SCL, I2C_FREQ_HZ, I2C_TIMEOUT_MS,
-                         ADS1115_I2C_ADDR)) {
+                         DEFAULT_ADS1115_ADDRESS)) {
     std::printf("Failed to initialize I2C: %s\n",
                 esp_err_to_name(ads1115IdfLastError()));
     return false;
   }
+  activeI2cAddress = DEFAULT_ADS1115_ADDRESS;
+  requestedI2cAddress = DEFAULT_ADS1115_ADDRESS;
+  lastAddressSelectionStatus = ADS1115::Status::Ok();
   std::printf("I2C initialized (SDA=%d, SCL=%d)\n", I2C_SDA, I2C_SCL);
   initAlertRdyPin();
   scanBus();
 
-  ADS1115::Config cfg;
-  cfg.i2cWrite = ads1115IdfWrite;
-  cfg.i2cWriteRead = ads1115IdfWriteRead;
-  cfg.i2cUser = &ads1115IdfTransportContext();
-  cfg.nowMs = ads1115IdfNowMs;
-  cfg.cooperativeYield = ads1115IdfYield;
-  cfg.i2cAddress = ADS1115_I2C_ADDR;
-  cfg.i2cTimeoutMs = I2C_TIMEOUT_MS;
-  cfg.offlineThreshold = 5;
-  if (ALERT_RDY_PIN >= 0) {
-    cfg.alertRdyPin = ALERT_RDY_PIN;
-    cfg.gpioRead = readAlertRdyPin;
-  }
-
-  ADS1115::Status st = device.begin(cfg);
+  ADS1115::Status st = device.begin(makeDriverConfig(activeI2cAddress));
   if (!st.ok()) {
+    lastAddressSelectionStatus = st;
     std::printf("Failed to initialize device\n");
     printStatus(st);
     return false;
@@ -1278,7 +1427,11 @@ extern "C" void app_main(void) {
 
   char line[MAX_LINE_LEN] = {};
   while (true) {
-    device.tick(nowMs());
+    ADS1115::Status serviceStatus = device.service(nowMs());
+    if (!serviceStatus.ok() && verboseMode) {
+      std::printf("service() reported an I2C/status issue\n");
+      printStatus(serviceStatus);
+    }
     if (std::fgets(line, sizeof(line), stdin) != nullptr) {
       line[sizeof(line) - 1U] = '\0';
       processCommand(line);

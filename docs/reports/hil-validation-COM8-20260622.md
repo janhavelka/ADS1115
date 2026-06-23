@@ -141,6 +141,13 @@ The soak command mix cycled both addresses through reads, voltage reads, continu
 | Medium | Existing live HIL runner was one-address and shallow | Tooling audit and original `run_i2c_hil.py` | Two-device fixture and staged APIs were not covered | Extend runner for repeated addresses, functional suites, benchmarks, soak | Yes |
 | Low | ESP-IDF example remains single-address | `examples/esp_idf/basic/main/main.cpp` uses fixed `ADS1115_I2C_ADDR` | ESP-IDF HIL cannot validate both simultaneous ADS1115 devices without rebuild/edit | Document as limitation or add carefully scoped IDF address selection later | Documented here only |
 
+Post-report follow-up on 2026-06-23: current source now includes host-tested
+fixes for active poll-job interleaving, continuous-mode staged apply, precise
+first single-shot dirty marking, and ESP-IDF `addr <0x48..0x4B>` CLI parity.
+Those fixes are not part of the 2026-06-22 COM8 HIL evidence above and require
+a fresh clean-firmware targeted HIL run before they can be claimed as hardware
+validated.
+
 ## Validation Run
 
 | Command | Result |

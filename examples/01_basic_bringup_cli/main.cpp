@@ -57,6 +57,7 @@ const char* errToStr(ADS1115::Err err) {
     case Err::UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
     case Err::READBACK_MISMATCH:     return "READBACK_MISMATCH";
     case Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
+    case Err::CLOCK_STALLED:         return "CLOCK_STALLED";
     default:                        return "UNKNOWN";
   }
 }

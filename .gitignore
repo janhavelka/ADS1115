@@ -36,6 +36,7 @@ wifi_credentials.h
 *.tmp
 *.bak
 *.log
+hil_logs/
 
 # Auto-generated files
 include/ADS1115/Version.h

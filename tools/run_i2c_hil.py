@@ -43,7 +43,11 @@ VOLTAGE_RE = re.compile(r"\bVoltage:\s*-?\d+(?:\.\d+)?\s*V\b")
 TOTAL_FAILURES_RE = re.compile(r"\bTotal failures:\s*(\d+)\b")
 SELFTEST_RE = re.compile(r"Selftest result:\s*pass=.*?(\d+).*?fail=.*?(\d+).*?skip=.*?(\d+)")
 STRESS_ERRORS_RE = re.compile(r"\bErrors:\s*(\d+)\b")
-STRESS_MIX_FAIL_RE = re.compile(r"\bfail=(\d+)\b")
+STRESS_MIX_SUMMARY_MARKER = "=== stress_mix summary ==="
+STRESS_MIX_TOTAL_RE = re.compile(
+    r"^\s*Total:\s+ok=(\d+)\s+fail=(\d+)\b",
+    re.MULTILINE,
+)
 RATE_RE = re.compile(r"\bRate:\s*([0-9]+(?:\.[0-9]+)?)\s*(samples/s|ops/s)\b")
 DURATION_RE = re.compile(r"\bDuration:\s*(\d+)\s*ms\b")
 FOUND_ADDRESS_RE = re.compile(r"\b(?:0x)?4[89AB]\b", re.IGNORECASE)
@@ -63,6 +67,7 @@ STATUS_FAILURES = {
     "READBACK_MISMATCH",
     "UNSUPPORTED_OPERATION",
     "HARDWARE_CONFIG_DIRTY",
+    "CLOCK_STALLED",
 }
 
 GENERIC_FAILURE_RE = (
@@ -107,6 +112,7 @@ class StepResult:
     elapsed_s: float
     result: str
     notes: str
+    evidence_required: bool = False
 
 
 @dataclasses.dataclass
@@ -199,6 +205,18 @@ def parse_int(pattern: re.Pattern[str], text: str) -> int | None:
         return None
 
 
+def parse_stress_mix_fail_count(text: str) -> int | None:
+    plain = strip_ansi(text)
+    section = plain.rsplit(STRESS_MIX_SUMMARY_MARKER, 1)[-1]
+    matches = list(STRESS_MIX_TOTAL_RE.finditer(section))
+    if not matches:
+        return None
+    try:
+        return int(matches[-1].group(2))
+    except ValueError:
+        return None
+
+
 def validate_output(spec: CommandSpec, text: str) -> str | None:
     plain = strip_ansi(text)
     for validator in spec.validators:
@@ -243,11 +261,11 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
             if errors != 0:
                 return f"stress errors={errors}"
         elif validator == "stress_mix_zero_fail":
-            match = STRESS_MIX_FAIL_RE.search(plain)
-            if not match:
+            failures = parse_stress_mix_fail_count(plain)
+            if failures is None:
                 return "stress_mix fail count not found"
-            if int(match.group(1)) != 0:
-                return f"stress_mix fail={match.group(1)}"
+            if failures != 0:
+                return f"stress_mix fail={failures}"
         elif validator == "job_active":
             if "Active: YES" not in plain:
                 return "job is not active"
@@ -736,6 +754,9 @@ def parser_self_test() -> None:
         (CommandSpec("T", "Job", "job poll", "", ("No active pollable job",), ("no_active_job",)), "No active pollable job\n=== Job Status ===\n  Active: NO\n> ", RESULT_PASS),
         (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=0\n> ", RESULT_PASS),
         (CommandSpec("T", "Stress", "stress 10", "", ("=== Stress Summary ===",), ("stress_zero_errors", "rate_report")), "=== Stress Summary ===\n  Errors: 0\n  Duration: 123 ms\n  Rate: 81.30 samples/s\n> ", RESULT_PASS),
+        (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "op=read ok=1 fail=0\n=== stress_mix summary ===\nTotal: ok=2 fail=1\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "=== stress_mix summary ===\nTotal: ok=3 fail=0\n> ", RESULT_PASS),
+        (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "=== stress_mix summary ===\nTotal: ok=1 fail=2\n> ", RESULT_FAIL),
         (CommandSpec("T", "Invalid", "ch 4", "", ("Invalid channel",), ("invalid_or_usage",), expected_failure=True), "Invalid channel\n> ", RESULT_PASS),
         (CommandSpec("T", "Invalid", "comp th -32769 0", "", ("Thresholds must be",), ("invalid_or_usage",), expected_failure=True), "Thresholds must be in int16 range\n> ", RESULT_PASS),
     ]
@@ -743,6 +764,21 @@ def parser_self_test() -> None:
         result, reason = classify_output(spec, output)
         if result != expected:
             raise AssertionError(f"{spec.feature}: expected {expected}, got {result} ({reason})")
+    verdict_rows = [
+        StepResult("V1", "Digital", "version", "", "", 0.0, RESULT_PASS, ""),
+        StepResult("V2", "Analog", "read", "", "", 0.0, RESULT_UNKNOWN, "",
+                   evidence_required=True),
+    ]
+    if contract_verdict(verdict_rows, dry_run=False) != RESULT_PASS:
+        raise AssertionError("contract verdict should ignore evidence-only UNKNOWN")
+    if evidence_verdict(verdict_rows, dry_run=False) != RESULT_UNKNOWN:
+        raise AssertionError("evidence verdict should surface missing evidence")
+    if final_verdict(verdict_rows, dry_run=False) != RESULT_UNKNOWN:
+        raise AssertionError("final verdict should remain UNKNOWN when evidence is missing")
+    if process_exit_code(RESULT_UNKNOWN, fail_on_unknown=False) != 0:
+        raise AssertionError("UNKNOWN should not fail exploratory runs")
+    if process_exit_code(RESULT_UNKNOWN, fail_on_unknown=True) != 1:
+        raise AssertionError("--fail-on-unknown should fail UNKNOWN final verdicts")
     print("ADS1115 HIL parser self-test PASSED")
 
 
@@ -847,6 +883,7 @@ def run_one_step(
         elapsed_s=elapsed,
         result=result,
         notes=(spec.notes + ("; " if spec.notes and reason else "") + reason).strip(),
+        evidence_required=spec.unknown_on_pass,
     )
 
 
@@ -862,6 +899,9 @@ def write_markdown_summary(
     soak: SoakStats | None = None,
 ) -> None:
     counts = Counter(row.result for row in rows)
+    verdict = final_verdict(rows, dry_run=False)
+    contract = contract_verdict(rows, dry_run=False)
+    evidence = evidence_verdict(rows, dry_run=False)
     with path.open("w", encoding="utf-8", newline="\n") as out:
         out.write("# ADS1115 HIL Runner Summary\n\n")
         out.write(f"- Generated: {dt.datetime.now().isoformat(timespec='seconds')}\n")
@@ -873,6 +913,9 @@ def write_markdown_summary(
             f"- Results: PASS={counts[RESULT_PASS]} FAIL={counts[RESULT_FAIL]} "
             f"UNKNOWN={counts[RESULT_UNKNOWN]} NOT_RUN={counts[RESULT_NOT_RUN]}\n"
         )
+        out.write(f"- Contract verdict: {contract}\n")
+        out.write(f"- Evidence verdict: {evidence}\n")
+        out.write(f"- Final verdict: {verdict}\n")
         if soak is not None:
             end = soak.end or dt.datetime.now()
             duration = (end - soak.start).total_seconds()
@@ -885,14 +928,15 @@ def write_markdown_summary(
             out.write(f"- Soak worst read latency: {soak.worst_read_latency_s:.3f} s\n")
             out.write(f"- Soak max consecutive failures: {soak.max_consecutive_failures}\n")
         out.write("\n")
-        out.write("| Test ID | Feature | Command | Expected | Observed | Elapsed s | Result | Notes |\n")
-        out.write("| --- | --- | --- | --- | --- | ---: | --- | --- |\n")
+        out.write("| Test ID | Feature | Command | Expected | Observed | Elapsed s | Result | Evidence | Notes |\n")
+        out.write("| --- | --- | --- | --- | --- | ---: | --- | --- | --- |\n")
         for row in rows:
             out.write(
                 f"| {markdown_escape(row.test_id)} | {markdown_escape(row.feature)} | "
                 f"`{markdown_escape(row.command)}` | {markdown_escape(row.expected)} | "
                 f"{markdown_escape(row.observed)} | {row.elapsed_s:.3f} | "
-                f"{row.result} | {markdown_escape(row.notes)} |\n"
+                f"{row.result} | {'required' if row.evidence_required else ''} | "
+                f"{markdown_escape(row.notes)} |\n"
             )
 
 
@@ -913,6 +957,7 @@ def dry_run_rows(specs: Iterable[CommandSpec]) -> list[StepResult]:
             elapsed_s=0.0,
             result=RESULT_DRY_RUN,
             notes=spec.notes,
+            evidence_required=spec.unknown_on_pass,
         )
         for spec in specs
     ]
@@ -1052,6 +1097,33 @@ def final_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
     return RESULT_PASS
 
 
+def contract_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
+    if dry_run:
+        return RESULT_DRY_RUN
+    return RESULT_FAIL if any(row.result == RESULT_FAIL for row in rows) else RESULT_PASS
+
+
+def evidence_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
+    if dry_run:
+        return RESULT_DRY_RUN
+    evidence_rows = [row for row in rows if row.evidence_required]
+    if not evidence_rows:
+        return RESULT_NOT_RUN
+    if any(row.result == RESULT_FAIL for row in evidence_rows):
+        return RESULT_FAIL
+    if any(row.result == RESULT_UNKNOWN for row in evidence_rows):
+        return RESULT_UNKNOWN
+    return RESULT_PASS
+
+
+def process_exit_code(verdict: str, *, fail_on_unknown: bool) -> int:
+    if verdict == RESULT_FAIL:
+        return 1
+    if fail_on_unknown and verdict == RESULT_UNKNOWN:
+        return 1
+    return 0
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="Serial port, for example COM8 or /dev/ttyUSB0")
@@ -1067,6 +1139,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--verbose", action="store_true", help="Echo transcript while running")
     parser.add_argument("--stop-on-fail", action="store_true")
+    parser.add_argument("--fail-on-unknown", action="store_true",
+                        help="Return nonzero when the final verdict is UNKNOWN")
     parser.add_argument("--reset-before", action="store_true", help="Toggle serial reset lines before reading boot transcript")
     parser.add_argument("--soak", action="store_true", help="Run bounded soak loop after the command plan")
     parser.add_argument("--soak-duration-s", type=float, default=DEFAULT_SOAK_DURATION_S)
@@ -1093,8 +1167,12 @@ def main(argv: list[str]) -> int:
         parser_self_test()
         rows = dry_run_rows(specs)
         verdict = final_verdict(rows, dry_run=True)
+        contract = contract_verdict(rows, dry_run=True)
+        evidence = evidence_verdict(rows, dry_run=True)
+        print(f"Contract verdict: {contract}")
+        print(f"Evidence verdict: {evidence}")
         print(f"Final verdict: {verdict}")
-        return 0
+        return process_exit_code(verdict, fail_on_unknown=args.fail_on_unknown)
 
     if not args.port:
         print("--port is required unless --dry-run or --parser-test is used", file=sys.stderr)
@@ -1103,14 +1181,18 @@ def main(argv: list[str]) -> int:
     rows, transcript_path, summary_path = run_live(args, specs)
     counts = Counter(row.result for row in rows)
     verdict = final_verdict(rows, dry_run=False)
+    contract = contract_verdict(rows, dry_run=False)
+    evidence = evidence_verdict(rows, dry_run=False)
     print(f"Saved transcript: {transcript_path}")
     print(f"Saved summary: {summary_path}")
     print(
         f"Counts: PASS={counts[RESULT_PASS]} FAIL={counts[RESULT_FAIL]} "
         f"UNKNOWN={counts[RESULT_UNKNOWN]} NOT_RUN={counts[RESULT_NOT_RUN]}"
     )
+    print(f"Contract verdict: {contract}")
+    print(f"Evidence verdict: {evidence}")
     print(f"Final verdict: {verdict}")
-    return 1 if verdict == RESULT_FAIL else 0
+    return process_exit_code(verdict, fail_on_unknown=args.fail_on_unknown)
 
 
 if __name__ == "__main__":

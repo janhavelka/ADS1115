@@ -117,7 +117,7 @@ jobs:
       - name: Check ADS1115 HIL runner parser
         run: |
           python tools/run_i2c_hil.py --parser-test
-          python tools/run_i2c_hil.py --dry-run
+          python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
           python tools/hil_ads1115_capture.py --dry-run --suite identity
 
       - name: Enforce ESP-IDF example contract

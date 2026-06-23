@@ -54,6 +54,7 @@ inline const char* errToString(ADS1115::Err err) {
     case ADS1115::Err::UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
     case ADS1115::Err::READBACK_MISMATCH:     return "READBACK_MISMATCH";
     case ADS1115::Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
+    case ADS1115::Err::CLOCK_STALLED:         return "CLOCK_STALLED";
     default:                                  return "UNKNOWN";
   }
 }

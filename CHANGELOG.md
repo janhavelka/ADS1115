@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No entries.
+### Added
+- Appended `Err::CLOCK_STALLED` for blocking waits whose injected monotonic
+  clock does not advance.
+- `SettingsSnapshot::hardwareConfigDirtyAddress` for preserving the address
+  associated with dirty hardware/cache diagnostics.
+- HIL runner `--fail-on-unknown`, contract/evidence verdict reporting, and
+  summary-anchored `stress_mix` failure parsing.
+
+### Changed
+- `readBlocking()` now waits for a fresh continuous-mode sample instead of
+  returning the latest continuous conversion register immediately.
+- `startApplyConfigJob()` now supports normal continuous-mode conversion state
+  and only rejects active single-shot conversions.
+- The ESP-IDF diagnostic example now supports `addr <0x48..0x4B>`, reports
+  dirty/timebase settings fields, and uses `service(nowMs)` for observable
+  periodic driver work.
+- `bool conversionReady()` is now explicitly marked compatibility-only;
+  examples and normal tests use `readConversionReady(bool&)`.
+
+### Fixed
+- First poll-single-shot CONFIG write failures no longer mark hardware/cache
+  dirty for definite address absence.
+- `stress_mix` HIL validation no longer accepts an earlier progress `fail=0`
+  when the final summary reports failures.
 
 ## [1.1.0] - 2026-06-02
 

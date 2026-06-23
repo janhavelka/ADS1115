@@ -26,7 +26,8 @@ enum class Err : uint8_t {
   OFFLINE,                   ///< Driver is offline; normal public I2C paths are blocked until recover() succeeds
   UNSUPPORTED_OPERATION,     ///< Requested operation is not valid for the current driver/device mode
   READBACK_MISMATCH,         ///< Strict register read-back did not match the expected writable fields
-  HARDWARE_CONFIG_DIRTY      ///< Hardware/cache synchronization is known dirty or stale
+  HARDWARE_CONFIG_DIRTY,     ///< Hardware/cache synchronization is known dirty or stale
+  CLOCK_STALLED              ///< Supplied monotonic timebase did not advance while waiting
 };
 
 /// @brief Status structure returned by all fallible operations.

@@ -59,6 +59,7 @@ struct SettingsSnapshot {
   bool hasCooperativeYieldHook = false;
   bool hardwareConfigDirty = false;
   Status hardwareConfigDirtyError = Status::Ok();
+  uint8_t hardwareConfigDirtyAddress = 0x00;
   bool hardwareConfigUncertain = false;
   Status lastConfigApplyError = Status::Ok();
   int alertRdyPin = -1;
@@ -216,12 +217,12 @@ public:
   /// continuous mode, or Err::BUSY when a single-shot conversion is already active.
   Status startConversion(Mux mux);
 
-  /// Convenience wrapper around readConversionReady(). Returns false when the
-  /// driver is not initialized or when the underlying CONFIG read fails. False
-  /// therefore means either "not ready" or "error"; production code should use
-  /// readConversionReady(bool&) or conversionReady(bool&) when the distinction
-  /// matters.
+  /// Compatibility wrapper around readConversionReady(). Returns false when the
+  /// driver is not initialized or when the readiness path fails. False therefore
+  /// means either "not ready" or "error"; production code should use
+  /// readConversionReady(bool&) when the distinction matters.
   /// @return true when conversion data is ready to read.
+  [[deprecated("Use readConversionReady(bool&)")]]
   bool conversionReady();
 
   /// Alias for readConversionReady() with explicit error reporting.
@@ -264,27 +265,32 @@ public:
   /// @return Status::Ok() on a successful register read.
   Status readLatestRaw(int16_t& out);
 
-  /// Start or join a single-shot conversion and wait with a finite deadline.
+  /// Start or join a single-shot conversion, or wait for a fresh continuous
+  /// sample, with a finite deadline.
   /// Requires Config::nowMs; returns INVALID_CONFIG before starting conversion
   /// when no monotonic clock hook is configured.
-  /// In continuous mode this returns the latest conversion register value
-  /// immediately after the nowMs precondition check; timeoutMs is only used for
-  /// single-shot waiting.
-  /// Transaction count: one CONFIG write to start plus conversion-register read;
-  /// OS-bit polling can add CONFIG reads. Worst-case wall time is bounded by
-  /// timeoutMs plus active I2C transaction timeouts. OS-bit polling occurs at
-  /// most once per observed millisecond tick; a stalled clock returns
-  /// Err::TIMEOUT after a finite same-tick guard.
+  /// In continuous mode this waits until the configured data-rate interval marks
+  /// a fresh sample ready, then reads the conversion register. Use
+  /// readLatestRaw() when the caller intentionally wants the current register
+  /// value immediately.
+  /// Transaction count in single-shot mode: one CONFIG write to start plus
+  /// conversion-register read; OS-bit polling can add CONFIG reads. Continuous
+  /// mode performs one conversion-register read after readiness. Worst-case wall
+  /// time is bounded by timeoutMs plus active I2C transaction timeouts. Polling
+  /// occurs at most once per observed millisecond tick when I2C is needed; a
+  /// stalled clock returns Err::CLOCK_STALLED after a finite same-tick guard.
   /// @param[out] out Signed conversion code.
   /// @param timeoutMs Maximum wait in milliseconds.
-  /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires.
+  /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
+  /// or Err::CLOCK_STALLED when the supplied clock stops advancing.
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
 
   /// Blocking read with voltage scaling.
   /// Requires Config::nowMs under the same contract as readBlocking().
   /// @param[out] volts Converted input voltage.
   /// @param timeoutMs Maximum wait in milliseconds.
-  /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires.
+  /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
+  /// or Err::CLOCK_STALLED when the supplied clock stops advancing.
   Status readBlockingVoltage(float& volts, uint32_t timeoutMs = 200);
 
   /// Start a poll-chunked single-shot conversion job without performing I2C.
@@ -300,6 +306,7 @@ public:
   Status startSingleShot(Mux mux);
 
   /// Advance a single-shot job by at most maxInstructions transport callbacks.
+  /// maxInstructions is clamped to 3; passing 0 performs no transport work.
   /// Delay gates return with instructionsUsed == 0.
   /// @param nowMs Current monotonic time in milliseconds.
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
@@ -309,12 +316,15 @@ public:
   /// Start a staged cached-config apply job without performing I2C.
   /// While any poll-chunked job is active, normal public I2C/configuration APIs
   /// return Err::BUSY; use the matching poll method or cancelJob().
+  /// Normal continuous-mode background conversion state is allowed; an active
+  /// single-shot conversion is rejected with Err::BUSY.
   /// The job writes low threshold, high threshold, CONFIG, and performs strict
   /// or dirty-state readback when required by the current cache state.
   /// @return Err::IN_PROGRESS when the job is scheduled.
   Status startApplyConfigJob();
 
   /// Advance a config-apply job by at most maxInstructions transport callbacks.
+  /// maxInstructions is clamped to 3; passing 0 performs no transport work.
   /// @param nowMs Current monotonic time in milliseconds; reserved for symmetry.
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
   /// @return Job progress, terminal status, and callbacks consumed.
@@ -536,6 +546,8 @@ private:
 
   // === State ===
   static constexpr uint8_t MAX_JOB_INSTRUCTIONS = 3;
+  static constexpr uint16_t kMaxSameTickPolls = 1024U;
+  static constexpr uint8_t kInvalidDirtyAddress = 0x00;
 
   Config _config;
   bool _initialized = false;
@@ -543,6 +555,7 @@ private:
   bool _allowOfflineI2c = false;
   bool _hardwareConfigDirty = false;
   Status _hardwareConfigDirtyError = Status::Ok();
+  uint8_t _hardwareConfigDirtyAddress = kInvalidDirtyAddress;
 
   // === Poll-Chunked Job State ===
   bool _jobActive = false;

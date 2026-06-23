@@ -188,11 +188,11 @@ the cached settings are fully rewritten and read back successfully.
 | `startConversion(mux)` | Start a single-shot conversion after atomically applying a temporary mux |
 | `readConversionReady(ready)` | Report readiness with explicit I2C error status |
 | `conversionReady(ready)` | Alias for `readConversionReady(ready)` with explicit status |
-| `conversionReady()` | Convenience readiness check; `false` means not ready or an error |
+| `conversionReady()` | Compatibility-only readiness check; `false` means not ready or an error |
 | `readRaw(out)` | Read signed two's-complement conversion data |
 | `readLatestRaw(out)` | Read the conversion register immediately without readiness checks |
 | `readVoltage(volts)` | Read conversion data and scale it using the active gain |
-| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion and wait with a finite deadline; requires `Config::nowMs` and `1 <= timeoutMs <= INT32_MAX`; continuous mode returns the latest register value immediately |
+| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion, or wait for a fresh continuous-mode sample, with a finite deadline; requires `Config::nowMs` and `1 <= timeoutMs <= INT32_MAX` |
 | `readBlockingVoltage(volts, timeoutMs)` | Blocking read with voltage scaling; requires `Config::nowMs` |
 | `startSingleShot(...)` / `pollSingleShot(nowMs, maxInstructions)` | Poll-chunked single-shot job with explicit per-poll transport budget |
 | `startApplyConfigJob()` / `pollApplyConfig(nowMs, maxInstructions)` | Poll-chunked cached-config apply job with optional strict/dirty readback |
@@ -203,7 +203,8 @@ pin mode is configured, otherwise by polling the OS bit after the configured
 conversion time. In continuous mode `readRaw()` and `readLatestRaw()` return the
 latest conversion register value immediately, which may be older than the next
 data-rate interval. Use `readConversionReady()` first when the application needs
-a fresh-sample indication.
+a fresh-sample indication, or use `readBlocking()` when the caller can spend a
+bounded wait for the next fresh sample.
 
 `conversionReady()` is a lossy source-compatibility helper. A `false` result can
 mean either "not ready" or "readiness check failed"; production code should use
@@ -223,7 +224,9 @@ ALERT/RDY GPIO readiness path remains supported in no-clock mode once that
 external service timebase has anchored and advanced the pending conversion.
 Blocking reads return `INVALID_CONFIG` before starting a conversion when `nowMs`
 is missing. Invalid timeout values (`0` or values above `INT32_MAX`) return
-`INVALID_PARAM` before starting a conversion.
+`INVALID_PARAM` before starting a conversion. If the injected clock does not
+advance during a blocking wait, the wait exits with `Err::CLOCK_STALLED` and
+`Status::detail` set to the same-tick poll count.
 
 ### Poll-Chunked Execution
 
@@ -235,6 +238,11 @@ is missing. Invalid timeout values (`0` or values above `INT32_MAX`) return
 read with pointer write plus repeated-start read is one instruction, and a 16-bit
 register write is one instruction. The value is clamped to a fixed small maximum
 of 3. Passing `0` performs no transport work.
+
+While any poll-chunked job is active, normal public I2C/configuration APIs return
+`Err::BUSY`; use the matching poll method or `cancelJob()` until the job reaches
+a terminal state. `startApplyConfigJob()` is supported in normal continuous mode;
+it only rejects an active single-shot conversion.
 
 Delay gates do not consume instructions. For example, a single-shot job writes
 CONFIG with the OS/start bit, then later wait polls return
@@ -275,9 +283,10 @@ write. Full resync paths write low threshold, high threshold, and CONFIG.
 
 If a multi-register update is partially written and then fails, the driver sets
 `hardwareConfigDirty()` and preserves the original transport error in
-`hardwareConfigDirtyError()`. `getSettings()` exposes the same fields. Dirty
-state clears only after a successful full resync, such as `recover()` or another
-successful full apply path.
+`hardwareConfigDirtyError()`. `getSettings()` exposes the same fields plus
+`SettingsSnapshot::hardwareConfigDirtyAddress`, which preserves the address used
+when the dirty state was recorded. Dirty state clears only after a successful
+full resync, such as `recover()` or another successful full apply path.
 Single-register CONFIG or threshold write attempts that return an uncertain
 transport error also mark clean hardware/cache state dirty, because the device
 may have accepted the bytes before the adapter reported failure. Existing dirty
@@ -416,12 +425,13 @@ lists nominal transaction counts; strict read-back adds the noted extra reads.
 | `pollApplyConfig()` | 0 to `maxInstructions` transactions, clamped to 3 | Caller-budgeted per poll; strict or dirty readback adds three read transactions across polls |
 | `readBlocking()` | Single-shot start write + readiness polling + conversion read | Bounded by `timeoutMs` plus active I2C transaction timeouts; polls OS at most once per observed millisecond tick |
 
-`readBlocking()` in continuous mode does not wait for a new sample interval; it
-returns the current/latest conversion register value after the same `nowMs`
-precondition check. In single-shot mode, `cooperativeYield` is called between
-poll attempts when supplied. If the injected clock stops advancing, the driver
-returns `Err::TIMEOUT` after a finite same-tick guard rather than spinning
-forever.
+`readBlocking()` in continuous mode waits for a fresh data-rate interval before
+reading the conversion register. Use `readLatestRaw()` when the caller
+intentionally wants the current/latest register value immediately. In
+single-shot mode, `cooperativeYield` is called between poll attempts when
+supplied. If the injected clock stops advancing, the driver returns
+`Err::CLOCK_STALLED` with the same-tick poll count in `Status::detail` rather
+than spinning forever.
 
 ## Hardware Validation Matrix
 
@@ -447,7 +457,10 @@ intended checks.
 CLI. It drives the existing commands `version`, `scan`, `addr`, `probe`,
 `settings`, `drv` (health), and one bounded `read`, then classifies only serial
 tokens and health counters. It does not flash firmware, fake a device, or prove
-analog accuracy. Use `tools/hil_ads1115_capture.py` for the broader operator
+analog accuracy. The runner reports separate contract, evidence, and final
+verdicts; analog rows remain `UNKNOWN` until backed by calibrated fixture or
+operator evidence. Use `--fail-on-unknown` only when `UNKNOWN` should fail a
+release gate. Use `tools/hil_ads1115_capture.py` for the broader operator
 transcript suites used by the hardware validation plan.
 
 ## Validation
@@ -463,7 +476,7 @@ pio test -e native
 python tools/check_idf_example_contract.py
 python tools/check_cli_contract.py
 python tools/run_i2c_hil.py --parser-test
-python tools/run_i2c_hil.py --dry-run
+python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
 pio run -e esp32s3dev
 pio run -e esp32s2dev
 pio pkg pack

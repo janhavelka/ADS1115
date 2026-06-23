@@ -1,6 +1,6 @@
 # ADS1115 ESP-IDF Portability Status
 
-Last audited: 2026-06-02
+Last audited: 2026-06-23
 
 ## Current Reality
 - Primary checked runtime remains PlatformIO + Arduino plus native host tests.
@@ -18,10 +18,11 @@ Last audited: 2026-06-02
   starting conversion when no clock hook is configured.
 - A pure ESP-IDF example exists at `examples/esp_idf/basic`. The merged example
   uses a native stdio CLI with command coverage matching the Arduino diagnostic
-  CLI, split IDF transport files, external bus context, timeout propagation,
-  coarse ESP-IDF error mapping, and periodic `tick()` scheduling. It is
-  externally serialized and does not include a shared-bus mutex. Hardware
-  behavior still requires board validation.
+  CLI, including `addr <0x48..0x4B>` address selection, split IDF transport
+  files, external bus context, timeout propagation, conservative ESP-IDF error
+  mapping, and periodic `service(nowMs)` scheduling. It is externally serialized
+  and does not include a shared-bus mutex. Hardware behavior still requires
+  board validation.
 
 ## ESP-IDF Adapter Requirements
 To run under pure ESP-IDF, provide:
@@ -50,14 +51,18 @@ cfg.cooperativeYield = idfYield;
 ```
 
 ## Porting Notes
-- Keep using `tick(nowMs)` from the application scheduler/task loop.
+- Prefer `service(nowMs)` from the application scheduler/task loop when the
+  caller needs immediate status; `tick(nowMs)` remains a compatibility wrapper
+  that discards that status.
 - Transport callbacks should map native errors to `ADS1115::Status` consistently.
 - Preserve timeout behavior by honoring the `timeoutMs` callback argument.
 - Do not call public driver APIs from ISR context.
 - ADS1115 has no ID register; `strictInitVerify` is a read-back plausibility
   check only and masks dynamic CONFIG OS/status bits.
-- Multi-register write failures can set `hardwareConfigDirty()`. A successful
-  full `recover()` clears dirty state.
+- Multi-register write failures can set `hardwareConfigDirty()`. Settings
+  snapshots include `hardwareConfigDirtyAddress` so diagnostics can preserve the
+  address that was active when dirty state was recorded. A successful full
+  `recover()` clears dirty state.
 - The example enables ESP-IDF internal pull-ups as a convenience. Production
   boards should size external SDA/SCL pull-ups for bus capacitance, speed,
   voltage domain, and sink-current limits.

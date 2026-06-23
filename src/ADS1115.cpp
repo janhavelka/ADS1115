@@ -387,6 +387,7 @@ Status ADS1115::getSettings(SettingsSnapshot& out) const {
   out.hasCooperativeYieldHook = (_config.cooperativeYield != nullptr);
   out.hardwareConfigDirty = _hardwareConfigDirty;
   out.hardwareConfigDirtyError = _hardwareConfigDirtyError;
+  out.hardwareConfigDirtyAddress = _hardwareConfigDirtyAddress;
   out.hardwareConfigUncertain = _hardwareConfigDirty;
   out.lastConfigApplyError = _hardwareConfigDirtyError;
   out.alertRdyPin = _config.alertRdyPin;
@@ -644,29 +645,37 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
   if (_jobActive) {
     return _jobBusyStatus();
   }
-  if (_config.mode == Mode::CONTINUOUS) {
-    return readRaw(out);
-  }
-
-  Status st = startConversion();
-  if (st.code != Err::IN_PROGRESS && st.code != Err::BUSY) {
-    return st;
-  }
-
   const uint32_t nowMs = _nowMs();
-  const uint32_t convTimeMs = getConversionTimeMs();
   const uint32_t deadlineMs = nowMs + timeoutMs;
+  uint32_t readyAtMs = nowMs;
 
-  // Calculate expected ready time, accounting for existing conversion
-  uint32_t readyAtMs;
-  if (st.code == Err::BUSY) {
-    const uint32_t elapsed = nowMs - _conversionStartMs;
-    readyAtMs = (elapsed >= convTimeMs) ? nowMs : (nowMs + convTimeMs - elapsed);
+  if (_config.mode == Mode::CONTINUOUS) {
+    if (!_conversionStarted) {
+      _conversionStarted = true;
+      _conversionReady = false;
+      _conversionStartMs = nowMs;
+    }
+    if (!_conversionReady) {
+      const uint32_t elapsed = nowMs - _conversionStartMs;
+      const uint32_t convTimeMs = getConversionTimeMs();
+      readyAtMs = (elapsed >= convTimeMs) ? nowMs : (nowMs + convTimeMs - elapsed);
+    }
   } else {
-    readyAtMs = nowMs + convTimeMs;
+    Status st = startConversion();
+    if (st.code != Err::IN_PROGRESS && st.code != Err::BUSY) {
+      return st;
+    }
+
+    // Calculate expected ready time, accounting for existing conversion.
+    const uint32_t convTimeMs = getConversionTimeMs();
+    if (st.code == Err::BUSY) {
+      const uint32_t elapsed = nowMs - _conversionStartMs;
+      readyAtMs = (elapsed >= convTimeMs) ? nowMs : (nowMs + convTimeMs - elapsed);
+    } else {
+      readyAtMs = nowMs + convTimeMs;
+    }
   }
 
-  static constexpr uint32_t kMaxSameTickPolls = 65535U;
   uint32_t lastObservedMs = _nowMs();
   uint32_t sameTickPolls = 0;
   uint32_t lastReadyPollMs = 0;
@@ -676,9 +685,12 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     uint32_t loopNowMs = _nowMs();
     if (loopNowMs == lastObservedMs) {
       if (sameTickPolls >= kMaxSameTickPolls) {
-        _conversionStarted = false;
+        if (_config.mode == Mode::SINGLE_SHOT) {
+          _conversionStarted = false;
+        }
         _conversionReady = false;
-        return Status::Error(Err::TIMEOUT, "Conversion timeout");
+        return Status::Error(Err::CLOCK_STALLED, "Timebase did not advance",
+                             static_cast<int32_t>(sameTickPolls));
       }
       sameTickPolls++;
     } else {
@@ -697,19 +709,32 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
     hasReadyPollMs = true;
     lastReadyPollMs = loopNowMs;
 
-    Status readSt = readRaw(out);
-    if (readSt.ok()) {
-      return Status::Ok();
-    }
-    if (readSt.code != Err::CONVERSION_NOT_READY) {
-      return readSt;
+    if (_config.mode == Mode::CONTINUOUS) {
+      bool ready = false;
+      Status readySt = readConversionReady(ready);
+      if (!readySt.ok()) {
+        return readySt;
+      }
+      if (ready) {
+        return readLatestRaw(out);
+      }
+    } else {
+      Status readSt = readRaw(out);
+      if (readSt.ok()) {
+        return Status::Ok();
+      }
+      if (readSt.code != Err::CONVERSION_NOT_READY) {
+        return readSt;
+      }
     }
     _cooperativeYield();
   }
 
   // Timeout: clean up stale conversion state so startConversion() doesn't
   // permanently return BUSY on subsequent calls.
-  _conversionStarted = false;
+  if (_config.mode == Mode::SINGLE_SHOT) {
+    _conversionStarted = false;
+  }
   _conversionReady = false;
   return Status::Error(Err::TIMEOUT, "Conversion timeout");
 }
@@ -744,7 +769,7 @@ Status ADS1115::startSingleShot(Mux mux) {
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
-  if (_conversionStarted) {
+  if (_config.mode == Mode::SINGLE_SHOT && _conversionStarted) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
   }
 
@@ -870,7 +895,7 @@ Status ADS1115::startApplyConfigJob() {
   if (_jobActive) {
     return Status::Error(Err::BUSY, "Job already active");
   }
-  if (_conversionStarted) {
+  if (_config.mode == Mode::SINGLE_SHOT && _conversionStarted) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
   }
 
@@ -1434,7 +1459,8 @@ PollResult ADS1115::_failJob(const Status& status, uint8_t instructionsUsed) {
       _jobState == JobState::APPLY_VERIFY_HIGH_THRESHOLD ||
       _jobState == JobState::APPLY_VERIFY_CONFIG;
   if (instructionsUsed > 0 && mayHaveTouchedConfig && status.code != Err::OFFLINE) {
-    if (_jobState == JobState::APPLY_WRITE_LOW_THRESHOLD) {
+    if (_jobState == JobState::SINGLE_SHOT_WRITE_CONFIG ||
+        _jobState == JobState::APPLY_WRITE_LOW_THRESHOLD) {
       _markHardwareConfigDirtyIfClean(status);
     } else {
       _markHardwareConfigDirty(status);
@@ -1768,6 +1794,7 @@ Status ADS1115::_verifyJobReadback(uint8_t reg, uint16_t expected, const char* m
 void ADS1115::_markHardwareConfigDirty(const Status& st) {
   _hardwareConfigDirty = true;
   _hardwareConfigDirtyError = st;
+  _hardwareConfigDirtyAddress = _config.i2cAddress;
 }
 
 void ADS1115::_markHardwareConfigDirtyIfClean(const Status& st) {
@@ -1780,6 +1807,7 @@ void ADS1115::_markHardwareConfigDirtyIfClean(const Status& st) {
 void ADS1115::_clearHardwareConfigDirty() {
   _hardwareConfigDirty = false;
   _hardwareConfigDirtyError = Status::Ok();
+  _hardwareConfigDirtyAddress = kInvalidDirtyAddress;
 }
 
 uint16_t ADS1115::_buildConfigRegister() const {

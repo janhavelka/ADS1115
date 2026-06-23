@@ -39,6 +39,7 @@ MANDATORY_COMMANDS = [
     "help",
     "version",
     "scan",
+    "addr",
     "read",
     "readv",
     "start",
@@ -66,6 +67,24 @@ MANDATORY_COMMANDS = [
     "stress",
     "stress_mix",
     "selftest",
+]
+REQUIRED_IDF_TOKENS = [
+    "activeI2cAddress",
+    "requestedI2cAddress",
+    "lastAddressSelectionStatus",
+    "isValidAds1115Address",
+    "makeDriverConfig",
+    "probeAddressRaw",
+    "beginDriverAtAddress",
+    "Timebase available",
+    "Hardware/cache dirty",
+    "hardwareConfigDirtyAddress",
+    "device.service(nowMs())",
+]
+REQUIRED_CORE_DIRTY_ADDRESS_TOKENS = [
+    "out.hardwareConfigDirtyAddress = _hardwareConfigDirtyAddress",
+    "_hardwareConfigDirtyAddress = _config.i2cAddress",
+    "_hardwareConfigDirtyAddress = kInvalidDirtyAddress",
 ]
 
 
@@ -116,6 +135,21 @@ def main() -> int:
     for token in FORBIDDEN_IDF_TOKENS:
         if token in idf_main:
             fail(f"ESP-IDF main contains forbidden Arduino/facade token '{token}'")
+    for token in REQUIRED_IDF_TOKENS:
+        require_token(idf_main, token, "ESP-IDF main")
+    if "device.tick(" in idf_main:
+        fail("ESP-IDF main must use device.service(nowMs()) instead of discarding tick() status")
+    if "ADS1115_I2C_ADDR" in idf_main:
+        fail("ESP-IDF main must not use a fixed ADS1115_I2C_ADDR token")
+
+    core = (
+        (ROOT / "src" / "ADS1115.cpp").read_text(encoding="utf-8", errors="replace")
+        + (ROOT / "include" / "ADS1115" / "ADS1115.h").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    )
+    for token in REQUIRED_CORE_DIRTY_ADDRESS_TOKENS:
+        require_token(core, token, "core dirty-address support")
 
     cmake = (
         ROOT / "examples" / "esp_idf" / "basic" / "main" / "CMakeLists.txt"
