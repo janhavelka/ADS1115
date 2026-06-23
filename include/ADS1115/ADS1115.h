@@ -288,6 +288,8 @@ public:
   Status readBlockingVoltage(float& volts, uint32_t timeoutMs = 200);
 
   /// Start a poll-chunked single-shot conversion job without performing I2C.
+  /// While any poll-chunked job is active, normal public I2C/configuration APIs
+  /// return Err::BUSY; use the matching poll method or cancelJob().
   /// Use pollSingleShot() to advance the job with an explicit transaction budget.
   /// @return Err::IN_PROGRESS when the job is scheduled.
   Status startSingleShot();
@@ -305,6 +307,8 @@ public:
   PollResult pollSingleShot(uint32_t nowMs, uint8_t maxInstructions = 1);
 
   /// Start a staged cached-config apply job without performing I2C.
+  /// While any poll-chunked job is active, normal public I2C/configuration APIs
+  /// return Err::BUSY; use the matching poll method or cancelJob().
   /// The job writes low threshold, high threshold, CONFIG, and performs strict
   /// or dirty-state readback when required by the current cache state.
   /// @return Err::IN_PROGRESS when the job is scheduled.
@@ -521,6 +525,7 @@ private:
   uint16_t _buildConfigRegisterForMux(Mux mux) const;
   uint32_t _nowMs() const;
   void _cooperativeYield() const;
+  Status _jobBusyStatus() const;
   uint8_t _instructionBudget(uint8_t maxInstructions) const;
   PollResult _pollResult(Status status, uint8_t instructionsUsed, bool done) const;
   PollResult _finishJob(uint8_t instructionsUsed);

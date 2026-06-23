@@ -245,6 +245,9 @@ Status ADS1115::service(uint32_t nowMs) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
 
   if (_conversionStarted && !_conversionReady) {
     if (_config.nowMs == nullptr && _conversionStartMs == UINT32_MAX) {
@@ -286,6 +289,9 @@ Status ADS1115::shutdown() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
 
   uint16_t configReg = _buildConfigRegister();
   configReg &= static_cast<uint16_t>(~cmd::MASK_MODE);
@@ -312,6 +318,9 @@ Status ADS1115::probe() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   return _probeRaw();
 }
 
@@ -334,6 +343,9 @@ Status ADS1115::_probeRaw() {
 Status ADS1115::recover() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
 
   const bool startedOffline = (_driverState == DriverState::OFFLINE);
@@ -421,6 +433,9 @@ Status ADS1115::startConversion() {
   if (_isOffline()) {
     return _offlineStatus();
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
@@ -450,6 +465,9 @@ Status ADS1115::startConversion(Mux mux) {
   }
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
@@ -486,6 +504,13 @@ Status ADS1115::conversionReady(bool& ready) {
 }
 
 Status ADS1115::readConversionReady(bool& ready) {
+  ready = false;
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   const uint32_t nowMs = (_config.nowMs != nullptr) ? _nowMs() : _conversionStartMs;
   return _readConversionReadyAt(nowMs, ready);
 }
@@ -548,6 +573,9 @@ Status ADS1115::readRaw(int16_t& out) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
 
   if (_config.mode == Mode::SINGLE_SHOT) {
     if (!_conversionReady) {
@@ -568,6 +596,9 @@ Status ADS1115::readRaw(int16_t& out) {
 Status ADS1115::readLatestRaw(int16_t& out) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
 
   uint16_t rawReg = 0;
@@ -609,6 +640,9 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
   }
   if (timeoutMs == 0 || timeoutMs > static_cast<uint32_t>(INT32_MAX)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid blocking timeout");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
   if (_config.mode == Mode::CONTINUOUS) {
     return readRaw(out);
@@ -704,10 +738,13 @@ Status ADS1115::startSingleShot(Mux mux) {
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
-  if (_jobActive || _conversionStarted) {
+  if (_conversionStarted) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
   }
 
@@ -992,6 +1029,9 @@ Status ADS1115::setMux(Mux mux) {
   if (!isValidMux(mux)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mux");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   const Mux oldMux = _config.mux;
   _config.mux = mux;
   Status st = _writeConfigOnly();
@@ -1007,6 +1047,9 @@ Status ADS1115::setGain(Gain gain) {
   }
   if (!isValidGain(gain)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid gain");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
   const Gain oldGain = _config.gain;
   _config.gain = gain;
@@ -1024,6 +1067,9 @@ Status ADS1115::setDataRate(DataRate rate) {
   if (!isValidDataRate(rate)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid data rate");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   const DataRate oldDataRate = _config.dataRate;
   _config.dataRate = rate;
   Status st = _writeConfigOnly();
@@ -1039,6 +1085,9 @@ Status ADS1115::setMode(Mode mode) {
   }
   if (!isValidMode(mode)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid mode");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
   const Mode oldMode = _config.mode;
   const bool oldConversionStarted = _conversionStarted;
@@ -1059,6 +1108,9 @@ Status ADS1115::readConfig(uint16_t& config) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   return readRegister16(cmd::REG_CONFIG, config);
 }
 
@@ -1068,6 +1120,9 @@ Status ADS1115::writeConfig(uint16_t config) {
   }
   if (!isValidConfigValue(config)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid config value");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
 
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, config);
@@ -1105,6 +1160,9 @@ Status ADS1115::setThresholds(int16_t low, int16_t high) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
 
   Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH, static_cast<uint16_t>(low));
   if (!st.ok()) {
@@ -1125,6 +1183,9 @@ Status ADS1115::setThresholds(int16_t low, int16_t high) {
 Status ADS1115::getThresholds(int16_t& low, int16_t& high) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
 
   uint16_t lowReg = 0;
@@ -1152,6 +1213,9 @@ Status ADS1115::setComparatorMode(ComparatorMode mode) {
   if (!isValidCompMode(mode)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator mode");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   const ComparatorMode oldMode = _config.compMode;
   _config.compMode = mode;
   Status st = _writeConfigOnly();
@@ -1167,6 +1231,9 @@ Status ADS1115::setComparatorPolarity(ComparatorPolarity polarity) {
   }
   if (!isValidCompPolarity(polarity)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator polarity");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
   const ComparatorPolarity oldPolarity = _config.compPolarity;
   _config.compPolarity = polarity;
@@ -1184,6 +1251,9 @@ Status ADS1115::setComparatorLatch(ComparatorLatch latch) {
   if (!isValidCompLatch(latch)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator latch");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   const ComparatorLatch oldLatch = _config.compLatch;
   _config.compLatch = latch;
   Status st = _writeConfigOnly();
@@ -1200,6 +1270,9 @@ Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
   if (!isValidCompQueue(queue)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid comparator queue");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   const ComparatorQueue oldQueue = _config.compQueue;
   _config.compQueue = queue;
   Status st = _writeConfigOnly();
@@ -1212,6 +1285,9 @@ Status ADS1115::setComparatorQueue(ComparatorQueue queue) {
 Status ADS1115::enableConversionReadyPin() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
 
   const int16_t oldLow = _config.compThresholdLow;
@@ -1240,6 +1316,9 @@ Status ADS1115::enableConversionReadyPin() {
 Status ADS1115::disableComparator() {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
 
   const ComparatorQueue oldQueue = _config.compQueue;
@@ -1306,6 +1385,10 @@ uint32_t ADS1115::getConversionTimeMs() const {
     index = static_cast<uint8_t>(DataRate::SPS_128);
   }
   return timeTable[index];
+}
+
+Status ADS1115::_jobBusyStatus() const {
+  return Status::Error(Err::BUSY, "Poll job active");
 }
 
 uint8_t ADS1115::_instructionBudget(uint8_t maxInstructions) const {
@@ -1443,6 +1526,9 @@ Status ADS1115::readRegister16(uint8_t reg, uint16_t& value) {
   if (!isValidRegister(reg)) {
     return Status::Error(Err::INVALID_PARAM, "Invalid register");
   }
+  if (_jobActive) {
+    return _jobBusyStatus();
+  }
   return _readRegister16Tracked(reg, value);
 }
 
@@ -1455,6 +1541,9 @@ Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
   }
   if (!isWritableRegister(reg)) {
     return Status::Error(Err::INVALID_PARAM, "Register is read-only");
+  }
+  if (_jobActive) {
+    return _jobBusyStatus();
   }
   Status st = _writeRegister16Tracked(reg, value);
   if (!st.ok()) {

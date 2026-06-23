@@ -166,6 +166,26 @@ const char* stateToStr(ADS1115::DriverState state) {
   }
 }
 
+const char* jobStateToStr(ADS1115::JobState state) {
+  using ADS1115::JobState;
+  switch (state) {
+    case JobState::IDLE: return "IDLE";
+    case JobState::SINGLE_SHOT_WRITE_CONFIG: return "SINGLE_SHOT_WRITE_CONFIG";
+    case JobState::SINGLE_SHOT_WAIT_CONVERSION: return "SINGLE_SHOT_WAIT_CONVERSION";
+    case JobState::SINGLE_SHOT_POLL_READY: return "SINGLE_SHOT_POLL_READY";
+    case JobState::SINGLE_SHOT_READ_CONVERSION: return "SINGLE_SHOT_READ_CONVERSION";
+    case JobState::APPLY_WRITE_LOW_THRESHOLD: return "APPLY_WRITE_LOW_THRESHOLD";
+    case JobState::APPLY_WRITE_HIGH_THRESHOLD: return "APPLY_WRITE_HIGH_THRESHOLD";
+    case JobState::APPLY_WRITE_CONFIG: return "APPLY_WRITE_CONFIG";
+    case JobState::APPLY_VERIFY_LOW_THRESHOLD: return "APPLY_VERIFY_LOW_THRESHOLD";
+    case JobState::APPLY_VERIFY_HIGH_THRESHOLD: return "APPLY_VERIFY_HIGH_THRESHOLD";
+    case JobState::APPLY_VERIFY_CONFIG: return "APPLY_VERIFY_CONFIG";
+    case JobState::COMPLETE: return "COMPLETE";
+    case JobState::FAILED: return "FAILED";
+    default: return "UNKNOWN";
+  }
+}
+
 const char* muxToStr(ADS1115::Mux mux) {
   using ADS1115::Mux;
   switch (mux) {
@@ -391,6 +411,11 @@ void printHelp() {
   printHelpItem("raw", "Read raw value");
   printHelpItem("voltage", "Read as voltage");
   printHelpItem("timing", "Print conversion time and LSB voltage");
+  printHelpItem("job", "Show poll-chunked job state");
+  printHelpItem("job single", "Start poll-chunked single-shot job");
+  printHelpItem("job apply", "Start poll-chunked config apply job");
+  printHelpItem("job poll [0..255]", "Poll active job with bounded instruction budget");
+  printHelpItem("job cancel", "Cancel active poll-chunked job");
 
   std::printf("\n%s[Configuration]%s\n", COLOR_GREEN, COLOR_RESET);
   printHelpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
@@ -418,6 +443,7 @@ void printHelp() {
   printHelpItem("state", "Show compact one-line health summary");
   printHelpItem("probe", "Probe device (no health tracking)");
   printHelpItem("recover", "Manual recovery attempt");
+  printHelpItem("shutdown", "Write single-shot idle while staying initialized");
   printHelpItem("cfg / settings", "Print active configuration snapshot");
   printHelpItem("verbose [0|1]", "Enable/disable verbose output");
   printHelpItem("stress [N]", "Run N conversion cycles");
@@ -545,6 +571,76 @@ void printSettingsSnapshot() {
               snap.conversionReady ? "YES" : "NO",
               static_cast<unsigned long>(snap.conversionStartMs),
               static_cast<int>(snap.lastRawValue));
+}
+
+bool isSingleShotJobState(ADS1115::JobState state) {
+  using ADS1115::JobState;
+  return state == JobState::SINGLE_SHOT_WRITE_CONFIG ||
+         state == JobState::SINGLE_SHOT_WAIT_CONVERSION ||
+         state == JobState::SINGLE_SHOT_POLL_READY ||
+         state == JobState::SINGLE_SHOT_READ_CONVERSION;
+}
+
+bool isApplyJobState(ADS1115::JobState state) {
+  using ADS1115::JobState;
+  return state == JobState::APPLY_WRITE_LOW_THRESHOLD ||
+         state == JobState::APPLY_WRITE_HIGH_THRESHOLD ||
+         state == JobState::APPLY_WRITE_CONFIG ||
+         state == JobState::APPLY_VERIFY_LOW_THRESHOLD ||
+         state == JobState::APPLY_VERIFY_HIGH_THRESHOLD ||
+         state == JobState::APPLY_VERIFY_CONFIG;
+}
+
+void printJobStatus() {
+  std::printf("=== Job Status ===\n");
+  std::printf("  Active: %s\n", device.jobActive() ? "YES" : "NO");
+  std::printf("  State: %s\n", jobStateToStr(device.jobState()));
+  std::printf("  Last raw: %d\n", static_cast<int>(device.lastRawValue()));
+  std::printf("  Last status:\n");
+  printStatus(device.lastJobStatus());
+}
+
+void printPollResult(const ADS1115::PollResult& result) {
+  std::printf("=== Job Poll Result ===\n");
+  printStatus(result.status);
+  std::printf("  Instructions used: %u\n", static_cast<unsigned>(result.instructionsUsed));
+  std::printf("  Done: %s\n", result.done ? "YES" : "NO");
+  std::printf("  State: %s\n", jobStateToStr(result.state));
+  std::printf("  Last raw: %d\n", static_cast<int>(device.lastRawValue()));
+}
+
+void handleJobCommand(const char* cmd) {
+  const char* arg = nullptr;
+  if (std::strcmp(cmd, "job") == 0) {
+    printJobStatus();
+  } else if (std::strcmp(cmd, "job single") == 0) {
+    printStatus(device.startSingleShot());
+    printJobStatus();
+  } else if (std::strcmp(cmd, "job apply") == 0) {
+    printStatus(device.startApplyConfigJob());
+    printJobStatus();
+  } else if (std::strcmp(cmd, "job cancel") == 0) {
+    device.cancelJob();
+    printJobStatus();
+  } else if (std::strcmp(cmd, "job poll") == 0 ||
+             (arg = argAfter(cmd, "job poll ")) != nullptr) {
+    uint32_t budget = 1;
+    if (arg != nullptr && (!parseU32(arg, budget) || budget > 255U)) {
+      std::printf("Usage: job poll [0..255]\n");
+      return;
+    }
+    const ADS1115::JobState state = device.jobState();
+    if (isSingleShotJobState(state)) {
+      printPollResult(device.pollSingleShot(nowMs(), static_cast<uint8_t>(budget)));
+    } else if (isApplyJobState(state)) {
+      printPollResult(device.pollApplyConfig(nowMs(), static_cast<uint8_t>(budget)));
+    } else {
+      std::printf("No active pollable job\n");
+      printJobStatus();
+    }
+  } else {
+    std::printf("Usage: job [single|apply|poll [0..255]|cancel]\n");
+  }
 }
 
 uint32_t stressProgressStep(uint32_t total) {
@@ -932,6 +1028,12 @@ void processCommand(char* cmd) {
     std::printf("  Health changes:\n");
     printHealthDiff(before, after);
     printDriverHealth();
+  } else if (std::strcmp(cmd, "shutdown") == 0) {
+    ADS1115::Status st = device.shutdown();
+    printStatus(st);
+    if (st.ok()) {
+      std::printf("  Mode: %s\n", modeToStr(device.getMode()));
+    }
   } else if (std::strcmp(cmd, "verbose") == 0) {
     std::printf("Verbose mode: %s\n", verboseMode ? "ON" : "OFF");
   } else if ((arg = argAfter(cmd, "verbose ")) != nullptr) {
@@ -1054,6 +1156,8 @@ void processCommand(char* cmd) {
     }
   } else if (std::strcmp(cmd, "timing") == 0) {
     printTimingInfo();
+  } else if (std::strcmp(cmd, "job") == 0 || startsWith(cmd, "job ")) {
+    handleJobCommand(cmd);
   } else if (startsWith(cmd, "comp")) {
     handleCompCommand(cmd);
   } else if (std::strcmp(cmd, "config") == 0 || std::strcmp(cmd, "cfg") == 0 ||

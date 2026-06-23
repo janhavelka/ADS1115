@@ -172,6 +172,16 @@ void forceOffline(ADS1115::ADS1115& dev) {
   dev._consecutiveFailures = dev.getConfig().offlineThreshold;
 }
 
+void assertBusyStatus(const Status& st) {
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY), static_cast<uint8_t>(st.code));
+  TEST_ASSERT_EQUAL_STRING("Poll job active", st.msg);
+}
+
+void assertNoIoSince(const FakeBus& bus, uint32_t writesBefore, uint32_t readsBefore) {
+  TEST_ASSERT_EQUAL_UINT32(writesBefore, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(readsBefore, bus.readCalls);
+}
+
 }  // namespace
 
 void setUp() {}
@@ -1671,6 +1681,74 @@ void test_poll_single_shot_budget_two_reads_ready_and_conversion() {
   TEST_ASSERT_EQUAL_UINT32(2u, bus.readCalls);
 }
 
+void test_poll_single_shot_repeated_zero_budget_does_not_advance_or_touch_bus() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot(Mux::AIN1_GND).inProgress());
+  for (uint8_t i = 0; i < 20; ++i) {
+    PollResult poll = dev.pollSingleShot(bus.nowMs + i, 0);
+    TEST_ASSERT_FALSE(poll.done);
+    TEST_ASSERT_TRUE(poll.status.inProgress());
+    TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::SINGLE_SHOT_WRITE_CONFIG),
+                            static_cast<uint8_t>(poll.state));
+    TEST_ASSERT_TRUE(dev.jobActive());
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mux::AIN0_GND),
+                            static_cast<uint8_t>(dev.getMux()));
+  }
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+
+  PollResult poll = dev.pollSingleShot(bus.nowMs, 1);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::SINGLE_SHOT_WAIT_CONVERSION),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mux::AIN1_GND),
+                          static_cast<uint8_t>(dev.getMux()));
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+}
+
+void test_poll_single_shot_large_budget_is_bounded_and_poll_after_complete_is_stable() {
+  FakeBus bus;
+  bus.reg[cmd::REG_CONVERSION] = 0x8001;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot().inProgress());
+  PollResult poll = dev.pollSingleShot(bus.nowMs, 255);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::SINGLE_SHOT_WAIT_CONVERSION),
+                          static_cast<uint8_t>(poll.state));
+
+  bus.nowMs += dev.getConversionTimeMs();
+  poll = dev.pollSingleShot(bus.nowMs, 255);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT8(2u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::COMPLETE),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_EQUAL_INT16(static_cast<int16_t>(0x8001), dev.lastRawValue());
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(2u, bus.readCalls);
+
+  const uint32_t writesBefore = bus.writeCalls;
+  const uint32_t readsBefore = bus.readCalls;
+  poll = dev.pollSingleShot(bus.nowMs, 255);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::COMPLETE),
+                          static_cast<uint8_t>(poll.state));
+  assertNoIoSince(bus, writesBefore, readsBefore);
+}
+
 void test_poll_single_shot_ready_transport_failure_propagates() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -1730,6 +1808,366 @@ void test_poll_apply_config_budget_and_strict_readback() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::COMPLETE),
                           static_cast<uint8_t>(poll.state));
   TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+}
+
+void test_poll_apply_config_zero_budget_and_large_budget_clamp() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  for (uint8_t i = 0; i < 20; ++i) {
+    PollResult poll = dev.pollApplyConfig(bus.nowMs + i, 0);
+    TEST_ASSERT_FALSE(poll.done);
+    TEST_ASSERT_TRUE(poll.status.inProgress());
+    TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::APPLY_WRITE_LOW_THRESHOLD),
+                            static_cast<uint8_t>(poll.state));
+    TEST_ASSERT_TRUE(dev.jobActive());
+  }
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+
+  PollResult poll = dev.pollApplyConfig(bus.nowMs, 255);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(3u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::APPLY_VERIFY_LOW_THRESHOLD),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_EQUAL_UINT32(3u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+
+  poll = dev.pollApplyConfig(bus.nowMs, 255);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT8(3u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::COMPLETE),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_EQUAL_UINT32(3u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(3u, bus.readCalls);
+
+  const uint32_t writesBefore = bus.writeCalls;
+  const uint32_t readsBefore = bus.readCalls;
+  poll = dev.pollApplyConfig(bus.nowMs, 255);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::COMPLETE),
+                          static_cast<uint8_t>(poll.state));
+  assertNoIoSince(bus, writesBefore, readsBefore);
+}
+
+void test_wrong_job_poller_returns_busy_without_advancing_or_touching_bus() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot().inProgress());
+  PollResult poll = dev.pollApplyConfig(bus.nowMs, 3);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::SINGLE_SHOT_WRITE_CONFIG),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_TRUE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+
+  dev.cancelJob();
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  poll = dev.pollSingleShot(bus.nowMs, 3);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::APPLY_WRITE_LOW_THRESHOLD),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_TRUE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+}
+
+void test_cancel_job_clears_state_without_bus_access_and_allows_restart() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot(Mux::AIN3_GND).inProgress());
+  dev.cancelJob();
+  TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_TRUE(dev.lastJobStatus().ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::IDLE),
+                          static_cast<uint8_t>(dev.jobState()));
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mux::AIN0_GND),
+                          static_cast<uint8_t>(dev.getMux()));
+
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  dev.cancelJob();
+  TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_TRUE(dev.lastJobStatus().ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::IDLE),
+                          static_cast<uint8_t>(dev.jobState()));
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot().inProgress());
+}
+
+void test_active_job_blocks_public_i2c_apis_without_bus_access() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  resetIoCounters(bus);
+
+  bool ready = true;
+  int16_t raw = 0;
+  float volts = 0.0f;
+  uint16_t reg = 0;
+  int16_t low = 0;
+  int16_t high = 0;
+
+  assertBusyStatus(dev.service(bus.nowMs));
+  assertBusyStatus(dev.probe());
+  assertBusyStatus(dev.recover());
+  assertBusyStatus(dev.shutdown());
+  assertBusyStatus(dev.startConversion());
+  assertBusyStatus(dev.startConversion(Mux::AIN2_GND));
+  assertBusyStatus(dev.readConversionReady(ready));
+  TEST_ASSERT_FALSE(ready);
+  assertBusyStatus(dev.readRaw(raw));
+  assertBusyStatus(dev.readVoltage(volts));
+  assertBusyStatus(dev.readLatestRaw(raw));
+  assertBusyStatus(dev.readBlocking(raw, 200));
+  assertBusyStatus(dev.readBlockingVoltage(volts, 200));
+  assertBusyStatus(dev.setMux(Mux::AIN1_GND));
+  assertBusyStatus(dev.setGain(Gain::FSR_0_512V));
+  assertBusyStatus(dev.setDataRate(DataRate::SPS_860));
+  assertBusyStatus(dev.setMode(Mode::CONTINUOUS));
+  assertBusyStatus(dev.readConfig(reg));
+  assertBusyStatus(dev.writeConfig(cmd::CONFIG_DEFAULT));
+  assertBusyStatus(dev.setThresholds(-10, 10));
+  assertBusyStatus(dev.getThresholds(low, high));
+  assertBusyStatus(dev.setComparatorMode(ComparatorMode::WINDOW));
+  assertBusyStatus(dev.setComparatorPolarity(ComparatorPolarity::ACTIVE_HIGH));
+  assertBusyStatus(dev.setComparatorLatch(ComparatorLatch::LATCHING));
+  assertBusyStatus(dev.setComparatorQueue(ComparatorQueue::ASSERT_2));
+  assertBusyStatus(dev.enableConversionReadyPin());
+  assertBusyStatus(dev.disableComparator());
+  assertBusyStatus(dev.readRegister16(cmd::REG_CONFIG, reg));
+  assertBusyStatus(dev.writeRegister16(cmd::REG_CONFIG, cmd::CONFIG_DEFAULT));
+
+  TEST_ASSERT_TRUE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::APPLY_WRITE_LOW_THRESHOLD),
+                          static_cast<uint8_t>(dev.jobState()));
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+}
+
+void test_active_job_preserves_invalid_param_precedence_without_bus_access() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  resetIoCounters(bus);
+
+  int16_t raw = 0;
+  uint16_t reg = 0;
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.startConversion(static_cast<Mux>(8)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.readBlocking(raw, 0).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setMux(static_cast<Mux>(8)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setGain(static_cast<Gain>(6)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setDataRate(static_cast<DataRate>(8)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setMode(static_cast<Mode>(2)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setComparatorMode(static_cast<ComparatorMode>(2)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setComparatorPolarity(static_cast<ComparatorPolarity>(2)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setComparatorLatch(static_cast<ComparatorLatch>(2)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.setComparatorQueue(static_cast<ComparatorQueue>(4)).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.readRegister16(4, reg).code));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(dev.writeRegister16(cmd::REG_CONVERSION, 0).code));
+
+  TEST_ASSERT_TRUE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+}
+
+void test_end_while_job_active_clears_job_and_later_poll_is_not_initialized() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  TEST_ASSERT_TRUE(dev.startSingleShot().inProgress());
+  resetIoCounters(bus);
+
+  dev.end();
+
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_TRUE(dev.lastJobStatus().ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::UNINIT),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::IDLE),
+                          static_cast<uint8_t>(dev.jobState()));
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+
+  PollResult poll = dev.pollSingleShot(bus.nowMs, 3);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::NOT_INITIALIZED),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_UINT8(0u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::IDLE),
+                          static_cast<uint8_t>(poll.state));
+}
+
+void test_start_single_shot_rejects_invalid_mux_without_bus_access() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+
+  Status st = dev.startSingleShot(static_cast<Mux>(8));
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_PARAM),
+                          static_cast<uint8_t>(st.code));
+  TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::IDLE),
+                          static_cast<uint8_t>(dev.jobState()));
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+}
+
+void test_poll_single_shot_write_failure_updates_health_and_marks_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 1;
+  bus.failWriteStatus = Status::Error(Err::I2C_TIMEOUT, "single-shot write timeout", -91);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot().inProgress());
+  PollResult poll = dev.pollSingleShot(bus.nowMs, 3);
+
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_INT32(-91, poll.status.detail);
+  TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::FAILED),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+  TEST_ASSERT_EQUAL_UINT8(1u, dev.consecutiveFailures());
+  TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_TIMEOUT),
+                          static_cast<uint8_t>(dev.lastError().code));
+  assertDirtyDiagnostic(dev, Err::I2C_TIMEOUT, -91);
+}
+
+void test_poll_single_shot_conversion_read_failure_updates_health_without_dirty() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+
+  TEST_ASSERT_TRUE(dev.startSingleShot().inProgress());
+  PollResult poll = dev.pollSingleShot(bus.nowMs, 1);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+
+  bus.nowMs += dev.getConversionTimeMs();
+  bus.failReadOnCall = 2;
+  bus.failReadStatus = Status::Error(Err::I2C_BUS, "conversion read bus", -92);
+  poll = dev.pollSingleShot(bus.nowMs, 2);
+
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_INT32(-92, poll.status.detail);
+  TEST_ASSERT_EQUAL_UINT8(2u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::FAILED),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(1u, dev.consecutiveFailures());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(dev.lastError().code));
+}
+
+void test_poll_apply_config_first_write_address_nack_keeps_clean() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  TEST_ASSERT_TRUE(dev.begin(makeConfig(bus)).ok());
+  resetIoCounters(bus);
+  bus.failWriteOnCall = 1;
+  bus.failWriteStatus = Status::Error(Err::I2C_NACK_ADDR, "address absent", -93);
+
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  PollResult poll = dev.pollApplyConfig(bus.nowMs, 3);
+
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_NACK_ADDR),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_INT32(-93, poll.status.detail);
+  TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::FAILED),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT32(1u, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0u, bus.readCalls);
+  TEST_ASSERT_EQUAL_UINT32(1u, dev.totalFailures());
+}
+
+void test_poll_apply_config_readback_mismatch_keeps_dirty_and_preserves_status() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  Config cfg = makeConfig(bus);
+  cfg.strictInitVerify = true;
+  TEST_ASSERT_TRUE(dev.begin(cfg).ok());
+  resetIoCounters(bus);
+  bus.readXorMask[cmd::REG_LO_THRESH] = 0x0001;
+
+  TEST_ASSERT_TRUE(dev.startApplyConfigJob().inProgress());
+  PollResult poll = dev.pollApplyConfig(bus.nowMs, 3);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(3u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::APPLY_VERIFY_LOW_THRESHOLD),
+                          static_cast<uint8_t>(poll.state));
+
+  poll = dev.pollApplyConfig(bus.nowMs, 1);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::FAILED),
+                          static_cast<uint8_t>(poll.state));
+  TEST_ASSERT_TRUE(dev.hardwareConfigDirty());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::READBACK_MISMATCH),
+                          static_cast<uint8_t>(dev.hardwareConfigDirtyError().code));
+  TEST_ASSERT_EQUAL_UINT32(0u, dev.totalFailures());
+  TEST_ASSERT_EQUAL_UINT8(0u, dev.consecutiveFailures());
 }
 
 void test_poll_apply_config_partial_failure_marks_dirty() {
@@ -3124,8 +3562,21 @@ int main() {
   RUN_TEST(test_alert_ready_pin_path_does_not_poll_config_register);
   RUN_TEST(test_poll_single_shot_max_one_wait_gate_and_raw_result);
   RUN_TEST(test_poll_single_shot_budget_two_reads_ready_and_conversion);
+  RUN_TEST(test_poll_single_shot_repeated_zero_budget_does_not_advance_or_touch_bus);
+  RUN_TEST(test_poll_single_shot_large_budget_is_bounded_and_poll_after_complete_is_stable);
   RUN_TEST(test_poll_single_shot_ready_transport_failure_propagates);
   RUN_TEST(test_poll_apply_config_budget_and_strict_readback);
+  RUN_TEST(test_poll_apply_config_zero_budget_and_large_budget_clamp);
+  RUN_TEST(test_wrong_job_poller_returns_busy_without_advancing_or_touching_bus);
+  RUN_TEST(test_cancel_job_clears_state_without_bus_access_and_allows_restart);
+  RUN_TEST(test_active_job_blocks_public_i2c_apis_without_bus_access);
+  RUN_TEST(test_active_job_preserves_invalid_param_precedence_without_bus_access);
+  RUN_TEST(test_end_while_job_active_clears_job_and_later_poll_is_not_initialized);
+  RUN_TEST(test_start_single_shot_rejects_invalid_mux_without_bus_access);
+  RUN_TEST(test_poll_single_shot_write_failure_updates_health_and_marks_dirty);
+  RUN_TEST(test_poll_single_shot_conversion_read_failure_updates_health_without_dirty);
+  RUN_TEST(test_poll_apply_config_first_write_address_nack_keeps_clean);
+  RUN_TEST(test_poll_apply_config_readback_mismatch_keeps_dirty_and_preserves_status);
   RUN_TEST(test_poll_apply_config_partial_failure_marks_dirty);
   RUN_TEST(test_poll_apply_config_first_write_failure_marks_dirty);
   RUN_TEST(test_config_setters_write_expected_config_bits);

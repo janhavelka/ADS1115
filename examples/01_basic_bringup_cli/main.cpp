@@ -72,6 +72,26 @@ const char* stateToStr(ADS1115::DriverState st) {
   }
 }
 
+const char* jobStateToStr(ADS1115::JobState st) {
+  using ADS1115::JobState;
+  switch (st) {
+    case JobState::IDLE: return "IDLE";
+    case JobState::SINGLE_SHOT_WRITE_CONFIG: return "SINGLE_SHOT_WRITE_CONFIG";
+    case JobState::SINGLE_SHOT_WAIT_CONVERSION: return "SINGLE_SHOT_WAIT_CONVERSION";
+    case JobState::SINGLE_SHOT_POLL_READY: return "SINGLE_SHOT_POLL_READY";
+    case JobState::SINGLE_SHOT_READ_CONVERSION: return "SINGLE_SHOT_READ_CONVERSION";
+    case JobState::APPLY_WRITE_LOW_THRESHOLD: return "APPLY_WRITE_LOW_THRESHOLD";
+    case JobState::APPLY_WRITE_HIGH_THRESHOLD: return "APPLY_WRITE_HIGH_THRESHOLD";
+    case JobState::APPLY_WRITE_CONFIG: return "APPLY_WRITE_CONFIG";
+    case JobState::APPLY_VERIFY_LOW_THRESHOLD: return "APPLY_VERIFY_LOW_THRESHOLD";
+    case JobState::APPLY_VERIFY_HIGH_THRESHOLD: return "APPLY_VERIFY_HIGH_THRESHOLD";
+    case JobState::APPLY_VERIFY_CONFIG: return "APPLY_VERIFY_CONFIG";
+    case JobState::COMPLETE: return "COMPLETE";
+    case JobState::FAILED: return "FAILED";
+    default: return "UNKNOWN";
+  }
+}
+
 const char* stateColor(ADS1115::DriverState st, bool online, uint8_t consecutiveFailures) {
   if (st == ADS1115::DriverState::UNINIT) {
     return LOG_COLOR_YELLOW;
@@ -241,6 +261,11 @@ void printHelp() {
   cli::printHelpItem("raw", "Read raw value");
   cli::printHelpItem("voltage", "Read as voltage");
   cli::printHelpItem("timing", "Print conversion time and LSB voltage");
+  cli::printHelpItem("job", "Show poll-chunked job state");
+  cli::printHelpItem("job single", "Start poll-chunked single-shot job");
+  cli::printHelpItem("job apply", "Start poll-chunked config apply job");
+  cli::printHelpItem("job poll [0..255]", "Poll active job with bounded instruction budget");
+  cli::printHelpItem("job cancel", "Cancel active poll-chunked job");
 
   cli::printHelpSection("Configuration");
   cli::printHelpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
@@ -269,6 +294,7 @@ void printHelp() {
   cli::printHelpItem("addr [0x48..0x4B]", "Show or select ADS1115 I2C address");
   cli::printHelpItem("probe", "Probe device (no health tracking)");
   cli::printHelpItem("recover", "Manual recovery attempt");
+  cli::printHelpItem("shutdown", "Write single-shot idle while staying initialized");
   cli::printHelpItem("cfg / settings", "Print active configuration snapshot");
   cli::printHelpItem("verbose [0|1]", "Enable/disable verbose output");
   cli::printHelpItem("stress [N]", "Run N conversion cycles");
@@ -781,6 +807,76 @@ bool readConfigFromDevice(uint16_t& config) {
     return false;
   }
   return true;
+}
+
+bool isSingleShotJobState(ADS1115::JobState st) {
+  using ADS1115::JobState;
+  return st == JobState::SINGLE_SHOT_WRITE_CONFIG ||
+         st == JobState::SINGLE_SHOT_WAIT_CONVERSION ||
+         st == JobState::SINGLE_SHOT_POLL_READY ||
+         st == JobState::SINGLE_SHOT_READ_CONVERSION;
+}
+
+bool isApplyJobState(ADS1115::JobState st) {
+  using ADS1115::JobState;
+  return st == JobState::APPLY_WRITE_LOW_THRESHOLD ||
+         st == JobState::APPLY_WRITE_HIGH_THRESHOLD ||
+         st == JobState::APPLY_WRITE_CONFIG ||
+         st == JobState::APPLY_VERIFY_LOW_THRESHOLD ||
+         st == JobState::APPLY_VERIFY_HIGH_THRESHOLD ||
+         st == JobState::APPLY_VERIFY_CONFIG;
+}
+
+void printJobStatus() {
+  Serial.println("=== Job Status ===");
+  Serial.printf("  Active: %s\n", device.jobActive() ? "YES" : "NO");
+  Serial.printf("  State: %s\n", jobStateToStr(device.jobState()));
+  Serial.printf("  Last raw: %d\n", static_cast<int>(device.lastRawValue()));
+  Serial.println("  Last status:");
+  printStatus(device.lastJobStatus());
+}
+
+void printPollResult(const ADS1115::PollResult& result) {
+  Serial.println("=== Job Poll Result ===");
+  printStatus(result.status);
+  Serial.printf("  Instructions used: %u\n", static_cast<unsigned>(result.instructionsUsed));
+  Serial.printf("  Done: %s\n", result.done ? "YES" : "NO");
+  Serial.printf("  State: %s\n", jobStateToStr(result.state));
+  Serial.printf("  Last raw: %d\n", static_cast<int>(device.lastRawValue()));
+}
+
+void handleJobCommand(const String& cmd) {
+  if (cmd == "job") {
+    printJobStatus();
+  } else if (cmd == "job single") {
+    printStatus(device.startSingleShot());
+    printJobStatus();
+  } else if (cmd == "job apply") {
+    printStatus(device.startApplyConfigJob());
+    printJobStatus();
+  } else if (cmd == "job cancel") {
+    device.cancelJob();
+    printJobStatus();
+  } else if (cmd == "job poll" || cmd.startsWith("job poll ")) {
+    uint32_t budget = 1;
+    if (cmd.length() > 8) {
+      if (!parseU32(cmd.substring(9), budget) || budget > 255U) {
+        LOGW("Usage: job poll [0..255]");
+        return;
+      }
+    }
+    const ADS1115::JobState st = device.jobState();
+    if (isSingleShotJobState(st)) {
+      printPollResult(device.pollSingleShot(millis(), static_cast<uint8_t>(budget)));
+    } else if (isApplyJobState(st)) {
+      printPollResult(device.pollApplyConfig(millis(), static_cast<uint8_t>(budget)));
+    } else {
+      Serial.println("No active pollable job");
+      printJobStatus();
+    }
+  } else {
+    LOGW("Usage: job [single|apply|poll [0..255]|cancel]");
+  }
 }
 
 void runStressMix(int count) {
@@ -1405,6 +1501,13 @@ void processCommand(const String& cmdLine) {
     Serial.println("  Health changes:");
     printHealthDiff(before, after);
     printDriverHealth();
+  } else if (cmd == "shutdown") {
+    printActiveAddress();
+    auto st = device.shutdown();
+    printStatus(st);
+    if (st.ok()) {
+      printCurrentMode();
+    }
   } else if (cmd == "verbose") {
     LOGI("Verbose mode: %s%s%s", onOffColor(verboseMode), verboseMode ? "ON" : "OFF", LOG_COLOR_RESET);
   } else if (cmd.startsWith("verbose ")) {
@@ -1555,6 +1658,8 @@ void processCommand(const String& cmdLine) {
     }
   } else if (cmd == "timing") {
     printTimingInfo();
+  } else if (cmd == "job" || cmd.startsWith("job ")) {
+    handleJobCommand(cmd);
   } else if (cmd == "comp") {
     printComparatorSettings();
   } else if (cmd.startsWith("comp mode ")) {
