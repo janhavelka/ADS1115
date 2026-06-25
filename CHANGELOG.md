@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-25
+
 ### Added
 - Appended `Err::CLOCK_STALLED` for blocking waits whose injected monotonic
   clock does not advance.
@@ -25,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   periodic driver work.
 - `bool conversionReady()` is now explicitly marked compatibility-only;
   examples and normal tests use `readConversionReady(bool&)`.
+- HIL runner analog/electrical evidence gaps are reported as
+  `EVIDENCE_REQUIRED`; `UNKNOWN` is reserved for genuinely ambiguous runner
+  outcomes.
+- Release-facing docs now collapse prompt-era COM8 HIL reports and tracked local
+  HIL summaries into one compact validation summary.
 
 ### Fixed
 - First poll-single-shot CONFIG write failures no longer mark hardware/cache
@@ -190,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...v0.4.0

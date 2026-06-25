@@ -31,6 +31,7 @@ DEFAULT_SOAK_DURATION_S = 8 * 60 * 60
 
 RESULT_PASS = "PASS"
 RESULT_FAIL = "FAIL"
+RESULT_EVIDENCE_REQUIRED = "EVIDENCE_REQUIRED"
 RESULT_UNKNOWN = "UNKNOWN"
 RESULT_NOT_RUN = "NOT_RUN"
 RESULT_DRY_RUN = "DRY_RUN"
@@ -321,7 +322,7 @@ def classify_output(spec: CommandSpec, text: str, *, timed_out: bool = False) ->
     if not expected_found(spec, text):
         return RESULT_FAIL, "expected output token was not found"
     if spec.unknown_on_pass:
-        return RESULT_UNKNOWN, "serial tokens matched; fixture/operator evidence needed"
+        return RESULT_EVIDENCE_REQUIRED, "serial tokens matched; fixture/operator evidence needed"
     return RESULT_PASS, "matched expected serial evidence"
 
 
@@ -744,7 +745,7 @@ def parser_self_test() -> None:
     samples = [
         (CommandSpec("T", "Version", "version", "", ("=== Version Info ===",)), "=== Version Info ===\n> ", RESULT_PASS),
         (CommandSpec("T", "Health", "drv", "", ("=== Driver Health ===",), ("driver_ready", "zero_failures")), "=== Driver Health ===\n  State: READY\n  Total failures: 0\n> ", RESULT_PASS),
-        (CommandSpec("T", "Read", "read", "", ("Raw:",), ("raw_sample", "voltage"), unknown_on_pass=True), "  Raw: -12\n  Voltage: -0.000750 V\n> ", RESULT_UNKNOWN),
+        (CommandSpec("T", "Read", "read", "", ("Raw:",), ("raw_sample", "voltage"), unknown_on_pass=True), "  Raw: -12\n  Voltage: -0.000750 V\n> ", RESULT_EVIDENCE_REQUIRED),
         (CommandSpec("T", "Probe", "probe", "", ("Status: OK",), ("status_ok", "no_health_changes")), "  Status: OK (code=0, detail=0)\n  Health changes:\n  (no health changes)\n> ", RESULT_PASS),
         (CommandSpec("T", "Scan", "scan", "", ("Scan complete",), ("scan_ads1115",)), "40: -- -- -- -- -- -- -- -- 48 49 -- -- -- -- -- --\nScan complete. Found 2 device(s).\n> ", RESULT_PASS),
         (CommandSpec("T", "Failure", "probe", "", ("Status:",), ("status_non_ok",), expected_failure=True), "  Status: I2C_TIMEOUT (code=7, detail=-1)\n> ", RESULT_PASS),
@@ -766,19 +767,23 @@ def parser_self_test() -> None:
             raise AssertionError(f"{spec.feature}: expected {expected}, got {result} ({reason})")
     verdict_rows = [
         StepResult("V1", "Digital", "version", "", "", 0.0, RESULT_PASS, ""),
-        StepResult("V2", "Analog", "read", "", "", 0.0, RESULT_UNKNOWN, "",
+        StepResult("V2", "Analog", "read", "", "", 0.0, RESULT_EVIDENCE_REQUIRED, "",
                    evidence_required=True),
     ]
     if contract_verdict(verdict_rows, dry_run=False) != RESULT_PASS:
-        raise AssertionError("contract verdict should ignore evidence-only UNKNOWN")
-    if evidence_verdict(verdict_rows, dry_run=False) != RESULT_UNKNOWN:
+        raise AssertionError("contract verdict should ignore evidence-required rows")
+    if evidence_verdict(verdict_rows, dry_run=False) != RESULT_EVIDENCE_REQUIRED:
         raise AssertionError("evidence verdict should surface missing evidence")
-    if final_verdict(verdict_rows, dry_run=False) != RESULT_UNKNOWN:
-        raise AssertionError("final verdict should remain UNKNOWN when evidence is missing")
+    if final_verdict(verdict_rows, dry_run=False) != RESULT_EVIDENCE_REQUIRED:
+        raise AssertionError("final verdict should remain EVIDENCE_REQUIRED when evidence is missing")
     if process_exit_code(RESULT_UNKNOWN, fail_on_unknown=False) != 0:
         raise AssertionError("UNKNOWN should not fail exploratory runs")
     if process_exit_code(RESULT_UNKNOWN, fail_on_unknown=True) != 1:
         raise AssertionError("--fail-on-unknown should fail UNKNOWN final verdicts")
+    if process_exit_code(RESULT_EVIDENCE_REQUIRED, fail_on_unknown=False) != 0:
+        raise AssertionError("EVIDENCE_REQUIRED should not fail exploratory runs")
+    if process_exit_code(RESULT_EVIDENCE_REQUIRED, fail_on_unknown=True) != 1:
+        raise AssertionError("--fail-on-unknown should fail EVIDENCE_REQUIRED final verdicts")
     print("ADS1115 HIL parser self-test PASSED")
 
 
@@ -857,15 +862,31 @@ def run_one_step(
 ) -> StepResult:
     write_log(f"\n>>> {spec.command}\n")
     start = time.monotonic()
-    ser.write((spec.command + "\r\n").encode("utf-8"))
-    ser.flush()
-    if command_delay_s > 0:
-        time.sleep(command_delay_s)
-    response, timed_out = read_command_response(
-        ser,
-        idle_s,
-        max(default_timeout_s, spec.timeout_s, command_timeout_s(spec.command, default_timeout_s)),
-    )
+    try:
+        ser.write((spec.command + "\r\n").encode("utf-8"))
+        ser.flush()
+        if command_delay_s > 0:
+            time.sleep(command_delay_s)
+        response, timed_out = read_command_response(
+            ser,
+            idle_s,
+            max(default_timeout_s, spec.timeout_s, command_timeout_s(spec.command, default_timeout_s)),
+        )
+    except Exception as exc:
+        elapsed = time.monotonic() - start
+        reason = f"serial exception: {type(exc).__name__}: {exc}"
+        write_log(f"# RESULT {spec.test_id}: {RESULT_FAIL} - {reason} ({elapsed:.3f}s)\n")
+        return StepResult(
+            test_id=spec.test_id,
+            feature=spec.feature,
+            command=spec.command,
+            expected=spec.expected,
+            observed="serial exception",
+            elapsed_s=elapsed,
+            result=RESULT_FAIL,
+            notes=(spec.notes + ("; " if spec.notes else "") + reason).strip(),
+            evidence_required=spec.unknown_on_pass,
+        )
     elapsed = time.monotonic() - start
     if response:
         write_log(response)
@@ -911,6 +932,7 @@ def write_markdown_summary(
             out.write(f"- Transcript: `{transcript_path}`\n")
         out.write(
             f"- Results: PASS={counts[RESULT_PASS]} FAIL={counts[RESULT_FAIL]} "
+            f"EVIDENCE_REQUIRED={counts[RESULT_EVIDENCE_REQUIRED]} "
             f"UNKNOWN={counts[RESULT_UNKNOWN]} NOT_RUN={counts[RESULT_NOT_RUN]}\n"
         )
         out.write(f"- Contract verdict: {contract}\n")
@@ -1013,7 +1035,7 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
             soak_stats = run_soak(ser, args, write_log)
             rows.extend(soak_stats_to_rows(soak_stats))
 
-    write_markdown_summary(summary_path, rows, transcript_path=transcript_path)
+    write_markdown_summary(summary_path, rows, transcript_path=transcript_path, soak=soak_stats)
     return rows, transcript_path, summary_path
 
 
@@ -1075,7 +1097,7 @@ def soak_stats_to_rows(stats: SoakStats) -> list[StepResult]:
     return [
         StepResult(
             test_id="SOAK-SUMMARY",
-            feature="8-hour Soak",
+            feature="Bounded Soak",
             command="--soak",
             expected="Complete requested soak duration without unrecovered failure bursts",
             observed=observed,
@@ -1094,13 +1116,20 @@ def final_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
         return RESULT_FAIL
     if RESULT_UNKNOWN in results:
         return RESULT_UNKNOWN
+    if RESULT_EVIDENCE_REQUIRED in results:
+        return RESULT_EVIDENCE_REQUIRED
     return RESULT_PASS
 
 
 def contract_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
     if dry_run:
         return RESULT_DRY_RUN
-    return RESULT_FAIL if any(row.result == RESULT_FAIL for row in rows) else RESULT_PASS
+    results = [row.result for row in rows]
+    if RESULT_FAIL in results:
+        return RESULT_FAIL
+    if RESULT_UNKNOWN in results:
+        return RESULT_UNKNOWN
+    return RESULT_PASS
 
 
 def evidence_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
@@ -1113,13 +1142,15 @@ def evidence_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
         return RESULT_FAIL
     if any(row.result == RESULT_UNKNOWN for row in evidence_rows):
         return RESULT_UNKNOWN
+    if any(row.result == RESULT_EVIDENCE_REQUIRED for row in evidence_rows):
+        return RESULT_EVIDENCE_REQUIRED
     return RESULT_PASS
 
 
 def process_exit_code(verdict: str, *, fail_on_unknown: bool) -> int:
     if verdict == RESULT_FAIL:
         return 1
-    if fail_on_unknown and verdict == RESULT_UNKNOWN:
+    if fail_on_unknown and verdict in (RESULT_UNKNOWN, RESULT_EVIDENCE_REQUIRED):
         return 1
     return 0
 
@@ -1139,8 +1170,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--verbose", action="store_true", help="Echo transcript while running")
     parser.add_argument("--stop-on-fail", action="store_true")
-    parser.add_argument("--fail-on-unknown", action="store_true",
-                        help="Return nonzero when the final verdict is UNKNOWN")
+    parser.add_argument("--fail-on-unknown", "--fail-on-evidence-required",
+                        dest="fail_on_unknown", action="store_true",
+                        help="Return nonzero when final verdict is UNKNOWN or EVIDENCE_REQUIRED")
     parser.add_argument("--reset-before", action="store_true", help="Toggle serial reset lines before reading boot transcript")
     parser.add_argument("--soak", action="store_true", help="Run bounded soak loop after the command plan")
     parser.add_argument("--soak-duration-s", type=float, default=DEFAULT_SOAK_DURATION_S)
@@ -1187,6 +1219,7 @@ def main(argv: list[str]) -> int:
     print(f"Saved summary: {summary_path}")
     print(
         f"Counts: PASS={counts[RESULT_PASS]} FAIL={counts[RESULT_FAIL]} "
+        f"EVIDENCE_REQUIRED={counts[RESULT_EVIDENCE_REQUIRED]} "
         f"UNKNOWN={counts[RESULT_UNKNOWN]} NOT_RUN={counts[RESULT_NOT_RUN]}"
     )
     print(f"Contract verdict: {contract}")

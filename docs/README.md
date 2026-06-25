@@ -13,8 +13,7 @@ material and raw evidence.
 | `ADS1115_HARDWARE_VALIDATION_PLAN.md` | Operator procedure for complete hardware validation. |
 | `ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` | Blank template for dated hardware validation runs. |
 | `ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md` | Limited COM19 HIL evidence for address handling, restore sequencing, selftests, and short stress. |
-| `reports/hil-validation-COM8-20260622.md` | COM8 HIL report with current remaining evidence gaps and follow-up notes. |
-| `reports/hil-validation-COM8-20260623.md` | Targeted COM8 HIL contract pass for the current dirty patch set, with analog evidence still unknown. |
+| `ADS1115_RELEASE_VALIDATION_SUMMARY_2026-06-25.md` | Compact release validation summary for the recent COM8 targeted HIL and 20-hour soak, including remaining evidence gates. |
 
 ## Evidence
 

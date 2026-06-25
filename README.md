@@ -454,14 +454,17 @@ validation result until the operator explicitly selects each address and runs th
 intended checks.
 
 `tools/run_i2c_hil.py` is the standardized serial HIL runner for the diagnostic
-CLI. It drives the existing commands `version`, `scan`, `addr`, `probe`,
-`settings`, `drv` (health), and one bounded `read`, then classifies only serial
-tokens and health counters. It does not flash firmware, fake a device, or prove
-analog accuracy. The runner reports separate contract, evidence, and final
-verdicts; analog rows remain `UNKNOWN` until backed by calibrated fixture or
-operator evidence. Use `--fail-on-unknown` only when `UNKNOWN` should fail a
-release gate. Use `tools/hil_ads1115_capture.py` for the broader operator
-transcript suites used by the hardware validation plan.
+CLI. Depending on the selected suite, it drives address selection, probe,
+settings, health, conversion, mux, gain, data-rate, comparator, register, dirty
+state, staged job, stress, and malformed-input commands, then classifies only
+serial tokens and health counters. It does not flash firmware, fake a device, or
+prove analog accuracy. The runner reports separate contract, evidence, and final
+verdicts; analog/electrical rows report `EVIDENCE_REQUIRED` until backed by
+calibrated fixture or operator evidence, while `UNKNOWN` is reserved for
+ambiguous runner outcomes. Use `--fail-on-unknown` or
+`--fail-on-evidence-required` when incomplete evidence should fail a release
+gate. Use `tools/hil_ads1115_capture.py` for the broader operator transcript
+suites used by the hardware validation plan.
 
 ## Validation
 
@@ -498,6 +501,7 @@ remaining hardware validation must follow
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - HIL operator plan and evidence requirements
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - blank results template for dated hardware runs
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md` - limited COM19 HIL evidence for address handling, restore sequencing, selftests, and short stress
+- `docs/ADS1115_RELEASE_VALIDATION_SUMMARY_2026-06-25.md` - compact COM8 targeted HIL and 20-hour soak summary with remaining evidence gates
 - `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log` - raw transcript for the limited COM19 HIL run
 - `docs/archive/` - historical audit, prompt, and hardening reports
 - `include/ADS1115/CommandTable.h` - public register map, masks, and defaults
