@@ -116,6 +116,65 @@ enum class ComparatorQueue : uint8_t {
   DISABLE  = 3   ///< Disable comparator (default), ALERT/RDY high-Z
 };
 
+/// @brief Comparator use selected by an owner-safe device profile.
+enum class ComparatorUse : uint8_t {
+  DISABLED = 0,         ///< Comparator output disabled/high impedance
+  THRESHOLD,            ///< Traditional or window threshold comparator
+  CONVERSION_READY      ///< Datasheet conversion-ready threshold pattern
+};
+
+/// @brief Complete comparator configuration for atomic profile validation.
+struct ComparatorProfile {
+  ComparatorUse use = ComparatorUse::DISABLED;
+  ComparatorMode mode = ComparatorMode::TRADITIONAL;
+  ComparatorPolarity polarity = ComparatorPolarity::ACTIVE_LOW;
+  ComparatorLatch latch = ComparatorLatch::NON_LATCHING;
+  ComparatorQueue queue = ComparatorQueue::DISABLE;
+  int16_t lowThreshold = static_cast<int16_t>(0x8000);
+  int16_t highThreshold = 0x7FFF;
+};
+
+/// @brief Non-owning transport binding used by the owner-safe API.
+///
+/// Bus handles, pins, locking, clock rate, retries, recovery, and scheduling
+/// remain owned by the application. Each callback must enforce transferTimeoutMs.
+struct DriverConfig {
+  I2cWriteFn i2cWrite = nullptr;
+  I2cWriteReadFn i2cWriteRead = nullptr;
+  void* i2cUser = nullptr;
+  uint32_t transferTimeoutMs = 50;
+};
+
+/// @brief Complete desired hardware register profile.
+struct DeviceProfile {
+  uint8_t i2cAddress = 0x48;
+  Mux defaultMux = Mux::AIN0_GND;
+  Gain defaultGain = Gain::FSR_2_048V;
+  DataRate dataRate = DataRate::SPS_128;
+  Mode mode = Mode::SINGLE_SHOT;
+  ComparatorProfile comparator{};
+};
+
+/// @brief One typed single-shot channel request.
+struct ChannelRequest {
+  uint16_t channelId = 0;
+  Mux mux = Mux::AIN0_GND;
+  Gain gain = Gain::FSR_2_048V;
+};
+
+Status validateDeviceProfile(const DeviceProfile& profile);
+Status validateChannelRequest(const ChannelRequest& request);
+Status validateComparatorProfile(const ComparatorProfile& profile);
+uint16_t dataRateSps(DataRate rate);
+uint32_t worstCaseConversionTimeUs(DataRate rate);
+int32_t gainFullScaleMicrovolts(Gain gain);
+Status rawToMicrovolts(int16_t raw, Gain gain, int32_t& out);
+bool isSingleEnded(Mux mux);
+int8_t positiveInput(Mux mux);
+int8_t negativeInput(Mux mux);
+uint32_t operationDeadlineMs(uint8_t channelCount, DataRate rate,
+                             uint32_t schedulingMarginMs);
+
 /// @brief Configuration for ADS1115 driver.
 struct Config {
   // === I2C Transport (required) ===
@@ -136,7 +195,7 @@ struct Config {
   // === Device Settings ===
   uint8_t i2cAddress = 0x48;       ///< 0x48-0x4B based on ADDR pin
   uint32_t i2cTimeoutMs = 50;      ///< I2C transaction timeout in ms
-  bool strictInitVerify = false;   ///< Optional read-back plausibility check after full apply
+  bool strictInitVerify = true;    ///< Read-back plausibility check after full apply
 
   // === Conversion Settings ===
   Mux mux = Mux::AIN0_GND;               ///< Input multiplexer

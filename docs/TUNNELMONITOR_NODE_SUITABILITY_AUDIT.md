@@ -10,6 +10,44 @@
 
 **Remote revalidation:** on 2026-07-18, `origin` was fetched with tags and pruning. `origin/HEAD` points to `origin/main`; local `main`, `origin/main`, and release tag `v1.2.0` resolve to the audited commit above. No fetched remote branch has a newer commit. The final source was re-read and every hard finding, source reference, severity, and recommended action was checked again. There is no code delta from the audited revision, and all findings remain current.
 
+## 2026-07-19 implementation re-audit disposition
+
+This section supersedes the unchanged-library decision above for the
+`hardening/tunnelmonitor-suitability-reaudit` branch. The original evidence and
+line references below remain the baseline record for `v1.2.0`; they are not
+claims about the refactored source.
+
+Re-audit inputs:
+
+- ADS1115 baseline: `9c9ade807f18eabd534423c64b2dfe02efe43de4`
+- Audit-import commit: `f48af452ce9190e9d7b728cd449ccf8db70444d5`
+- TunnelMonitor-node inspected revision: `602114ea6c723e31c41f0eb7cd8ac2b56a46d40e`
+- TunnelMonitor-node dirty state preserved: modified `.vscode/extensions.json`;
+  untracked `docs/reports/i2c_library_latest_branch_audit_revalidation_20260718.md`
+
+| Finding | Revalidated disposition | Resolution or remaining gate |
+|---|---|---|
+| ADS-TM-01 | External product decision remains open | No TunnelMonitor code changed. Replacement versus distinct source, board/profile, channel meanings, analog topology, units, calibration, and required/optional role remain authoritative product inputs. |
+| ADS-TM-02 | Resolved in library | A confirmed or ambiguous start followed by cancel/timeout enters bus-silent wait-idle reconciliation. New reads and mutations remain blocked until the guarded worst-case conversion interval has elapsed; the abandoned result is never published. |
+| ADS-TM-03 | Resolved in library | One active operation owns hardware. Direct mutation and diagnostic writes reject a possibly active single-shot conversion. |
+| ADS-TM-04 | Resolved for external owners | Zero-I2C `bind()`/`unbind()`, staged initialize/recover/apply/shutdown, caller transaction budgets, and bus-silent `end()` are provided. Bounded synchronous methods remain compatibility/diagnostic facades. |
+| ADS-TM-05 | Resolved in library | Every owner operation stores a wrap-safe caller deadline. `poll()` throttles conversion readiness and enforces the caller's transfer budget, including zero-transfer wait polls. |
+| ADS-TM-06 | Resolved in library | Explicit configuration state and generation gate typed/scaled reads. Partial, raw, cancelled, timed-out, and ambiguous configuration effects remain `UNKNOWN`/dirty until full verified replay. |
+| ADS-TM-07 | Resolved in library | Tokened exactly-once `OperationResult` contains an atomic `SampleResult` with raw code, microvolts, channel, MUX, gain, rate, flags, configuration generation, and sequence. |
+| ADS-TM-08 | Resolved by restriction and timing repair | Owner-safe reads are single-shot only. Diagnostic continuous readiness uses the -10% rate bound and a two-period settling guard after reconfiguration; immediate latest-register reads remain explicitly stale-capable diagnostics. |
+| ADS-TM-09 | Resolved in library | Health state and counters are passive diagnostics. Reaching `OFFLINE` never suppresses an owner-authorized transport callback. |
+| ADS-TM-10 | Resolved for production initialization | Owner initialization/recovery always write and read back thresholds plus masked CONFIG fields before publishing `VERIFIED`; documentation continues to describe reachability/profile plausibility, not identity. |
+| ADS-TM-11 | Resolved by production restriction | Owner-safe conversion uses OS polling. Comparator settings are atomically typed/validated, including the conversion-ready exception; legacy GPIO polling remains diagnostic and owns no GPIO. |
+| ADS-TM-12 | External analog/product gate remains open | Exact ADC-input microvolt conversion is provided. Board front-end scaling, calibration, protection, input limits, and disconnect meanings remain outside this library. |
+| ADS-TM-13 | Resolved in API contract | The public contract distinguishes owner-safe operations, pure helpers, and advanced diagnostics. Error-hiding compatibility methods are not production entry points. |
+| ADS-TM-14 | External product decision remains open | TunnelMonitor contracts/capacities cannot be changed safely until ADS1115 replacement versus distinct-source scope is decided. Current authoritative capacity evidence is retained below. |
+| ADS-TM-15 | Partially resolved; external validation remains | Reproducible host/CI inputs and current software tests are addressed on this branch. Clean current HIL, final-board analog/fault/shared-bus/workload validation, and product acceptance remain external gates. |
+
+The ADS1115 has no nonvolatile memory, calibration store, or write-cycle-limited
+maintenance procedure. Therefore the rare/one-time operation class has no chip
+operation to expose; all register configuration is volatile and is covered by
+the bounded staged apply/recover contracts.
+
 ## Executive summary
 
 The ADS1115 library has a strong chip-level foundation. It uses an injected I2C transport, has fixed memory, typed MUX/PGA/data-rate settings, signed 16-bit decoding, explicit dirty-state diagnostics, bounded poll instruction budgets, deleted copy/move operations, native tests, Arduino and ESP-IDF examples, and retained hardware evidence. These parts should be kept.

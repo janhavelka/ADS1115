@@ -23,11 +23,16 @@ enum class Err : uint8_t {
   I2C_NACK_DATA,             ///< I2C data phase was not acknowledged
   I2C_TIMEOUT,               ///< I2C transaction timed out
   I2C_BUS,                   ///< I2C bus or arbitration error
-  OFFLINE,                   ///< Driver is offline; normal public I2C paths are blocked until recover() succeeds
+  OFFLINE,                   ///< Passive health state reached the configured failure threshold
   UNSUPPORTED_OPERATION,     ///< Requested operation is not valid for the current driver/device mode
   READBACK_MISMATCH,         ///< Strict register read-back did not match the expected writable fields
   HARDWARE_CONFIG_DIRTY,     ///< Hardware/cache synchronization is known dirty or stale
-  CLOCK_STALLED              ///< Supplied monotonic timebase did not advance while waiting
+  CLOCK_STALLED,             ///< Supplied monotonic timebase did not advance while waiting
+  CANCELLED,                 ///< Operation was cancelled by the caller
+  CONFIG_UNKNOWN,            ///< Typed result is unsafe because hardware configuration is not verified
+  RESULT_NOT_AVAILABLE,      ///< No unconsumed terminal result is available
+  TOKEN_MISMATCH,            ///< Requested result token does not match the pending terminal result
+  INDETERMINATE              ///< Hardware effect or final state cannot be confirmed
 };
 
 /// @brief Status structure returned by all fallible operations.

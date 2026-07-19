@@ -20,6 +20,81 @@ enum class DriverState : uint8_t {
   OFFLINE    ///< consecutiveFailures >= offlineThreshold
 };
 
+enum class ConfigurationState : uint8_t {
+  UNBOUND,
+  UNCONFIGURED,
+  APPLYING,
+  VERIFIED,
+  UNKNOWN
+};
+
+enum class OperationKind : uint8_t {
+  NONE,
+  INITIALIZE,
+  APPLY_PROFILE,
+  RECOVER,
+  READ_SINGLE_SHOT,
+  SHUTDOWN
+};
+
+enum class OperationState : uint8_t {
+  IDLE,
+  ACTIVE,
+  RECONCILING,
+  SUCCEEDED,
+  FAILED,
+  CANCELLED,
+  TIMED_OUT,
+  INDETERMINATE
+};
+
+struct OperationToken {
+  uint32_t value = 0;
+  constexpr bool valid() const { return value != 0; }
+};
+
+enum class CancelDisposition : uint8_t {
+  NO_ACTIVE_OPERATION,
+  CANCELLED_BEFORE_IO,
+  CANCELLED_AFTER_EFFECT,
+  RECONCILIATION_REQUIRED
+};
+
+enum class SampleFlag : uint16_t {
+  NONE = 0,
+  CONFIG_VERIFIED = 1U << 0,
+  AT_POSITIVE_CODE_LIMIT = 1U << 1,
+  AT_NEGATIVE_CODE_LIMIT = 1U << 2
+};
+
+struct SampleResult {
+  int16_t rawCode = 0;
+  int32_t microvolts = 0;
+  uint16_t channelId = 0;
+  Mux mux = Mux::AIN0_GND;
+  Gain gain = Gain::FSR_2_048V;
+  DataRate dataRate = DataRate::SPS_128;
+  uint16_t flags = 0;
+  uint32_t configGeneration = 0;
+  uint32_t sequence = 0;
+};
+
+struct AppliedProfileSnapshot {
+  DeviceProfile profile{};
+  ConfigurationState state = ConfigurationState::UNBOUND;
+  uint32_t generation = 0;
+};
+
+struct OperationResult {
+  OperationToken token{};
+  OperationKind kind = OperationKind::NONE;
+  OperationState state = OperationState::IDLE;
+  Status status = Status::Ok();
+  bool sampleValid = false;
+  bool hardwareStateUncertain = false;
+  SampleResult sample{};
+};
+
 /// @brief State of the optional poll-chunked job executor.
 enum class JobState : uint8_t {
   IDLE,                         ///< No job has been scheduled.
@@ -33,8 +108,13 @@ enum class JobState : uint8_t {
   APPLY_VERIFY_LOW_THRESHOLD,   ///< Next instruction verifies the low threshold.
   APPLY_VERIFY_HIGH_THRESHOLD,  ///< Next instruction verifies the high threshold.
   APPLY_VERIFY_CONFIG,          ///< Next instruction verifies CONFIG writable fields.
+  PROBE_CONFIG,                 ///< Next instruction probes CONFIG reachability.
+  WAIT_IDLE_AFTER_ABANDON,      ///< Bus-silent wait before abandoned conversion reuse.
+  SHUTDOWN_WRITE_CONFIG,        ///< Next instruction requests single-shot idle mode.
   COMPLETE,                     ///< Last job completed successfully.
-  FAILED                        ///< Last job failed; lastJobStatus() has details.
+  FAILED,                       ///< Last job failed; lastJobStatus() has details.
+  CANCELLED,                    ///< Last job was safely cancelled.
+  TIMED_OUT                     ///< Last job reached its deadline.
 };
 
 /// @brief Result returned by poll-chunked job calls.
@@ -43,12 +123,22 @@ struct PollResult {
   uint8_t instructionsUsed = 0;       ///< Transport callbacks used by this poll call.
   bool done = true;                   ///< True when the job is no longer active.
   JobState state = JobState::IDLE;    ///< State after this poll call.
+  OperationToken token{};
+  OperationKind kind = OperationKind::NONE;
+  OperationState operationState = OperationState::IDLE;
 };
 
 /// @brief Snapshot of driver configuration and runtime state without I2C access.
 struct SettingsSnapshot {
   bool initialized = false;
+  bool bound = false;
   DriverState state = DriverState::UNINIT;
+  ConfigurationState configurationState = ConfigurationState::UNBOUND;
+  uint32_t configGeneration = 0;
+  OperationKind operationKind = OperationKind::NONE;
+  OperationState operationState = OperationState::IDLE;
+  OperationToken operationToken{};
+  bool terminalResultAvailable = false;
   uint8_t i2cAddress = 0x48;
   uint32_t i2cTimeoutMs = 0;
   uint8_t offlineThreshold = 0;
@@ -103,6 +193,29 @@ public:
   ~ADS1115() = default;
 
   // === Lifecycle ===
+  /// Bind a non-owning transport and desired profile without I2C.
+  Status bind(const DriverConfig& driverConfig, const DeviceProfile& profile);
+  /// Schedule verified initialization without I2C.
+  Status startInitialize(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
+  /// Schedule an atomic candidate-profile apply without I2C.
+  Status startApplyProfile(const DeviceProfile& profile, uint32_t nowMs,
+                           uint32_t deadlineMs, OperationToken& token);
+  /// Schedule verified recovery without I2C.
+  Status startRecover(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
+  /// Schedule one typed single-shot conversion without I2C.
+  Status startRead(const ChannelRequest& request, uint32_t nowMs,
+                   uint32_t deadlineMs, OperationToken& token);
+  /// Schedule explicit shutdown without I2C.
+  Status startShutdown(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
+  /// Advance the active operation by at most maxTransactions callbacks.
+  PollResult poll(uint32_t nowMs, uint8_t maxTransactions = 1);
+  /// Request cancellation without I2C; post-start work reconciles in poll().
+  CancelDisposition cancelActiveOperation();
+  /// Consume the pending terminal result exactly once by token.
+  Status takeResult(OperationToken token, OperationResult& out);
+  /// Drop the binding and all local state without I2C.
+  void unbind();
+
   /// Initialize the driver with configuration and verify device presence.
   /// ADS1115 has no ID register; strictInitVerify adds a register read-back
   /// plausibility check with dynamic CONFIG OS/status bits masked out.
@@ -129,9 +242,7 @@ public:
   /// @return Immediate status from the service step, or Status::Ok() when no
   /// I2C work is needed.
   Status service(uint32_t nowMs);
-  /// Best-effort shutdown to single-shot idle and clear cached conversion state.
-  /// The shutdown write result is intentionally ignored; use shutdown() when the
-  /// application needs an explicit I2C status.
+  /// Bus-silent compatibility alias for unbind().
   void end();
 
   /// Request single-shot idle mode while keeping the driver initialized.
@@ -142,6 +253,14 @@ public:
   /// Check if begin() completed successfully and end() has not been called.
   /// @return true when the driver is initialized.
   bool isInitialized() const { return _initialized; }
+  bool isBound() const { return _bound; }
+  ConfigurationState configurationState() const { return _configurationState; }
+  uint32_t configurationGeneration() const { return _configGeneration; }
+  OperationToken activeOperationToken() const { return _operationToken; }
+  OperationKind operationKind() const { return _operationKind; }
+  OperationState operationState() const { return _operationState; }
+  bool terminalResultAvailable() const { return _terminalResultAvailable; }
+  Status getAppliedProfile(AppliedProfileSnapshot& out) const;
 
   /// Get the cached configuration snapshot currently owned by the driver.
   /// @return Cached driver configuration.
@@ -520,7 +639,6 @@ private:
 
   // === Health Tracking ===
   Status _updateHealth(const Status& st);
-  void _reassertOfflineLatch();
 
   // === Internal ===
   Status _readConversionReadyAt(uint32_t nowMs, bool& ready);
@@ -538,10 +656,18 @@ private:
   Status _jobBusyStatus() const;
   uint8_t _instructionBudget(uint8_t maxInstructions) const;
   PollResult _pollResult(Status status, uint8_t instructionsUsed, bool done) const;
-  PollResult _finishJob(uint8_t instructionsUsed);
-  PollResult _failJob(const Status& status, uint8_t instructionsUsed);
-  bool _isOffline() const;
-  Status _offlineStatus() const;
+  PollResult _finishOperation(const Status& status, OperationState state,
+                              uint8_t transactionsUsed, bool sampleValid = false);
+  Status _beginOperation(OperationKind kind, uint32_t nowMs, uint32_t deadlineMs,
+                         OperationToken& token);
+  bool _deadlineReached(uint32_t nowMs) const;
+  bool _singleShotMayBeActive() const;
+  Status _activeHardwareBusyStatus() const;
+  void _resetOperationScratch();
+  void _loadProfileIntoConfig(const DeviceProfile& profile);
+  DeviceProfile _profileFromConfig() const;
+  uint16_t _buildConfigRegisterFor(const DeviceProfile& profile, Mux mux,
+                                   Gain gain) const;
   Status _verifyJobReadback(uint8_t reg, uint16_t expected, const char* message);
 
   // === State ===
@@ -550,12 +676,19 @@ private:
   static constexpr uint8_t kInvalidDirtyAddress = 0x00;
 
   Config _config;
+  DriverConfig _driverConfig;
+  DeviceProfile _desiredProfile;
+  DeviceProfile _appliedProfile;
+  DeviceProfile _candidateProfile;
+  bool _bound = false;
   bool _initialized = false;
   DriverState _driverState = DriverState::UNINIT;
-  bool _allowOfflineI2c = false;
   bool _hardwareConfigDirty = false;
   Status _hardwareConfigDirtyError = Status::Ok();
   uint8_t _hardwareConfigDirtyAddress = kInvalidDirtyAddress;
+  ConfigurationState _configurationState = ConfigurationState::UNBOUND;
+  ConfigurationState _configurationStateBeforeOperation = ConfigurationState::UNBOUND;
+  uint32_t _configGeneration = 0;
 
   // === Poll-Chunked Job State ===
   bool _jobActive = false;
@@ -564,9 +697,26 @@ private:
   uint16_t _jobConfigRegister = 0;
   int16_t _jobThresholdLow = 0;
   int16_t _jobThresholdHigh = 0;
-  bool _jobMuxOverride = false;
-  bool _jobNeedsReadback = false;
   Mux _jobMux = Mux::AIN0_GND;
+  Gain _jobGain = Gain::FSR_2_048V;
+  ChannelRequest _channelRequest{};
+  bool _jobStartWriteAttempted = false;
+  bool _jobAnyWriteConfirmed = false;
+  uint32_t _jobNextReadyPollMs = 0;
+  Status _abandonStatus = Status::Ok();
+
+  // === Owner Operation State ===
+  OperationKind _operationKind = OperationKind::NONE;
+  OperationState _operationState = OperationState::IDLE;
+  OperationToken _operationToken{};
+  uint32_t _nextOperationToken = 1;
+  uint32_t _operationStartMs = 0;
+  uint32_t _operationDeadlineMs = 0;
+  uint32_t _activeTransferTimeoutMs = 0;
+  bool _terminalResultAvailable = false;
+  OperationResult _terminalResult{};
+  SampleResult _workingSample{};
+  uint32_t _sampleSequence = 0;
 
   // === Health Counters ===
   uint32_t _lastOkMs = 0;
@@ -580,6 +730,7 @@ private:
   bool _conversionStarted = false;
   bool _conversionReady = false;
   uint32_t _conversionStartMs = 0;
+  uint8_t _continuousSettlePeriods = 1;
   int16_t _lastRawValue = 0;
 };
 
