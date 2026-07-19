@@ -31,6 +31,9 @@ Re-audit inputs:
 
 Host verification snapshot on 2026-07-19:
 
+Detailed implementation and validation evidence is recorded in
+`docs/ADS1115_RELEASE_VALIDATION_SUMMARY_2026-07-19.md`.
+
 - native fault-injection suite: 174/174 passed;
 - Arduino diagnostic builds: ESP32-S3 412,574 B flash / 22,560 B RAM;
   ESP32-S2 405,209 B flash / 37,008 B RAM;

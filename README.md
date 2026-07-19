@@ -374,6 +374,9 @@ units, required/optional role, capacity, and final HIL remain external gates.
 ## Documentation
 
 - `CHANGELOG.md` - release history and 2.0 migration notes
+- `docs/ADS1115_RELEASE_VALIDATION_SUMMARY_2026-07-19.md` - immutable
+  implementation commit, verification matrix, compatibility impact, and open
+  physical/product gates
 - `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - finding-by-finding evidence
   and implementation disposition
 - `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
