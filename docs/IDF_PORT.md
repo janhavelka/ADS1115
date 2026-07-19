@@ -1,95 +1,125 @@
 # ADS1115 ESP-IDF Portability Status
 
-Last audited: 2026-06-23
+Last audited: 2026-07-19
 
-## Current Reality
-- Primary checked runtime remains PlatformIO + Arduino plus native host tests.
-  The repository also contains CI configuration and a native ESP-IDF example
-  path; a local ESP-IDF hardware run is still separate validation evidence.
-- Core I2C access is callback-based (`Config.i2cWrite`, `Config.i2cWriteRead`).
-- Timing hooks are supplied by the application (`Config.nowMs`,
-  `Config.cooperativeYield`, `Config.timeUser`).
-- Core logic does not include Arduino or ESP-IDF headers and does not call
-  framework timing APIs directly.
-- `readBlocking*()` requires `Config.nowMs`. `begin()` and `tick(nowMs)` /
-  `service(nowMs)` workflows may still be used without `Config.nowMs`; direct
-  timing-based readiness checks need either `Config.nowMs`, externally supplied
-  service time, or ALERT/RDY GPIO. Blocking reads return `INVALID_CONFIG` before
-  starting conversion when no clock hook is configured.
-- A pure ESP-IDF example exists at `examples/esp_idf/basic`. The merged example
-  uses a native stdio CLI with command coverage matching the Arduino diagnostic
-  CLI, including `addr <0x48..0x4B>` address selection, split IDF transport
-  files, external bus context, timeout propagation, conservative ESP-IDF error
-  mapping, and periodic `service(nowMs)` scheduling. It is externally serialized
-  and does not include a shared-bus mutex. Hardware behavior still requires
-  board validation.
+## Current Contract
 
-## ESP-IDF Adapter Requirements
-To run under pure ESP-IDF, provide:
-1. I2C write callback.
-2. I2C write-read callback.
-3. Optional ALERT/RDY GPIO callback (`Config.gpioRead`) if ready pin is used.
-4. `nowMs(user)` when using `readBlocking*()`.
-5. Optional `cooperativeYield(user)` for scheduler-friendly blocking waits.
-6. External serialization/locking around callbacks if the I2C bus is shared.
+The core is framework-neutral. `include/` and `src/` contain no Arduino,
+ESP-IDF, FreeRTOS, GPIO, logging, global bus, or framework-delay dependency.
+I2C is injected and non-owning.
 
-## Minimal Adapter Pattern
+For production shared-bus use, bind `DriverConfig` and `DeviceProfile`, schedule
+tokened operations with `start*()`, and call `poll(nowMs, budget)` from the sole
+I2C owner. `poll()` is the only owner-safe API that invokes transport callbacks.
+Start, cancel, result consumption, `unbind()`, and `end()` are bus-silent.
+
+The native example under `examples/esp_idf/basic` remains a diagnostic CLI. It
+uses `app_main`, `driver/i2c_master.h`, `esp_timer`, FreeRTOS delays, IDF GPIO,
+fixed command buffers, an external bus context, timeout propagation, and
+conservative `esp_err_t` mapping. It does not include a shared-bus mutex or
+system-wide retry/recovery policy.
+
+## Production Adapter Responsibilities
+
+The application must provide:
+
+1. One owner for the I2C master bus/device handle.
+2. External serialization across all ADS1115 calls and shared-bus clients.
+3. `i2cWrite` and `i2cWriteRead` callbacks that honor the supplied timeout.
+4. A monotonic millisecond timestamp passed consistently to `start*()` and
+   `poll()`.
+5. Owner policy for admission, retries, backoff, bus recovery, reset, and device
+   health. Driver `OFFLINE` is passive diagnostics only.
+6. Board-owned pins, pull-ups, clock rate, and optional ALERT/RDY handling.
+
+Do not call driver methods from ISR context. An ALERT/RDY ISR may record a
+bounded edge/timestamp only; I2C stays in the owner task.
+
+## Minimal Owner Pattern
+
 ```cpp
-static uint32_t idfNowMs(void*) {
-  return static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+ADS1115::DriverConfig transport{};
+transport.i2cWrite = idfI2cWrite;
+transport.i2cWriteRead = idfI2cWriteRead;
+transport.i2cUser = &applicationBusContext;
+transport.transferTimeoutMs = 20;
+
+ADS1115::DeviceProfile profile{};
+profile.i2cAddress = 0x48;
+profile.defaultMux = ADS1115::Mux::AIN0_GND;
+profile.defaultGain = ADS1115::Gain::FSR_2_048V;
+profile.dataRate = ADS1115::DataRate::SPS_128;
+profile.mode = ADS1115::Mode::SINGLE_SHOT;
+profile.comparator.use = ADS1115::ComparatorUse::OFF;
+
+ADS1115::ADS1115 adc;
+ADS1115::OperationToken token;
+ADS1115::Status status = adc.bind(transport, profile); // zero I2C
+
+const uint32_t nowMs = static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+if (status.ok()) {
+  status = adc.startInitialize(nowMs, nowMs + 200U, token); // zero I2C
 }
 
-static void idfYield(void*) {
-  taskYIELD();
+// Serialized I2C owner loop: at most one callback this pass.
+ADS1115::PollResult progress = adc.poll(ownerNowMs, 1);
+if (progress.done) {
+  ADS1115::OperationResult result;
+  status = adc.takeResult(token, result); // zero I2C
 }
-
-ADS1115::Config cfg{};
-cfg.i2cWrite = myI2cWrite;
-cfg.i2cWriteRead = myI2cWriteRead;
-cfg.nowMs = idfNowMs;
-cfg.cooperativeYield = idfYield;
 ```
 
-## Porting Notes
-- Prefer `service(nowMs)` from the application scheduler/task loop when the
-  caller needs immediate status; `tick(nowMs)` remains a compatibility wrapper
-  that discards that status.
-- Transport callbacks should map native errors to `ADS1115::Status` consistently.
-- Preserve timeout behavior by honoring the `timeoutMs` callback argument.
-- Do not call public driver APIs from ISR context.
-- ADS1115 has no ID register; `strictInitVerify` is a read-back plausibility
-  check only and masks dynamic CONFIG OS/status bits.
-- Multi-register write failures can set `hardwareConfigDirty()`. Settings
-  snapshots include `hardwareConfigDirtyAddress` so diagnostics can preserve the
-  address that was active when dirty state was recorded. A successful full
-  `recover()` clears dirty state.
-- The example enables ESP-IDF internal pull-ups as a convenience. Production
-  boards should size external SDA/SCL pull-ups for bus capacitance, speed,
-  voltage domain, and sink-current limits.
+The adapter should convert the callback timeout to IDF ticks without exceeding
+it, serialize the complete write/repeated-start/read sequence, and preserve the
+raw `esp_err_t` in `Status::detail`. The driver already clamps the callback cap
+to the remaining whole-operation time.
+
+## Verification And Identity Limits
+
+Owner initialization/recovery performs a CONFIG reachability read, three
+writes, and three readbacks. Dynamic CONFIG OS/status bits are masked. ADS1115
+has no ID register, so success is address/register plausibility, not identity.
+Use a fixed board address inventory and final-board HIL.
+
+Multi-register operations can partially reach hardware. The original transport
+or readback failure remains visible through `hardwareConfigDirtyError()` and
+configuration state becomes `UNKNOWN`. Only successful full replay/readback
+returns it to `VERIFIED`.
 
 ## ESP-IDF Error Mapping Limits
 
-The example uses ESP-IDF master I2C APIs that return broad `esp_err_t` values.
-It does not prove precise address-NACK versus data-NACK classification. Keep
-production fault mapping conservative unless the selected ESP-IDF version,
-target, and bus instrumentation prove a finer distinction.
+The diagnostic example's `i2c_master` APIs return broad `esp_err_t` values and
+do not prove precise address-NACK versus data-NACK classification.
 
-| ESP-IDF error/fault | Current mapping | Precision limitation | Production recommendation |
-| --- | --- | --- | --- |
-| `ESP_OK` | `Err::OK` | None for transaction success. | Keep as success. |
-| `ESP_ERR_TIMEOUT` | `Err::I2C_TIMEOUT` | Cannot by itself distinguish clock stretch, missing device, arbitration, or a held bus. | Log ESP-IDF error, bus state, target address, and recovery action; add bus-level diagnostics where needed. |
-| `ESP_ERR_INVALID_STATE`, `ESP_ERR_INVALID_ARG` | `Err::I2C_BUS` or validation error before I2C | Usually adapter/configuration or bus state, not a proven ADS1115 fault. | Treat as integration/configuration failure; fix adapter setup before hardware conclusions. |
-| Address NACK / missing target | Usually `Err::I2C_ERROR` or `Err::I2C_TIMEOUT` from the example | The example does not prove reliable `I2C_NACK_ADDR` classification. | Validate with scope/logic analyzer or target-specific IDF diagnostics before mapping to `I2C_NACK_ADDR`. |
-| Data NACK during payload | Usually `Err::I2C_ERROR` from the example | The example does not prove reliable `I2C_NACK_DATA` classification. | Only map to `I2C_NACK_DATA` if the adapter can prove payload-phase NACK. |
-| Other `esp_err_t` values | `Err::I2C_ERROR` with raw `esp_err_t` in `detail` | Coarse fallback. | Preserve `detail`, log `esp_err_to_name()`, and refine only with evidence. |
+| ESP-IDF result | Library mapping | Production interpretation |
+| --- | --- | --- |
+| `ESP_OK` | `Err::OK` | Transfer completed. |
+| `ESP_ERR_TIMEOUT` | `Err::I2C_TIMEOUT` | May represent clock stretch, absent target, arbitration, or held bus; retain bus evidence. |
+| `ESP_ERR_INVALID_STATE` / `ESP_ERR_INVALID_ARG` | `Err::I2C_BUS` or pre-I2C validation | Usually adapter/configuration failure, not a proven ADS1115 defect. |
+| Proven address NACK | `Err::I2C_NACK_ADDR` | Use only when the selected IDF/backend can prove the address phase. |
+| Proven data NACK | `Err::I2C_NACK_DATA` | Use only when the payload phase is distinguishable. |
+| Other `esp_err_t` | `Err::I2C_ERROR`, raw code in `detail` | Conservative fallback. |
 
-## Verification Checklist
-- `python tools/check_core_timing_guard.py` passes.
-- Native tests pass (`pio test -e native`).
-- Example builds pass (`pio run -e esp32s3dev`, `pio run -e esp32s2dev`).
-- No direct `millis/micros/yield/delay` calls or Arduino includes exist in
-  `include/` or `src/`.
-- Pure ESP-IDF coverage requires running:
-  `idf.py -C examples/esp_idf/basic set-target esp32s3 build` and
-  `idf.py -C examples/esp_idf/basic set-target esp32s2 build`, or citing CI logs
-  that ran those exact targets.
+## Reproducible Verification
+
+CI pins ESP-IDF `v5.3.5` by container digest and builds both targets:
+
+```bash
+idf.py -C examples/esp_idf/basic set-target esp32s3 build
+idf.py -C examples/esp_idf/basic set-target esp32s2 build
+```
+
+Also run:
+
+```bash
+python tools/check_core_timing_guard.py
+python tools/check_idf_example_contract.py
+python scripts/generate_version.py check
+python -m platformio test -e native
+```
+
+Local claims require actual command output. If `idf.py` is unavailable, report
+that gap and rely only on CI evidence after the pinned job completes.
+
+Hardware behavior still requires a dated target run and final-board electrical,
+fault, cancellation, shared-bus, and workload validation.

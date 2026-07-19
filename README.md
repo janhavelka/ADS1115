@@ -1,512 +1,369 @@
 # ADS1115 Driver Library
 
-ADS1115 16-bit ADC I2C driver for ESP32-S2 / ESP32-S3 Arduino consumers,
-with a framework-neutral core suitable for ESP-IDF adapters. The core library
-does not own the I2C bus; production projects must provide transport callbacks
-that implement their bus ownership, locking, and timeout policy.
+Framework-neutral ADS1115 16-bit ADC driver for ESP32-S2 and ESP32-S3 Arduino
+and ESP-IDF consumers. The library never owns the I2C bus: applications inject
+transport callbacks and retain ownership of handles, pins, locking, clock rate,
+timeouts, recovery, retries, and scheduling.
 
-Release status: production-oriented/API-stable driver with strong native fault
-coverage, Arduino ESP32-S2/S3 build coverage, and limited COM19 HIL evidence.
-Field-grade claims require the remaining hardware validation listed below.
+Version 2.0 introduces a fixed-memory, owner-safe operation engine for
+production shared-bus use. Native fault injection and ESP32 build coverage are
+strong; field release still requires the board-specific electrical and HIL
+evidence listed below.
+
+## Production Contract
+
+Use this lifecycle in a serialized I2C owner task:
+
+```text
+bind()                         zero I2C
+startInitialize(...)          zero I2C
+poll(now, transactionBudget)  only owner-safe call that performs I2C
+takeResult(token, result)     zero I2C, exactly once
+
+startRead(...)                zero I2C
+poll(...)                     bounded start / wait / verify / read steps
+takeResult(...)               atomic sample plus provenance
+
+startShutdown(...)            explicit hardware-idle operation
+unbind()                      zero I2C
+```
+
+The owner-safe API provides:
+
+- one active hardware operation and one unconsumed terminal result;
+- nonzero operation tokens and exactly-once result consumption;
+- absolute, wrap-safe whole-operation deadlines;
+- a caller-selected callback budget per `poll()` call, clamped to three;
+- per-transfer timeout clamping to the remaining operation deadline;
+- mandatory profile readback before configuration becomes `VERIFIED`;
+- bus-silent cancellation with post-start wait-idle reconciliation;
+- fixed-memory `SampleResult` provenance and exact ADC-input microvolts;
+- passive health diagnostics that never suppress owner-authorized I2C.
+
+All driver calls require external serialization. No public API is ISR-safe.
 
 ## Features
 
-- Injected I2C transport (no Wire dependency in library code)
-- Framework-neutral core: no Arduino or ESP-IDF headers in `include/` or `src/`
-- ESP-IDF component metadata and a native `i2c_master` example with the same
-  user-visible CLI coverage as the Arduino example
-- Health monitoring with READY / DEGRADED / OFFLINE states
-- Single-shot and continuous conversion modes
-- Configurable mux, gain, data rate, and comparator settings
-- Conversion readiness through bounded OS-bit polling or ALERT/RDY pin mode
-- Optional poll-chunked single-shot and config-apply jobs with caller-selected
-  transport-instruction budgets
-- Hardware-config-dirty diagnostics for partial multi-register writes
-- Optional strict register read-back plausibility check
-- Raw and voltage conversion helpers
+- No Arduino, Wire, ESP-IDF, FreeRTOS, logging, heap, or global-bus dependency
+  in `include/` or `src/`
+- Injected, non-owning I2C transport with explicit callback timeouts
+- Four legal addresses: `0x48` through `0x4B`
+- Four single-ended and four differential MUX selections
+- Six PGA ranges from +/-6.144 V through +/-0.256 V
+- Eight data rates from 8 SPS through 860 SPS
+- Correct signed two's-complement conversion handling
+- Single-shot production acquisition; continuous mode retained as an advanced
+  diagnostic surface
+- Typed comparator-disabled, threshold, and conversion-ready profiles
+- Partial/ambiguous write diagnostics and explicit configuration trust state
+- Native ESP-IDF component metadata and diagnostic example
 
 ## Installation
 
-### PlatformIO
+For PlatformIO, add the library to `lib_deps`, or copy `include/ADS1115/` and
+`src/` into the project. For ESP-IDF, use this repository as a component or the
+native project under `examples/esp_idf/basic`.
 
-Add to `platformio.ini`:
+The repository's reproducible build inputs are PlatformIO Core `6.1.19`, the
+exact pioarduino espressif32 `54.03.20` release archive, and ESP-IDF `v5.3.5`
+for the native IDF CI build.
 
-```ini
-lib_deps =
-  ADS1115
-```
+## Owner-Safe Quick Start
 
-### Manual
-
-Copy `include/ADS1115/` and `src/` into your project.
-
-### ESP-IDF
-
-Use this repository as an ESP-IDF component, or use the native project under
-`examples/esp_idf/basic`. The IDF example owns the I2C master bus/device handle,
-GPIO setup, console glue, and timing callbacks, then passes only callbacks into
-`ADS1115::Config`.
-
-## Quick Start
+Transport callbacks must serialize the shared bus and honor the supplied
+timeout. The complete Arduino implementation is in
+`examples/02_owner_safe_poll/main.cpp`; its owner loop advances at most one I2C
+callback per pass.
 
 ```cpp
-#include <Wire.h>
 #include "ADS1115/ADS1115.h"
 
-// Transport callbacks
-ADS1115::Status i2cWrite(uint8_t addr, const uint8_t* data, size_t len,
-                         uint32_t timeoutMs, void* user) {
-  TwoWire* wire = static_cast<TwoWire*>(user);
-  (void)timeoutMs;  // Manager-owned in shared-bus setups.
-  wire->beginTransmission(addr);
-  wire->write(data, len);
-  switch (wire->endTransmission(true)) {
-    case 0: return ADS1115::Status::Ok();
-    case 2: return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_ADDR, "Address NACK");
-    case 3: return ADS1115::Status::Error(ADS1115::Err::I2C_NACK_DATA, "Data NACK");
-    case 5: return ADS1115::Status::Error(ADS1115::Err::I2C_TIMEOUT, "I2C timeout");
-    case 4: return ADS1115::Status::Error(ADS1115::Err::I2C_BUS, "I2C bus error");
-    default: return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "Write failed");
-  }
+ADS1115::ADS1115 adc;
+ADS1115::OperationToken token;
+
+ADS1115::DriverConfig transport{
+    appI2cWrite, appI2cWriteRead, &sharedBusOwner, 20};
+
+ADS1115::DeviceProfile profile;
+profile.i2cAddress = 0x48;
+profile.defaultMux = ADS1115::Mux::AIN0_GND;
+profile.defaultGain = ADS1115::Gain::FSR_2_048V;
+profile.dataRate = ADS1115::DataRate::SPS_128;
+profile.mode = ADS1115::Mode::SINGLE_SHOT;
+profile.comparator.use = ADS1115::ComparatorUse::OFF;
+
+ADS1115::Status st = adc.bind(transport, profile); // no I2C
+if (st.ok()) {
+  const uint32_t nowMs = appNowMs();
+  st = adc.startInitialize(nowMs, nowMs + 200U, token); // no I2C
 }
 
-ADS1115::Status i2cWriteRead(uint8_t addr, const uint8_t* tx, size_t txLen,
-                             uint8_t* rx, size_t rxLen,
-                             uint32_t timeoutMs, void* user) {
-  TwoWire* wire = static_cast<TwoWire*>(user);
-  (void)timeoutMs;  // Manager-owned in shared-bus setups.
-  wire->beginTransmission(addr);
-  wire->write(tx, txLen);
-  uint8_t result = wire->endTransmission(false);
-  if (result != 0) {
-    return ADS1115::Status::Error(
-      result == 2 ? ADS1115::Err::I2C_NACK_ADDR :
-      result == 3 ? ADS1115::Err::I2C_NACK_DATA :
-      result == 5 ? ADS1115::Err::I2C_TIMEOUT :
-      result == 4 ? ADS1115::Err::I2C_BUS :
-                    ADS1115::Err::I2C_ERROR,
-      "Write phase failed");
-  }
-  if (wire->requestFrom(addr, rxLen) != rxLen) {
-    return ADS1115::Status::Error(ADS1115::Err::I2C_ERROR, "Read failed");
-  }
-  for (size_t i = 0; i < rxLen; ++i) {
-    rx[i] = wire->read();
-  }
-  return ADS1115::Status::Ok();
-}
-
-uint32_t adcNowMs(void*) {
-  return millis();
-}
-
-void adcYield(void*) {
-  yield();
-}
-
-ADS1115::ADS1115 device;
-
-void setup() {
-  Serial.begin(115200);
-  Wire.begin(8, 9);
-
-  ADS1115::Config cfg;
-  cfg.i2cWrite = i2cWrite;
-  cfg.i2cWriteRead = i2cWriteRead;
-  cfg.i2cUser = &Wire;
-  cfg.nowMs = adcNowMs;              // Required by readBlocking* APIs.
-  cfg.cooperativeYield = adcYield;   // Optional scheduler hint.
-  cfg.i2cAddress = 0x48;
-
-  auto status = device.begin(cfg);
-  if (!status.ok()) {
-    Serial.printf("Init failed: %s\n", status.msg);
-    return;
-  }
-
-  Serial.println("ADS1115 initialized!");
-}
-
-void loop() {
-  device.tick(millis());
-
-  int16_t raw = 0;
-  ADS1115::Status st = device.readBlocking(raw);
-  if (st.ok()) {
-    Serial.printf("Raw=%d Voltage=%.6f V\n", raw, device.rawToVoltage(raw));
+// Called only by the serialized bus owner:
+ADS1115::PollResult progress = adc.poll(appNowMs(), 1);
+if (progress.done) {
+  ADS1115::OperationResult result;
+  ADS1115::Status access = adc.takeResult(token, result);
+  if (access.ok() && result.status.ok()) {
+    // Initialization is verified, or result.sample is an atomic typed sample.
   }
 }
 ```
 
-The Arduino `Wire` mapping above is adapter-specific. Other frameworks may not
-expose reliable address-NACK versus data-NACK detail; preserve the raw transport
-detail and document any coarse mappings in the adapter.
+Schedule a read only after initialization succeeds:
 
-## API Overview
+```cpp
+ADS1115::ChannelRequest request;
+request.channelId = 7; // application meaning, preserved in SampleResult
+request.mux = ADS1115::Mux::AIN2_GND;
+request.gain = ADS1115::Gain::FSR_1_024V;
 
-### Lifecycle
+const uint32_t nowMs = appNowMs();
+const uint32_t durationMs =
+    ADS1115::operationDeadlineMs(1, profile.dataRate, 20);
+st = adc.startRead(request, nowMs, nowMs + durationMs, token);
+```
 
-| Method | Description |
-|--------|-------------|
-| `begin(config)` | Initialize with injected transport and verify the device is reachable |
-| `tick(nowMs)` | Compatibility service step; may perform one bounded CONFIG read and suppresses the returned status |
-| `service(nowMs)` | Status-returning service step for pending conversion polling work |
-| `end()` | Best-effort return the ADC to single-shot idle and clear cached conversion state |
-| `shutdown()` | Status-returning request to write single-shot idle while keeping the driver initialized |
-| `isInitialized()` | True after successful `begin()` until `end()` |
-| `getConfig()` | Return the driver's cached configuration snapshot |
+`operationDeadlineMs()` returns a duration, not an absolute timestamp. It uses
+the datasheet's -10% data-rate tolerance plus a one-millisecond conversion
+guard and the caller's scheduling margin.
 
-### Diagnostics And Raw Access
+## Profiles And Configuration Trust
 
-| Method | Description |
-|--------|-------------|
-| `probe()` | Check initialized-address CONFIG-register reachability without updating health counters; preserves distinguishable I2C errors except definite address NACK maps to `DEVICE_NOT_FOUND` |
-| `recover()` | Re-validate comms, clear conversion state, and re-apply cached config |
-| `getSettings(snap)` | Populate a `SettingsSnapshot` with cached config, hook availability, and runtime state (no I2C) |
-| `readRegister16(reg, value)` | Read a raw 16-bit register using tracked I2C |
-| `writeRegister16(reg, value)` | Write a raw 16-bit register using tracked I2C |
-| `readRegister(reg, value)` | Compatibility alias for `readRegister16()` |
-| `writeRegister(reg, value)` | Compatibility alias for `writeRegister16()` |
+`DriverConfig` contains only the non-owning transport binding and transfer cap.
+`DeviceProfile` is the complete desired volatile hardware profile: address,
+default MUX/gain, data rate, mode, and comparator configuration.
+`ChannelRequest` records the application channel ID, MUX, and gain for one
+single-shot conversion.
 
-Raw register reads accept ADS1115 registers `0x00..0x03`. Raw writes accept
-only writable registers `0x01..0x03`; the conversion register `0x00` is
-read-only and is rejected before I2C. Successful raw writes are diagnostic
-access: they update hardware, leave the typed cache unchanged, and mark
-`hardwareConfigDirty()` with `Err::HARDWARE_CONFIG_DIRTY`; the dirty diagnostic
-detail is the raw register pointer. If the transport reports an error after a
-raw write is attempted, the same transport status is preserved as the dirty
-diagnostic because the device may still have accepted the write. Use typed
-helpers such as `writeConfig()` or `setThresholds()` when the cache must stay in
-sync. A later `recover()` or `begin()` clears raw-write dirty state only after
-the cached settings are fully rewritten and read back successfully.
+Owner initialization and recovery always perform:
 
-### Conversion
+1. CONFIG-register reachability probe;
+2. low-threshold, high-threshold, and CONFIG writes;
+3. low-threshold, high-threshold, and masked CONFIG readback.
 
-| Method | Description |
-|--------|-------------|
-| `startConversion()` | Start a single-shot conversion with the current mux; returns `Err::IN_PROGRESS` when scheduled, `Err::UNSUPPORTED_OPERATION` in continuous mode, and `Err::BUSY` only for an already-active single-shot conversion |
-| `startConversion(mux)` | Start a single-shot conversion after atomically applying a temporary mux |
-| `readConversionReady(ready)` | Report readiness with explicit I2C error status |
-| `conversionReady(ready)` | Alias for `readConversionReady(ready)` with explicit status |
-| `conversionReady()` | Compatibility-only readiness check; `false` means not ready or an error |
-| `readRaw(out)` | Read signed two's-complement conversion data |
-| `readLatestRaw(out)` | Read the conversion register immediately without readiness checks |
-| `readVoltage(volts)` | Read conversion data and scale it using the active gain |
-| `readBlocking(out, timeoutMs)` | Start/join a single-shot conversion, or wait for a fresh continuous-mode sample, with a finite deadline; requires `Config::nowMs` and `1 <= timeoutMs <= INT32_MAX` |
-| `readBlockingVoltage(volts, timeoutMs)` | Blocking read with voltage scaling; requires `Config::nowMs` |
-| `startSingleShot(...)` / `pollSingleShot(nowMs, maxInstructions)` | Poll-chunked single-shot job with explicit per-poll transport budget |
-| `startApplyConfigJob()` / `pollApplyConfig(nowMs, maxInstructions)` | Poll-chunked cached-config apply job with optional strict/dirty readback |
-| `cancelJob()` / `jobActive()` / `jobState()` / `lastJobStatus()` | Poll-chunked job control and diagnostics |
+ADS1115 has no chip-ID register. This proves address reachability and register
+profile plausibility, not silicon identity. The dynamic CONFIG OS bit is masked.
 
-In single-shot mode, readiness is determined by ALERT/RDY when conversion-ready
-pin mode is configured, otherwise by polling the OS bit after the configured
-conversion time. In continuous mode `readRaw()` and `readLatestRaw()` return the
-latest conversion register value immediately, which may be older than the next
-data-rate interval. Use `readConversionReady()` first when the application needs
-a fresh-sample indication, or use `readBlocking()` when the caller can spend a
-bounded wait for the next fresh sample.
+Configuration state is explicit:
 
-`conversionReady()` is a lossy source-compatibility helper. A `false` result can
-mean either "not ready" or "readiness check failed"; production code should use
-`readConversionReady(bool&)` or `conversionReady(bool&)` and inspect `Status`.
+| State | Meaning |
+| --- | --- |
+| `UNBOUND` | No transport/profile binding exists. |
+| `UNCONFIGURED` | Bound, but hardware has not been verified. |
+| `APPLYING` | A profile-changing owner operation is active. |
+| `VERIFIED` | All writable profile fields matched readback. |
+| `UNKNOWN` | Hardware/cache agreement cannot safely label or scale a sample. |
 
-`tick(nowMs)` may perform one tracked CONFIG read when a single-shot conversion
-is pending and its data-rate interval has elapsed. It ignores the immediate
-status for compatibility; failures are visible through `state()`, health
-counters, `lastError()`, and `lastErrorMs()`. Use `service(nowMs)` when the
-caller needs that immediate `Status`.
+Profile generation increments only after verified commit. Raw writes,
+ambiguous/partial writes, post-effect cancellation, and operation timeout can
+move the state to `UNKNOWN`. `startRead()` rejects unverified or dirty state;
+use a successful `startRecover()` operation to replay and verify the profile.
 
-`begin()` can succeed without `Config::nowMs`. In that no-clock mode,
-`SettingsSnapshot::timebaseAvailable` is false, health timestamps remain `0`,
-and direct timing-based readiness checks do not advance by elapsed time. Use
-`tick(nowMs)` / `service(nowMs)` from an external scheduler timebase. The
-ALERT/RDY GPIO readiness path remains supported in no-clock mode once that
-external service timebase has anchored and advanced the pending conversion.
-Blocking reads return `INVALID_CONFIG` before starting a conversion when `nowMs`
-is missing. Invalid timeout values (`0` or values above `INT32_MAX`) return
-`INVALID_PARAM` before starting a conversion. If the injected clock does not
-advance during a blocking wait, the wait exits with `Err::CLOCK_STALLED` and
-`Status::detail` set to the same-tick poll count.
+## Operations, Budgets, And Results
 
-### Poll-Chunked Execution
+Every `start*()` call is bus-silent and returns `Err::IN_PROGRESS` plus a token
+when accepted. `poll(nowMs, maxTransactions)` is the only owner-safe call that
+touches I2C. A budget of zero is bus-silent; values above three are clamped.
+Conversion-time wait polls consume zero callbacks.
 
-`startSingleShot(...)` and `startApplyConfigJob()` schedule work without I2C.
-`pollSingleShot(nowMs, maxInstructions)` and
-`pollApplyConfig(nowMs, maxInstructions)` advance the active job and return a
-`PollResult` with the terminal/current `Status`, `instructionsUsed`, `done`, and
-`JobState`. `maxInstructions` counts transport callbacks only: a 16-bit register
-read with pointer write plus repeated-start read is one instruction, and a 16-bit
-register write is one instruction. The value is clamped to a fixed small maximum
-of 3. Passing `0` performs no transport work.
+| Operation | Callback sequence | Maximum callbacks |
+| --- | --- | ---: |
+| Initialize | probe, 3 writes, 3 readbacks | 7 |
+| Apply profile | 3 writes, 3 readbacks | 6 |
+| Recover | tracked probe, 3 writes, 3 readbacks | 7 |
+| Single-shot read | start CONFIG write, masked CONFIG verification, conversion read | 3 |
+| Shutdown | single-shot CONFIG write and readback | 2 |
 
-While any poll-chunked job is active, normal public I2C/configuration APIs return
-`Err::BUSY`; use the matching poll method or `cancelJob()` until the job reaches
-a terminal state. `startApplyConfigJob()` is supported in normal continuous mode;
-it only rejects an active single-shot conversion.
+The callback timeout is `min(transferTimeoutMs, deadline - nowMs)`. The owner
+must pass `nowMs` from the same monotonic time domain used at start. Deadlines
+must be in the future by at most `INT32_MAX` milliseconds.
 
-Delay gates do not consume instructions. For example, a single-shot job writes
-CONFIG with the OS/start bit, then later wait polls return
-`instructionsUsed == 0` until `getConversionTimeMs()` has elapsed or ALERT/RDY
-is asserted. When readiness must be proven through the OS bit, the CONFIG read
-and conversion-register read may complete in the same `pollSingleShot()` only
-when the caller supplies enough remaining budget.
+When `PollResult::done` becomes true, call `takeResult()` with the matching
+token. A wrong token returns `TOKEN_MISMATCH` without consuming the result.
+Reading twice returns `RESULT_NOT_AVAILABLE`. A new operation remains blocked
+until the pending terminal result is consumed.
 
-Config apply jobs write low threshold, high threshold, and CONFIG. If
-`strictInitVerify` is enabled or hardware config is already dirty, the job then
-performs low, high, and CONFIG readback before clearing dirty state. Partial
-write or readback failure leaves `hardwareConfigDirty()` and
-`hardwareConfigDirtyError()` available for diagnostics.
+`OperationResult::status` is the operation outcome. A successful read sets
+`sampleValid` and publishes one `SampleResult` containing:
 
-Steady paths for an external I2C owner are `startSingleShot(...)` plus
-`pollSingleShot(...)`, `readConversionReady(bool&)`, `readRaw()`,
-`readLatestRaw()`, and raw register access when the owner has budgeted the
-single transaction. Lifecycle/setup paths are `begin()`, `recover()`,
-`shutdown()`, `startApplyConfigJob()` / `pollApplyConfig()`, typed setters, and
-comparator setup. `readBlocking()` and `readBlockingVoltage()` are bounded
-convenience APIs and should not be used as the model for steady shared-bus
-polling.
+- raw signed code and rounded ADC-input microvolts;
+- application channel ID, MUX, gain, and data rate;
+- configuration generation and monotonic successful-sample sequence;
+- verified-configuration and positive/negative code-limit flags.
 
-### Configuration
+The result is a value object. No pointer into mutable driver storage is exposed.
 
-| Method | Description |
-|--------|-------------|
-| `setMux(mux)` | Select one of four single-ended inputs or four differential MUX selections: AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, or AIN2-AIN3 |
-| `setGain(gain)` | Select PGA full-scale range from +/-6.144 V to +/-0.256 V |
-| `setDataRate(rate)` | Select 8, 16, 32, 64, 128, 250, 475, or 860 SPS |
-| `setMode(mode)` | Select single-shot or continuous mode |
-| `readConfig(config)` | Read the CONFIG register |
-| `writeConfig(config)` | Write a validated CONFIG register value and sync the cache |
+## Cancellation And Timeout Safety
 
-Typed setters validate enum values and update the cached configuration only
-after the required I2C writes succeed. CONFIG-only setters use a single CONFIG
-write. Full resync paths write low threshold, high threshold, and CONFIG.
+`cancelActiveOperation()` never performs I2C.
 
-If a multi-register update is partially written and then fails, the driver sets
-`hardwareConfigDirty()` and preserves the original transport error in
-`hardwareConfigDirtyError()`. `getSettings()` exposes the same fields plus
-`SettingsSnapshot::hardwareConfigDirtyAddress`, which preserves the address used
-when the dirty state was recorded. Dirty state clears only after a successful
-full resync, such as `recover()` or another successful full apply path.
-Single-register CONFIG or threshold write attempts that return an uncertain
-transport error also mark clean hardware/cache state dirty, because the device
-may have accepted the bytes before the adapter reported failure. Existing dirty
-diagnostics are preserved until a later partial apply failure or successful full
-resync provides clearer evidence.
-The compatibility names `isHardwareConfigDirty()`, `isHardwareConfigUncertain()`,
-`lastConfigApplyError()`, `SettingsSnapshot::hardwareConfigUncertain`, and
-`SettingsSnapshot::lastConfigApplyError` map to the same dirty diagnostic.
+- Before any hardware effect, cancellation publishes `CANCELLED` immediately.
+- After a confirmed or ambiguous conversion start, cancellation enters
+  `RECONCILING`. Subsequent polls remain bus-silent until the proven worst-case
+  conversion interval has elapsed.
+- New reads and configuration mutations remain blocked during reconciliation.
+- The abandoned conversion is never published or reused for another MUX.
+- If the start callback already returned an ambiguous transport failure, that
+  original failure remains the terminal result.
 
-Failed `begin()` calls clear stale cached configuration/runtime state. If the
-failure occurs after one or more config writes may have reached hardware,
-`hardwareConfigDirty()` and `hardwareConfigDirtyError()` remain available even
-while `isInitialized()` is false. A successful later full `begin()` apply clears
-that diagnostic.
+A deadline reached after conversion start follows the same wait-idle rule and
+publishes `TIMED_OUT`. Profile-changing cancellations/timeouts retain
+`UNKNOWN`/dirty diagnostics when hardware may have changed.
 
-`Config::strictInitVerify` enables an optional read-back plausibility check after
-full config apply. ADS1115 has no ID register; strict mode only verifies that
-threshold registers and CONFIG writable fields read back as expected. Dynamic
-CONFIG OS/status bits are masked. Register read-back mismatches return
-`Err::READBACK_MISMATCH` with the observed register value in `Status::detail`;
-transport failures preserve the original transport status.
+## Units And Pure Helpers
 
-### Comparator And ALERT/RDY
+`rawToMicrovolts()` uses bounded 64-bit integer arithmetic and rounded rational
+scaling. `SampleResult::microvolts` is voltage at the selected ADS1115 input,
+not a board-level engineering unit. Divider ratio, shunt value, amplifier gain,
+offset, calibration, polarity, protection, and disconnect semantics belong to
+the board/product layer.
 
-| Method | Description |
-|--------|-------------|
-| `setThresholds(low, high)` | Write signed comparator threshold registers |
-| `getThresholds(low, high)` | Read threshold registers and sync the cache |
-| `setComparatorMode(mode)` | Select traditional or window comparator mode |
-| `setComparatorPolarity(polarity)` | Select active-low or active-high ALERT/RDY polarity |
-| `setComparatorLatch(latch)` | Select latching or non-latching comparator behavior |
-| `setComparatorQueue(queue)` | Select assert-after count or disable comparator |
-| `enableConversionReadyPin()` | Program ADS1115 conversion-ready threshold mode |
-| `disableComparator()` | Disable comparator output |
+Other bus-silent helpers include:
 
-Comparator thresholds are signed raw conversion codes, not volts. Recalculate
-threshold raw codes whenever PGA/full-scale range changes.
+- `validateDeviceProfile()`, `validateComparatorProfile()`, and
+  `validateChannelRequest()`;
+- `dataRateSps()` and `worstCaseConversionTimeUs()`;
+- `gainFullScaleMicrovolts()`;
+- `isSingleEnded()`, `positiveInput()`, and `negativeInput()`;
+- `operationDeadlineMs()`.
 
-Latched comparator assertions clear when the conversion register is read or
-after a successful SMBus alert response. This driver does not issue SMBus alert
-response cycles.
+## Comparator And ALERT/RDY
 
-ALERT/RDY is open-drain and requires a pull-up. In conversion-ready mode the
-pulse can be short; in continuous conversion the datasheet pulse-width caveat is
-approximately 8 us, so slow polling tasks may miss it. Use an interrupt-capable
-GPIO, a latch strategy, or OS-bit polling when the scheduler cannot guarantee
-pulse capture.
+`ComparatorProfile::use` distinguishes disabled output, threshold comparison,
+and the datasheet conversion-ready threshold pattern. Invalid combinations and
+threshold ordering are rejected before I2C. Comparator thresholds are signed
+raw ADC codes and must be recalculated when PGA changes.
 
-### Configuration Constraints
+The production owner-safe read path uses CONFIG OS-bit polling. It does not own
+or sample a GPIO. Legacy ALERT/RDY support remains an advanced diagnostic path.
+ALERT/RDY is open drain and needs a board-selected pull-up. Conversion-ready
+pulses can be short (approximately 8 us in continuous mode), so a reviewed GPIO,
+edge/latch policy, and electrical validation are required before product use.
 
-| Field | Valid Values |
-|-------|--------------|
-| `i2cWrite`, `i2cWriteRead` | Required transport callbacks |
-| `i2cAddress` | ADDR to GND `0x48`, VDD `0x49`, SDA `0x4A`, or SCL `0x4B` |
-| `i2cTimeoutMs` | Must be greater than zero |
-| `strictInitVerify` | Optional register read-back plausibility check |
-| `nowMs` | Optional for `begin()`; required by `readBlocking*()` |
-| `alertRdyPin` | `-1` when unused; otherwise requires `gpioRead` |
-| `offlineThreshold` | Zero is normalized to one |
-| enum fields | Must be one of the documented enum values |
+## Health And Fault Ownership
 
-The datasheet says `ADDR` is sampled continuously. If `ADDR` is tied to SDA,
-hold SDA low for the required setup window after SCL goes low so the address
-decodes correctly. I2C and ALERT/RDY pull-up sizing is board-specific: choose
-values for bus speed, total capacitance, GPIO voltage domain, sink-current
-limits, and the ALERT/RDY pulse-capture strategy.
+`READY`, `DEGRADED`, and `OFFLINE` summarize consecutive tracked transport
+results. Counters saturate, a success resets consecutive failures, and timestamps
+use the compatibility clock hook when available.
+
+Health is passive. `OFFLINE` never blocks a callback selected by the external
+owner and never starts retries or bus recovery. The application remains the only
+owner of admission, retry, backoff, reset, and recovery policy.
+
+Multi-register writes can partially reach hardware. The driver preserves the
+original transport/readback error through `hardwareConfigDirtyError()` and the
+address through `SettingsSnapshot::hardwareConfigDirtyAddress`. Only a complete
+verified replay clears the dirty state.
+
+## Compatibility And Advanced Diagnostics
+
+The 1.x surface remains available for migration, bring-up, and service tools,
+but its behavior has intentionally hardened in 2.0:
+
+| Surface | 2.0 contract |
+| --- | --- |
+| `Config` / `begin()` | Synchronous compatibility facade; initialization now always performs full readback. |
+| `recover()` / `shutdown()` | Bounded synchronous facades over the same engine; can perform 7 / 2 callbacks. |
+| `end()` | Bus-silent alias for `unbind()`; call `shutdown()` explicitly when hardware idle is required. |
+| Direct setters | Advanced diagnostics; a successful direct mutation makes profile state `UNKNOWN` until verified replay. |
+| Raw register writes | Advanced diagnostics; always mark cache/hardware state dirty or preserve an ambiguous write failure. |
+| `conversionReady()` bool overload | Lossy compatibility only; `false` conflates not-ready and error. |
+| Blocking reads | Bounded compatibility convenience; single-shot verified profiles only. |
+| Continuous mode | Latest-register diagnostics only; owner-safe `startRead()` deliberately rejects it. |
+| Legacy staged jobs | Compatibility wrappers over the owner operation engine. |
+
+Status enum values from 1.x retain their numeric values. New 2.0 values are
+appended: `CANCELLED`, `CONFIG_UNKNOWN`, `RESULT_NOT_AVAILABLE`,
+`TOKEN_MISMATCH`, and `INDETERMINATE`. This release is a major version because
+lifecycle, verification, shutdown, health-admission, continuous-read, and
+configuration-trust behavior changed.
 
 ## Examples
 
-- `examples/01_basic_bringup_cli/` - diagnostic Arduino bring-up CLI for ADS1115 features
-- `examples/esp_idf/basic/` - native ESP-IDF `i2c_master` CLI using `app_main`, fixed command buffers, `esp_timer`, FreeRTOS delays, IDF GPIO/I2C APIs, external bus context, timeout propagation, and coarse ESP-IDF error mapping
-- CLI address selection: `addr` prints the active ADS1115 address; `addr 0x48`,
-  `addr 0x49`, `addr 0x4A`, or `addr 0x4B` reinitializes the diagnostic driver
-  for that selected address. It does not automatically validate every detected
-  ADS1115-range device on the bus.
-- CLI register diagnostics: `reg <0..3>` and `wreg <1..3> <val>` allow raw register access for bring-up and service work. Raw writes bypass the typed config helpers, leave the typed cache unchanged, and mark hardware/cache sync dirty; use `recover()` or `begin()` to restore cached settings after manual register edits.
-
-Current examples are diagnostic and bring-up oriented. They do not demonstrate a
-production shared-bus manager with external locking, nonblocking console input,
-or system-wide timeout policy. Production applications should implement those
-policies in their transport callbacks.
-
-| Example | Intent | Evidence/limits |
+| Example | Intent | Limits |
 | --- | --- | --- |
-| Arduino CLI | Diagnostic bring-up and HIL operator interface. | Reports active address, version, driver state, cached settings, and raw-write dirty diagnostics. Uses Arduino `Wire` global timeout rather than a production shared-bus manager. |
-| ESP-IDF basic | Native build/integration template. | Owns bus context in the adapter, propagates timeout values, and uses coarse `esp_err_t` mapping. It is externally serialized and does not include a shared-bus mutex; see `docs/IDF_PORT.md`. |
+| `examples/02_owner_safe_poll/` | Production ownership pattern: static mutex, shared-bus timeout enforcement, tokened operations, and one callback per scheduler pass. | Example pins and sample channel meaning must be replaced by the product profile. |
+| `examples/01_basic_bringup_cli/` | Arduino diagnostic/HIL console. | Uses the compatibility and raw diagnostic surface; it is not a production bus manager. |
+| `examples/esp_idf/basic/` | Native IDF `app_main`, `i2c_master`, fixed-buffer diagnostic CLI, `esp_timer`, and FreeRTOS integration. | Externally serialized demo with coarse `esp_err_t` mapping; no shared-bus mutex. |
 
-### Example Helpers (`examples/common/`)
+`examples/common/` is example-only glue and is not part of the library.
 
-Not part of the library. These simulate project-level glue and keep examples self-contained:
+The diagnostic Arduino bring-up CLI and ESP-IDF CLI predate the owner-safe
+example. Current examples are diagnostic except for the explicitly scoped
+`02_owner_safe_poll` ownership pattern. The ESP-IDF diagnostic example
+does not include a shared-bus mutex. Production applications should implement their own
+board/profile meanings, shared-bus admission, and system recovery policy.
+Raw writes bypass the typed config helpers and require a verified replay before
+typed/scaled acquisition resumes.
 
-| File | Purpose |
-|------|---------|
-| `BoardConfig.h` | Pin definitions and Arduino example I2C/GPIO init |
-| `BuildConfig.h` | Compile-time `LOG_LEVEL` configuration |
-| `Log.h` | Serial logging macros (`LOGE`/`LOGW`/`LOGI`/`LOGD`/`LOGT`/`LOGV`) |
-| `I2cTransport.h` | Diagnostic Wire-based I2C transport adapter (`wireWrite`, `wireWriteRead`, `initWire`) |
-| `I2cScanner.h` | Invasive diagnostic I2C scanner with table output and bus recovery |
-| `BusDiag.h` | Bus diagnostics wrapper (scan + probe) |
-| `CliStyle.h` | Shared ANSI colors and CLI formatting helpers |
-| `CliShell.h` | Serial command-line shell with line editing |
-| `CommandHandler.h` | Command parsing helpers (`readLine`, `match`, `parseInt`) |
-| `HealthView.h` | Compact health status display |
-| `HealthDiag.h` | Verbose health diagnostics with color, snapshots, and `HealthMonitor` |
-| `TransportAdapter.h` | Transport function pointer adapter |
+## Resource, Threading, And Electrical Contracts
 
-## Behavioral Contracts
+1. Driver instances are neither thread-safe nor ISR-safe; serialize every call.
+2. The application owns transport lifetime. Do not destroy/reconfigure the bus
+   context while the driver remains bound.
+3. The core allocates no heap memory and has no unbounded wait, retry, or queue.
+4. A transport callback may block only up to its supplied timeout and must
+   return a meaningful `Status`.
+5. `unbind()` and `end()` are always bus-silent; shutdown is an explicit fallible
+   operation.
+6. PGA full-scale selection does not change ADS1115 absolute input limits.
+   Keep analog pins within the powered-device datasheet limits.
+7. The ADDR pin is continuously sampled. Board strap choice and I2C/ALERT pull-up
+   sizing are electrical design inputs, not driver policy.
 
-1. Threading model: externally serialized; not thread-safe and not ISR-safe.
-2. Timing model: `tick()`/`service()` are bounded; they may perform one tracked CONFIG read when single-shot readiness polling is due.
-3. Resource ownership: bus, pins, and timeout policy remain application-owned via `Config`.
-4. Memory behavior: no heap allocation in steady-state library operation.
-5. Error handling: all fallible APIs return `Status`; no exceptions and no silent failures.
-6. Health behavior: `OFFLINE` is latched. Normal public I2C operations return `Err::OFFLINE` with `Driver is offline; call recover()` without touching the bus until `recover()` succeeds.
-7. Partial hardware state: multi-register failures can leave hardware partially updated; use `hardwareConfigDirty()` and `recover()`.
-8. Electrical limits: PGA full-scale settings do not override ADS1115 analog input absolute maximum ratings (`GND - 0.3 V` to `VDD + 0.3 V`).
+## Validation And Reproducibility
 
-## I2C Transaction And Latency Model
-
-Each transport transaction may block for up to `Config::i2cTimeoutMs`. The table
-lists nominal transaction counts; strict read-back adds the noted extra reads.
-
-| API | Transactions | Worst-case bound |
-|-----|--------------|------------------|
-| `begin()` | 1 CONFIG read + 3 writes; strict adds 3 reads | `4 * timeout`, strict `7 * timeout` |
-| `probe()` | 1 CONFIG read | `1 * timeout` |
-| `recover()` | 1 CONFIG read + 3 writes; strict adds 3 reads | `4 * timeout`, strict `7 * timeout` |
-| `shutdown()` / `end()` shutdown attempt | 1 CONFIG write | `1 * timeout` |
-| CONFIG-only setters | 1 CONFIG write | `1 * timeout` |
-| `setThresholds()` | 2 threshold writes | `2 * timeout` |
-| `getThresholds()` | 2 threshold reads | `2 * timeout` |
-| `enableConversionReadyPin()` | 3 writes; strict adds 3 reads | `3 * timeout`, strict `6 * timeout` |
-| `readRegister16()` / `writeRegister16()` | 1 transaction | `1 * timeout` |
-| `readRaw()` / `readLatestRaw()` | 1 conversion read, plus single-shot readiness if needed | `1-2 * timeout` |
-| `pollSingleShot()` | 0 to `maxInstructions` transactions, clamped to 3 | Caller-budgeted per poll; delay gates use 0 transactions |
-| `pollApplyConfig()` | 0 to `maxInstructions` transactions, clamped to 3 | Caller-budgeted per poll; strict or dirty readback adds three read transactions across polls |
-| `readBlocking()` | Single-shot start write + readiness polling + conversion read | Bounded by `timeoutMs` plus active I2C transaction timeouts; polls OS at most once per observed millisecond tick |
-
-`readBlocking()` in continuous mode waits for a fresh data-rate interval before
-reading the conversion register. Use `readLatestRaw()` when the caller
-intentionally wants the current/latest register value immediately. In
-single-shot mode, `cooperativeYield` is called between poll attempts when
-supplied. If the injected clock stops advancing, the driver returns
-`Err::CLOCK_STALLED` with the same-tick poll count in `Status::detail` rather
-than spinning forever.
-
-## Hardware Validation Matrix
-
-Before field release, validate at least:
-
-| Area | Cases | Current evidence |
-|------|-------|------------------|
-| I2C address | ADDR straps: GND `0x48`, VDD `0x49`, SDA `0x4A`, SCL `0x4B` | Limited COM19 evidence: `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test. Full physical strap validation for all four addresses remains pending. |
-| Modes | Single-shot, continuous, mode switching during operation | Native tests and CLI selftest cover command behavior. Full measured hardware mode validation remains pending. |
-| Mux/gain/rate | All muxes, all PGA ranges, all data rates | Native boundary/scaling tests pass. Full sweep with measured input sources remains pending. |
-| ALERT/RDY | Pull-up sizing/rise time, active-low/high, comparator mode, conversion-ready pulse capture | Pending oscilloscope or logic-analyzer capture. |
-| Comparator | Traditional/window, latching/non-latching, queue depths, raw threshold recalculation | Native setter/cache tests pass. External electrical validation remains pending. |
-| Faults | Address NACK, data NACK, timeout, stuck bus, unplug/replug, brownout | Native fault-injection tests cover status/health paths. Hardware stuck-bus, unplug/replug, brownout, and partial-write injection remain pending. |
-| Recovery | OFFLINE latch, manual `recover()`, dirty-state clearing | Native tests cover recovery contracts; COM19 restore-after-absent-address sequence passed. Hardware recovery fault matrix remains pending. |
-| Platforms | Arduino ESP32-S2/S3, pure ESP-IDF adapter/build where used | Arduino S2/S3 builds pass; limited Arduino COM19 HIL captured. Pure ESP-IDF hardware run remains pending. |
-
-The diagnostic CLI `addr` command can select one ADS1115 address at a time for
-manual validation. A bus scan showing multiple ADS1115-range addresses is not a
-validation result until the operator explicitly selects each address and runs the
-intended checks.
-
-`tools/run_i2c_hil.py` is the standardized serial HIL runner for the diagnostic
-CLI. Depending on the selected suite, it drives address selection, probe,
-settings, health, conversion, mux, gain, data-rate, comparator, register, dirty
-state, staged job, stress, and malformed-input commands, then classifies only
-serial tokens and health counters. It does not flash firmware, fake a device, or
-prove analog accuracy. The runner reports separate contract, evidence, and final
-verdicts; analog/electrical rows report `EVIDENCE_REQUIRED` until backed by
-calibrated fixture or operator evidence, while `UNKNOWN` is reserved for
-ambiguous runner outcomes. Use `--fail-on-unknown` or
-`--fail-on-evidence-required` when incomplete evidence should fail a release
-gate. Use `tools/hil_ads1115_capture.py` for the broader operator transcript
-suites used by the hardware validation plan.
-
-## Validation
-
-CI-backed checks configured in `.github/workflows/ci.yml` run on `main`,
-hardening branch pushes, pull requests targeting `main`, and manual
-`workflow_dispatch` runs:
+Configured CI runs:
 
 ```bash
 python tools/check_core_timing_guard.py
 python scripts/generate_version.py check
-pio test -e native
-python tools/check_idf_example_contract.py
+python -m platformio test -e native
 python tools/check_cli_contract.py
+python tools/check_idf_example_contract.py
 python tools/run_i2c_hil.py --parser-test
 python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
-pio run -e esp32s3dev
-pio run -e esp32s2dev
-pio pkg pack
+python tools/hil_ads1115_capture.py --dry-run --suite identity
+python -m platformio run -e esp32s3dev
+python -m platformio run -e esp32s2dev
+python -m platformio run -e owner_safe_s3
+python -m platformio run -e owner_safe_s2
+python -m platformio pkg pack
 idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
-Local optional checks depend on installed tools. If `idf.py` is unavailable,
-record that exactly rather than reporting a pass. The limited COM19 HIL run is
-documented in `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`;
-remaining hardware validation must follow
-`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`.
+If `idf.py` or hardware is unavailable locally, record that gap; do not report
+a pass. Existing COM19/COM8 evidence is limited and predates 2.0.
+
+Before field release, capture dated evidence for all four address straps used by
+supported boards, all selected MUX/PGA/rate combinations, analog accuracy and
+source impedance, saturation/disconnect behavior, ALERT/RDY if enabled, stuck
+bus/unplug/replug/brownout, ambiguous/partial writes, shared-bus contention,
+cancel/timeout reconciliation, and the final target workload.
+
+## TunnelMonitor-node Re-audit Boundary
+
+The 2.0 owner API resolves the library-side ownership, deadline, cancellation,
+configuration-trust, sample-provenance, passive-health, and verified-init gaps
+identified in `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
+
+No TunnelMonitor firmware contracts were changed. Integration remains blocked
+on a product decision: ADS1115 must be defined either as a proven replacement
+for the existing power-monitor meaning or as a distinct analog source. Address,
+board revision, channel meanings, analog front end, calibration, engineering
+units, required/optional role, capacity, and final HIL remain external gates.
 
 ## Documentation
 
-- `docs/README.md` - documentation map and current-vs-archive guidance
-- `CHANGELOG.md` - full release history, release notes, and migration notes
-- `docs/IDF_PORT.md` - ESP-IDF portability guidance
-- `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - HIL operator plan and evidence requirements
-- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - blank results template for dated hardware runs
-- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md` - limited COM19 HIL evidence for address handling, restore sequencing, selftests, and short stress
-- `docs/ADS1115_RELEASE_VALIDATION_SUMMARY_2026-06-25.md` - compact COM8 targeted HIL and 20-hour soak summary with remaining evidence gates
-- `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log` - raw transcript for the limited COM19 HIL run
-- `docs/archive/` - historical audit, prompt, and hardening reports
-- `include/ADS1115/CommandTable.h` - public register map, masks, and defaults
-- `docs/reference/ADS111x_datasheet_revE.pdf` - TI datasheet copy used for driver verification
-- `docs/reference/TI_registry_reference/README.md` - TI reference-driver extraction notes
+- `CHANGELOG.md` - release history and 2.0 migration notes
+- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - finding-by-finding evidence
+  and implementation disposition
+- `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
+- `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
+- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
+- `docs/README.md` - current documentation index
+- `docs/archive/` - historical audits and hardening reports
 
 ## License
 

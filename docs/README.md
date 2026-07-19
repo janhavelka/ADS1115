@@ -14,6 +14,7 @@ material and raw evidence.
 | `ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` | Blank template for dated hardware validation runs. |
 | `ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md` | Limited COM19 HIL evidence for address handling, restore sequencing, selftests, and short stress. |
 | `ADS1115_RELEASE_VALIDATION_SUMMARY_2026-06-25.md` | Compact release validation summary for the recent COM8 targeted HIL and 20-hour soak, including remaining evidence gates. |
+| `TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` | Exact v1.2.0 integration audit plus finding-by-finding 2.0 implementation disposition and remaining product gates. |
 
 ## Evidence
 

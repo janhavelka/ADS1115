@@ -24,6 +24,20 @@ Re-audit inputs:
 - TunnelMonitor-node inspected revision: `602114ea6c723e31c41f0eb7cd8ac2b56a46d40e`
 - TunnelMonitor-node dirty state preserved: modified `.vscode/extensions.json`;
   untracked `docs/reports/i2c_library_latest_branch_audit_revalidation_20260718.md`
+- Refactored library version: `2.0.0`
+- Synchronized core commits: `9e2e0e5` (owner operation engine) and `e9f01d6`
+  (Arduino-safe public naming plus stage-complete cancellation/deadline tests)
+
+Host verification snapshot on 2026-07-19:
+
+- native fault-injection suite: 168/168 passed;
+- Arduino diagnostic builds: ESP32-S3 411,186 B flash / 22,544 B RAM;
+  ESP32-S2 403,745 B flash / 36,992 B RAM;
+- owner-safe example builds: ESP32-S3 374,210 B flash / 22,616 B RAM;
+  ESP32-S2 345,957 B flash / 36,480 B RAM;
+- core timing/framework, CLI honesty, ESP-IDF example, and version guards passed;
+- no new hardware claim: local `idf.py` and clean 2.0 HIL evidence remain
+  unavailable/pending and are retained as external gates.
 
 | Finding | Revalidated disposition | Resolution or remaining gate |
 |---|---|---|

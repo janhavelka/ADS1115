@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-19
+
+### Added
+
+- Fixed-memory owner API: `bind()`, tokened `startInitialize()`,
+  `startApplyProfile()`, `startRecover()`, `startRead()`, `startShutdown()`,
+  transaction-budgeted `poll()`, bus-silent `cancelActiveOperation()`,
+  exactly-once `takeResult()`, and bus-silent `unbind()`.
+- `DriverConfig`, complete `DeviceProfile` / `ComparatorProfile`, and typed
+  `ChannelRequest` contracts with validation before I2C.
+- Explicit `ConfigurationState`, configuration generation, `OperationKind`,
+  `OperationState`, `OperationToken`, cancellation disposition, and terminal
+  hardware-uncertainty reporting.
+- Atomic `SampleResult` provenance: raw code, rounded ADC-input microvolts,
+  application channel ID, MUX, PGA, data rate, flags, verified configuration
+  generation, and successful-sample sequence.
+- Pure bounded helpers for profile/request validation, SPS lookup, worst-case
+  conversion time, gain full scale, integer microvolt conversion, MUX input
+  mapping, and multi-channel deadline derivation.
+- Native fault injection for applied-then-error writes, token/result lifetime,
+  per-poll budgets, deadline reconciliation, cancellation after each effect
+  stage, unknown configuration, passive health, verified shutdown, continuous
+  settling, and bus-silent teardown. The native suite now contains 168 tests.
+- A compiled owner-safe Arduino example with a static shared-bus mutex,
+  deadline-aware callback timeout policy, and one callback per owner-loop pass.
+
+### Changed
+
+- Owner initialization/recovery always writes and reads back both thresholds
+  plus masked CONFIG fields. ADS1115 reachability/readback remains plausibility,
+  not chip identity.
+- Owner single-shot reads verify CONFIG before reading conversion data and
+  publish samples only from `VERIFIED`, clean configuration state.
+- Whole-operation deadlines now clamp each callback timeout to the remaining
+  time. Conversion waits consume no transport budget.
+- Cancel/timeout after a confirmed or ambiguous start now enters bus-silent
+  wait-idle reconciliation; abandoned conversions cannot be reused under a new
+  MUX or gain.
+- Health `OFFLINE` is now a passive diagnostic threshold. It no longer denies
+  owner-authorized transport callbacks or owns recovery admission.
+- `end()` is bus-silent. Hardware idle is requested explicitly through
+  `startShutdown()` or the synchronous `shutdown()` compatibility facade.
+- Compatibility `begin()` now performs mandatory readback regardless of the
+  supplied `strictInitVerify` value. The field remains for source migration.
+- Direct typed/raw mutation APIs are classified as advanced diagnostics and
+  move configuration trust to `UNKNOWN`/dirty until verified replay.
+- Production acquisition is fixed-profile single-shot OS polling. Continuous
+  latest-register and ALERT/RDY GPIO paths remain diagnostic; continuous timing
+  now accounts for -10% rate tolerance and two settling periods after change.
+- PlatformIO Core is pinned to `6.1.19`, pioarduino espressif32 to the exact
+  `54.03.20` archive, and ESP-IDF CI to the `v5.3.5` image digest.
+
+### Compatibility
+
+- Existing error enum numeric values remain unchanged; `CANCELLED`,
+  `CONFIG_UNKNOWN`, `RESULT_NOT_AVAILABLE`, `TOKEN_MISMATCH`, and
+  `INDETERMINATE` are appended.
+- The 1.x `Config`, blocking, direct setter/register, and staged-job APIs remain
+  available for diagnostic/source migration, but lifecycle, verification,
+  health admission, continuous reads, and shutdown behavior changed. Review
+  the 2.0 migration section in `README.md` before updating production callers.
+
+### Validation limits
+
+- Existing COM19/COM8 captures predate 2.0. Clean current hardware evidence is
+  still required for final boards, analog accuracy, shared-bus contention,
+  cancellation/timeout, electrical faults, and production workload.
+- TunnelMonitor-node was re-audited but not changed: product role, board/profile,
+  channel meanings, analog front end, units, calibration, capacity, and product
+  acceptance remain external integration gates.
+
 ## [1.2.0] - 2026-06-25
 
 ### Added
@@ -197,7 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/janhavelka/ADS1115/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...v1.0.0
