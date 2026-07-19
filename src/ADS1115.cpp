@@ -188,7 +188,7 @@ Status validateComparatorProfile(const ComparatorProfile& profile) {
       !isValidCompLatch(profile.latch) || !isValidCompQueue(profile.queue)) {
     return Status::Error(Err::INVALID_CONFIG, "Invalid comparator profile");
   }
-  if (profile.use == ComparatorUse::DISABLED) {
+  if (profile.use == ComparatorUse::OFF) {
     return profile.queue == ComparatorQueue::DISABLE
                ? Status::Ok()
                : Status::Error(Err::INVALID_CONFIG, "Disabled comparator queue must be disabled");
@@ -873,7 +873,7 @@ CancelDisposition ADS1115::cancelActiveOperation() {
   }
   (void)_finishOperation(cancelled, OperationState::CANCELLED, 0);
   return effectPossible ? CancelDisposition::CANCELLED_AFTER_EFFECT
-                        : CancelDisposition::CANCELLED_BEFORE_IO;
+                        : CancelDisposition::CANCELLED_BEFORE_EFFECT;
 }
 
 Status ADS1115::takeResult(OperationToken token, OperationResult& out) {
@@ -946,7 +946,7 @@ Status ADS1115::begin(const Config& config) {
   if (isAlertRdyModeConfigured(requestedConfig)) {
     profile.comparator.use = ComparatorUse::CONVERSION_READY;
   } else if (requestedConfig.compQueue == ComparatorQueue::DISABLE) {
-    profile.comparator.use = ComparatorUse::DISABLED;
+    profile.comparator.use = ComparatorUse::OFF;
   } else {
     profile.comparator.use = ComparatorUse::THRESHOLD;
   }
@@ -2079,7 +2079,7 @@ DeviceProfile ADS1115::_profileFromConfig() const {
   if (isAlertRdyModeConfigured(_config)) {
     profile.comparator.use = ComparatorUse::CONVERSION_READY;
   } else if (_config.compQueue == ComparatorQueue::DISABLE) {
-    profile.comparator.use = ComparatorUse::DISABLED;
+    profile.comparator.use = ComparatorUse::OFF;
   } else {
     profile.comparator.use = ComparatorUse::THRESHOLD;
   }

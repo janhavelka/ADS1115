@@ -14,20 +14,22 @@ namespace ADS1115 {
 
 /// @brief Coarse driver health state.
 enum class DriverState : uint8_t {
-  UNINIT,    ///< begin() not called or end() called
+  UNINIT,    ///< No active binding or initialization has not completed
   READY,     ///< Operational, consecutiveFailures == 0
   DEGRADED,  ///< 1 <= consecutiveFailures < offlineThreshold
-  OFFLINE    ///< consecutiveFailures >= offlineThreshold
+  OFFLINE    ///< Diagnostic threshold reached; does not suppress owner I/O
 };
 
+/// @brief Trust state of the cached/applied device profile.
 enum class ConfigurationState : uint8_t {
-  UNBOUND,
-  UNCONFIGURED,
-  APPLYING,
-  VERIFIED,
-  UNKNOWN
+  UNBOUND,      ///< No transport/profile binding exists
+  UNCONFIGURED, ///< Bound, but no profile has been verified on hardware
+  APPLYING,     ///< A profile-changing owner operation is active
+  VERIFIED,     ///< Full threshold and masked CONFIG readback succeeded
+  UNKNOWN       ///< Hardware/cache agreement is not safe to assume
 };
 
+/// @brief Operation classes owned by the poll-driven API.
 enum class OperationKind : uint8_t {
   NONE,
   INITIALIZE,
@@ -37,6 +39,7 @@ enum class OperationKind : uint8_t {
   SHUTDOWN
 };
 
+/// @brief Lifecycle of one tokened owner operation.
 enum class OperationState : uint8_t {
   IDLE,
   ACTIVE,
@@ -48,18 +51,24 @@ enum class OperationState : uint8_t {
   INDETERMINATE
 };
 
+/// @brief Nonzero identity assigned when an owner operation is accepted.
+///
+/// Tokens remain reserved through terminal completion and must be passed to
+/// takeResult(). A new operation is rejected until that result is consumed.
 struct OperationToken {
   uint32_t value = 0;
   constexpr bool valid() const { return value != 0; }
 };
 
+/// @brief Immediate, bus-silent cancellation disposition.
 enum class CancelDisposition : uint8_t {
   NO_ACTIVE_OPERATION,
-  CANCELLED_BEFORE_IO,
+  CANCELLED_BEFORE_EFFECT,
   CANCELLED_AFTER_EFFECT,
   RECONCILIATION_REQUIRED
 };
 
+/// @brief Provenance and boundary flags carried by SampleResult::flags.
 enum class SampleFlag : uint16_t {
   NONE = 0,
   CONFIG_VERIFIED = 1U << 0,
@@ -67,6 +76,11 @@ enum class SampleFlag : uint16_t {
   AT_NEGATIVE_CODE_LIMIT = 1U << 2
 };
 
+/// @brief Atomic fixed-memory result for one verified single-shot conversion.
+///
+/// microvolts is the ADC-input value for the recorded PGA gain. Board divider,
+/// shunt, amplifier, offset, calibration, and engineering-unit conversion stay
+/// in the application.
 struct SampleResult {
   int16_t rawCode = 0;
   int32_t microvolts = 0;
@@ -178,11 +192,19 @@ struct SettingsSnapshot {
 /// and is not safe for concurrent calls from multiple tasks. Public APIs can
 /// perform blocking I2C through the injected transport and are not ISR-safe.
 ///
-/// Latency model: each I2C transaction can block up to Config::i2cTimeoutMs.
-/// Register read/write APIs perform one transaction. CONFIG-only setters
-/// perform one write. Full resync paths such as begin(), recover(), and
-/// enableConversionReadyPin() can perform three writes, plus optional strict
-/// read-back verification reads.
+/// The owner-safe API is bind()/start*()/poll()/takeResult()/unbind(). Start,
+/// cancel, result consumption, and unbind are bus-silent. poll() is the only
+/// owner-safe method that calls transport callbacks and honors the caller's
+/// transaction budget (clamped to three). Each callback receives the smaller
+/// of DriverConfig::transferTimeoutMs and the remaining whole-operation time.
+///
+/// All public methods require external serialization and task context. The
+/// driver owns no bus, lock, GPIO, clock, retry policy, recovery policy, or
+/// scheduler and performs no heap allocation in steady operation.
+///
+/// The Config/begin/direct-setter surface is retained for compatibility and
+/// diagnostics. Those methods can perform multiple synchronous transfers and
+/// are not the production shared-bus ownership model.
 class ADS1115 {
 public:
   ADS1115() = default;
@@ -193,34 +215,49 @@ public:
   ~ADS1115() = default;
 
   // === Lifecycle ===
-  /// Bind a non-owning transport and desired profile without I2C.
+  /// Bind a validated non-owning transport and desired profile without I2C.
+  /// @return OK, or INVALID_CONFIG without changing the prior binding.
   Status bind(const DriverConfig& driverConfig, const DeviceProfile& profile);
-  /// Schedule verified initialization without I2C.
+  /// Schedule probe, full profile apply, and mandatory readback without I2C.
+  /// @param nowMs Current owner monotonic time.
+  /// @param deadlineMs Absolute wrap-safe deadline in the same time domain;
+  ///        it must be in the future by no more than INT32_MAX milliseconds.
+  /// @param[out] token Nonzero operation identity on acceptance.
+  /// @return IN_PROGRESS when scheduled.
   Status startInitialize(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
-  /// Schedule an atomic candidate-profile apply without I2C.
+  /// Schedule a validated candidate-profile apply and readback without I2C.
+  /// The candidate commits only after all writable fields are verified.
   Status startApplyProfile(const DeviceProfile& profile, uint32_t nowMs,
                            uint32_t deadlineMs, OperationToken& token);
-  /// Schedule verified recovery without I2C.
+  /// Schedule owner-authorized probe and verified profile replay without I2C.
   Status startRecover(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
-  /// Schedule one typed single-shot conversion without I2C.
+  /// Schedule one typed, provenance-preserving single-shot conversion without I2C.
+  /// Requires a VERIFIED single-shot profile with clean hardware state.
   Status startRead(const ChannelRequest& request, uint32_t nowMs,
                    uint32_t deadlineMs, OperationToken& token);
-  /// Schedule explicit shutdown without I2C.
+  /// Schedule explicit single-shot-idle shutdown and CONFIG readback without I2C.
   Status startShutdown(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Advance the active operation by at most maxTransactions callbacks.
+  /// @param nowMs Current time in the operation's original time domain.
+  /// @param maxTransactions Callback budget, clamped to three; zero is bus-silent.
+  /// @return Current/terminal status, budget used, token, and operation state.
   PollResult poll(uint32_t nowMs, uint8_t maxTransactions = 1);
-  /// Request cancellation without I2C; post-start work reconciles in poll().
+  /// Request cancellation without I2C.
+  /// A confirmed or ambiguous conversion start enters bus-silent wait-idle
+  /// reconciliation; the abandoned sample is never published or reused.
   CancelDisposition cancelActiveOperation();
-  /// Consume the pending terminal result exactly once by token.
+  /// Consume the pending terminal result exactly once by token without I2C.
+  /// A token mismatch does not consume the result.
   Status takeResult(OperationToken token, OperationResult& out);
   /// Drop the binding and all local state without I2C.
+  /// Call startShutdown() first when a hardware idle request is required.
   void unbind();
 
-  /// Initialize the driver with configuration and verify device presence.
-  /// ADS1115 has no ID register; strictInitVerify adds a register read-back
-  /// plausibility check with dynamic CONFIG OS/status bits masked out.
-  /// Transaction count: one CONFIG read plus three writes; strict mode adds
-  /// three read-back transactions.
+  /// Compatibility synchronous initialization facade.
+  ///
+  /// Always performs one CONFIG probe, three writes, and three readbacks.
+  /// ADS1115 has no ID register; this proves address reachability and profile
+  /// plausibility only, with dynamic CONFIG OS/status bits masked out.
   /// If begin() fails after one or more writes may have reached hardware,
   /// hardwareConfigDirty() and hardwareConfigDirtyError() remain available even
   /// though the driver is not initialized. A later successful full apply clears
@@ -228,16 +265,12 @@ public:
   /// @param config Transport callbacks, device address, timing, and conversion settings.
   /// @return Status::Ok() when the device responds and cached configuration is applied.
   Status begin(const Config& config);
-  /// Process pending operations (currently bounded polling only).
-  /// May perform one CONFIG-read I2C transaction when a single-shot conversion
-  /// is pending and its conversion interval has elapsed. Failures are ignored
-  /// by this compatibility API but remain visible through health counters,
-  /// lastError(), and lastErrorMs() when a timebase is configured.
+  /// Compatibility wrapper around service() that discards its Status.
   /// @param nowMs Current monotonic time in milliseconds.
   void tick(uint32_t nowMs);
-  /// Status-returning service step for pending conversion work.
-  /// May perform one CONFIG-read I2C transaction when a single-shot conversion
-  /// is pending and its conversion interval has elapsed.
+  /// Status-returning compatibility service step.
+  /// Advances an active owner operation by at most one transaction, or services
+  /// legacy conversion polling when no owner operation is active.
   /// @param nowMs Current monotonic time in milliseconds.
   /// @return Immediate status from the service step, or Status::Ok() when no
   /// I2C work is needed.
@@ -245,9 +278,8 @@ public:
   /// Bus-silent compatibility alias for unbind().
   void end();
 
-  /// Request single-shot idle mode while keeping the driver initialized.
-  /// Transaction count: one CONFIG write.
-  /// @return Status::Ok() when the CONFIG write succeeds.
+  /// Compatibility synchronous shutdown facade while keeping the binding.
+  /// Transaction count: one CONFIG write and one masked CONFIG readback.
   Status shutdown();
 
   /// Check if begin() completed successfully and end() has not been called.

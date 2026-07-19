@@ -118,14 +118,14 @@ enum class ComparatorQueue : uint8_t {
 
 /// @brief Comparator use selected by an owner-safe device profile.
 enum class ComparatorUse : uint8_t {
-  DISABLED = 0,         ///< Comparator output disabled/high impedance
+  OFF = 0,              ///< Comparator output disabled/high impedance
   THRESHOLD,            ///< Traditional or window threshold comparator
   CONVERSION_READY      ///< Datasheet conversion-ready threshold pattern
 };
 
 /// @brief Complete comparator configuration for atomic profile validation.
 struct ComparatorProfile {
-  ComparatorUse use = ComparatorUse::DISABLED;
+  ComparatorUse use = ComparatorUse::OFF;
   ComparatorMode mode = ComparatorMode::TRADITIONAL;
   ComparatorPolarity polarity = ComparatorPolarity::ACTIVE_LOW;
   ComparatorLatch latch = ComparatorLatch::NON_LATCHING;
@@ -142,7 +142,7 @@ struct DriverConfig {
   I2cWriteFn i2cWrite = nullptr;
   I2cWriteReadFn i2cWriteRead = nullptr;
   void* i2cUser = nullptr;
-  uint32_t transferTimeoutMs = 50;
+  uint32_t transferTimeoutMs = 50; ///< Per-callback cap; poll clamps to deadline remaining
 };
 
 /// @brief Complete desired hardware register profile.
@@ -162,18 +162,25 @@ struct ChannelRequest {
   Gain gain = Gain::FSR_2_048V;
 };
 
+/// @name Pure owner helpers
+/// These functions perform no I2C, allocation, logging, or framework calls.
+/// @{
 Status validateDeviceProfile(const DeviceProfile& profile);
 Status validateChannelRequest(const ChannelRequest& request);
 Status validateComparatorProfile(const ComparatorProfile& profile);
-uint16_t dataRateSps(DataRate rate);
+uint16_t dataRateSps(DataRate rate); ///< Returns zero for an invalid rate
+/// Worst conversion interval including -10% minimum SPS tolerance and 1 ms guard.
 uint32_t worstCaseConversionTimeUs(DataRate rate);
-int32_t gainFullScaleMicrovolts(Gain gain);
+int32_t gainFullScaleMicrovolts(Gain gain); ///< Returns zero for an invalid gain
+/// Convert a signed code to rounded ADC-input microvolts using int64 arithmetic.
 Status rawToMicrovolts(int16_t raw, Gain gain, int32_t& out);
 bool isSingleEnded(Mux mux);
-int8_t positiveInput(Mux mux);
-int8_t negativeInput(Mux mux);
+int8_t positiveInput(Mux mux); ///< AIN index, or -1 for invalid MUX
+int8_t negativeInput(Mux mux); ///< AIN index, -1 for GND, or -2 for invalid MUX
+/// Derive a bounded duration for channelCount conversions plus caller margin.
 uint32_t operationDeadlineMs(uint8_t channelCount, DataRate rate,
                              uint32_t schedulingMarginMs);
+/// @}
 
 /// @brief Configuration for ADS1115 driver.
 struct Config {
@@ -195,7 +202,7 @@ struct Config {
   // === Device Settings ===
   uint8_t i2cAddress = 0x48;       ///< 0x48-0x4B based on ADDR pin
   uint32_t i2cTimeoutMs = 50;      ///< I2C transaction timeout in ms
-  bool strictInitVerify = true;    ///< Read-back plausibility check after full apply
+  bool strictInitVerify = true;    ///< Compatibility field; production init always verifies
 
   // === Conversion Settings ===
   Mux mux = Mux::AIN0_GND;               ///< Input multiplexer
@@ -217,7 +224,7 @@ struct Config {
   void* gpioUser = nullptr;
 
   // === Health Tracking ===
-  uint8_t offlineThreshold = 5;    ///< Consecutive failures before OFFLINE
+  uint8_t offlineThreshold = 5;    ///< Passive diagnostic threshold; never gates owner I/O
 };
 
 } // namespace ADS1115
