@@ -56,10 +56,12 @@ def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
     hil_capture = ROOT / "tools" / "hil_ads1115_capture.py"
+    hil_runner = ROOT / "tools" / "run_i2c_hil.py"
 
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
     ensure_exists(hil_capture, "HIL capture helper")
+    ensure_exists(hil_runner, "classified HIL runner")
 
     ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
     ensure_missing(
@@ -74,6 +76,7 @@ def main() -> int:
 
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
     hil_text = hil_capture.read_text(encoding="utf-8", errors="replace")
+    hil_runner_text = hil_runner.read_text(encoding="utf-8", errors="replace")
     readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
     for cmd in MANDATORY_COMMANDS:
@@ -96,6 +99,11 @@ def main() -> int:
         "probeAddressRaw",
         "Address note: requested",
         "Address selection failed; initialized driver was left unchanged",
+        "applyCachedProfileVerified",
+        "mutateAndVerify",
+        "device.setMux",
+        "printAndAcknowledgePollResult",
+        "device.takeResult(result.token",
     ):
         if token not in text:
             fail(f"bringup CLI must include token: {token!r}")
@@ -114,6 +122,18 @@ def main() -> int:
     ):
         if token not in hil_text:
             fail(f"HIL capture helper must include token: {token!r}")
+
+    for token in (
+        "TGT-{address}-MODE-RAW",
+        "TGT-{address}-MODE-VOLTAGE-REJECT",
+        "Read latest raw code in continuous mode",
+        "Reject scaled read in continuous mode",
+        '"raw", "Continuous latest-raw read"',
+    ):
+        if token not in hil_runner_text:
+            fail(f"classified HIL runner must include token: {token!r}")
+    if '"voltage", "Read voltage in continuous mode"' in hil_runner_text:
+        fail("classified HIL runner must not expect scaled continuous-read success")
 
     for token in (
         "diagnostic Arduino bring-up CLI",

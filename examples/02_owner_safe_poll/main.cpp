@@ -19,6 +19,8 @@ constexpr int I2C_SDA = 8;
 constexpr int I2C_SCL = 9;
 constexpr uint32_t I2C_CLOCK_HZ = 400000;
 constexpr uint32_t TRANSFER_TIMEOUT_MS = 20;
+constexpr uint32_t OWNER_SCHEDULING_MARGIN_MS = 5;
+constexpr uint32_t READ_CALLBACK_COUNT = 3;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 1000;
 
 struct SharedBusOwner {
@@ -134,6 +136,7 @@ ADS1115::Status ownerWriteRead(uint8_t address, const uint8_t* tx,
                                   "Invalid write-read request");
   }
 
+  const uint32_t callbackStartedAtMs = millis();
   SharedBusOwner& owner = *static_cast<SharedBusOwner*>(user);
   uint32_t remainingMs = 0;
   ADS1115::Status status = lockBus(owner, timeoutMs, remainingMs);
@@ -152,6 +155,14 @@ ADS1115::Status ownerWriteRead(uint8_t address, const uint8_t* tx,
   if (!status.ok()) {
     return status;
   }
+
+  const uint32_t elapsedMs = millis() - callbackStartedAtMs;
+  if (elapsedMs >= timeoutMs) {
+    return ADS1115::Status::Error(ADS1115::Err::I2C_TIMEOUT,
+                                  "Write-read deadline exhausted");
+  }
+  remainingMs = timeoutMs - elapsedMs;
+  owner.wire->setTimeOut(remainingMs);
 
   const size_t count = owner.wire->requestFrom(
       address, static_cast<uint8_t>(rxLength));
@@ -189,7 +200,8 @@ void startSample(uint32_t nowMs) {
   request.gain = ADS1115::Gain::FSR_2_048V;
 
   const uint32_t durationMs = ADS1115::operationDeadlineMs(
-      1, profile.dataRate, TRANSFER_TIMEOUT_MS);
+      1, profile.dataRate,
+      READ_CALLBACK_COUNT * TRANSFER_TIMEOUT_MS + OWNER_SCHEDULING_MARGIN_MS);
   ADS1115::Status status = adc.startRead(
       request, nowMs, nowMs + durationMs, activeToken);
   if (!status.inProgress()) {

@@ -137,6 +137,14 @@ def main() -> int:
             fail(f"ESP-IDF main contains forbidden Arduino/facade token '{token}'")
     for token in REQUIRED_IDF_TOKENS:
         require_token(idf_main, token, "ESP-IDF main")
+    for token in (
+        "applyCachedProfileVerified",
+        "mutateAndVerify",
+        "device.setMux",
+        "printAndAcknowledgePollResult",
+        "device.takeResult(result.token",
+    ):
+        require_token(idf_main, token, "ESP-IDF trust/job contract")
     if "device.tick(" in idf_main:
         fail("ESP-IDF main must use device.service(nowMs()) instead of discarding tick() status")
     if "ADS1115_I2C_ADDR" in idf_main:

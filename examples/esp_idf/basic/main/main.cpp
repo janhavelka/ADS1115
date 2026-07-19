@@ -159,6 +159,11 @@ const char* errToStr(ADS1115::Err err) {
     case Err::READBACK_MISMATCH: return "READBACK_MISMATCH";
     case Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
     case Err::CLOCK_STALLED: return "CLOCK_STALLED";
+    case Err::CANCELLED: return "CANCELLED";
+    case Err::CONFIG_UNKNOWN: return "CONFIG_UNKNOWN";
+    case Err::RESULT_NOT_AVAILABLE: return "RESULT_NOT_AVAILABLE";
+    case Err::TOKEN_MISMATCH: return "TOKEN_MISMATCH";
+    case Err::INDETERMINATE: return "INDETERMINATE";
     default: return "UNKNOWN";
   }
 }
@@ -391,6 +396,34 @@ void printStatus(const ADS1115::Status& st) {
   if (st.msg != nullptr && st.msg[0] != '\0') {
     std::printf("  Message: %s%s%s\n", COLOR_YELLOW, st.msg, COLOR_RESET);
   }
+}
+
+ADS1115::Status applyCachedProfileVerified() {
+  ADS1115::Status st = device.startApplyConfigJob();
+  if (!st.inProgress()) {
+    return st;
+  }
+  for (uint8_t step = 0; step < 3U; ++step) {
+    const ADS1115::PollResult progress = device.pollApplyConfig(nowMs(), 3);
+    if (!progress.done) {
+      continue;
+    }
+    ADS1115::OperationResult terminal;
+    st = device.takeResult(progress.token, terminal);
+    return st.ok() ? terminal.status : st;
+  }
+  const ADS1115::OperationToken token = device.activeOperationToken();
+  device.cancelJob();
+  ADS1115::OperationResult terminal;
+  if (device.terminalResultAvailable()) {
+    (void)device.takeResult(token, terminal);
+  }
+  return ADS1115::Status::Error(ADS1115::Err::INDETERMINATE,
+                                "Config verification did not terminate");
+}
+
+ADS1115::Status mutateAndVerify(const ADS1115::Status& mutation) {
+  return mutation.ok() ? applyCachedProfileVerified() : mutation;
 }
 
 struct HealthSnapshot {
@@ -700,7 +733,8 @@ bool isSingleShotJobState(ADS1115::JobState state) {
   return state == JobState::SINGLE_SHOT_WRITE_CONFIG ||
          state == JobState::SINGLE_SHOT_WAIT_CONVERSION ||
          state == JobState::SINGLE_SHOT_POLL_READY ||
-         state == JobState::SINGLE_SHOT_READ_CONVERSION;
+         state == JobState::SINGLE_SHOT_READ_CONVERSION ||
+         state == JobState::WAIT_IDLE_AFTER_ABANDON;
 }
 
 bool isApplyJobState(ADS1115::JobState state) {
@@ -731,6 +765,19 @@ void printPollResult(const ADS1115::PollResult& result) {
   std::printf("  Last raw: %d\n", static_cast<int>(device.lastRawValue()));
 }
 
+void printAndAcknowledgePollResult(const ADS1115::PollResult& result) {
+  printPollResult(result);
+  if (!result.done || !result.token.valid()) {
+    return;
+  }
+  ADS1115::OperationResult terminal;
+  const ADS1115::Status st = device.takeResult(result.token, terminal);
+  if (!st.ok()) {
+    std::printf("  Terminal result acknowledgement failed:\n");
+    printStatus(st);
+  }
+}
+
 void handleJobCommand(const char* cmd) {
   const char* arg = nullptr;
   if (std::strcmp(cmd, "job") == 0) {
@@ -742,7 +789,12 @@ void handleJobCommand(const char* cmd) {
     printStatus(device.startApplyConfigJob());
     printJobStatus();
   } else if (std::strcmp(cmd, "job cancel") == 0) {
+    const ADS1115::OperationToken token = device.activeOperationToken();
     device.cancelJob();
+    if (token.valid() && device.terminalResultAvailable()) {
+      ADS1115::OperationResult terminal;
+      (void)device.takeResult(token, terminal);
+    }
     printJobStatus();
   } else if (std::strcmp(cmd, "job poll") == 0 ||
              (arg = argAfter(cmd, "job poll ")) != nullptr) {
@@ -753,9 +805,11 @@ void handleJobCommand(const char* cmd) {
     }
     const ADS1115::JobState state = device.jobState();
     if (isSingleShotJobState(state)) {
-      printPollResult(device.pollSingleShot(nowMs(), static_cast<uint8_t>(budget)));
+      printAndAcknowledgePollResult(
+          device.pollSingleShot(nowMs(), static_cast<uint8_t>(budget)));
     } else if (isApplyJobState(state)) {
-      printPollResult(device.pollApplyConfig(nowMs(), static_cast<uint8_t>(budget)));
+      printAndAcknowledgePollResult(
+          device.pollApplyConfig(nowMs(), static_cast<uint8_t>(budget)));
     } else {
       std::printf("No active pollable job\n");
       printJobStatus();
@@ -848,6 +902,8 @@ bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline, ADS1115::S
   failure = device.setGain(baseline.gain);
   if (!failure.ok()) return false;
   failure = device.setDataRate(baseline.dataRate);
+  if (!failure.ok()) return false;
+  failure = applyCachedProfileVerified();
   return failure.ok();
 }
 
@@ -865,9 +921,9 @@ void runStressMix(uint32_t count) {
   for (uint32_t i = 0; i < count; ++i) {
     ADS1115::Status st = ADS1115::Status::Ok();
     switch (i % 8U) {
-      case 0: st = device.setMux(channelToMux(static_cast<int>(i % 4U))); break;
-      case 1: st = device.setGain(static_cast<ADS1115::Gain>(i % 6U)); break;
-      case 2: st = device.setDataRate(static_cast<ADS1115::DataRate>(i % 8U)); break;
+      case 0: st = mutateAndVerify(device.setMux(channelToMux(static_cast<int>(i % 4U)))); break;
+      case 1: st = mutateAndVerify(device.setGain(static_cast<ADS1115::Gain>(i % 6U))); break;
+      case 2: st = mutateAndVerify(device.setDataRate(static_cast<ADS1115::DataRate>(i % 8U))); break;
       case 3: st = device.startConversion(); break;
       case 4: {
         bool ready = false;
@@ -1003,6 +1059,9 @@ void runSelfTest() {
   reportSelftest(stats, "setRate(128sps)", st.ok(), st.ok() ? "" : errToStr(st.code));
   st = device.setMux(ADS1115::Mux::AIN0_GND);
   reportSelftest(stats, "setMux(AIN0_GND)", st.ok(), st.ok() ? "" : errToStr(st.code));
+  st = applyCachedProfileVerified();
+  reportSelftest(stats, "apply+verify typed-read profile", st.ok(),
+                 st.ok() ? "" : errToStr(st.code));
   st = device.startConversion();
   const bool started = st.ok() || st.inProgress();
   reportSelftest(stats, "startConversion", started, started ? "" : errToStr(st.code));
@@ -1060,17 +1119,21 @@ void handleCompCommand(const char* cmd) {
     printComparatorSettings();
   } else if ((arg = argAfter(cmd, "comp mode ")) != nullptr) {
     if (std::strcmp(arg, "trad") == 0 || std::strcmp(arg, "traditional") == 0) {
-      printStatus(device.setComparatorMode(ADS1115::ComparatorMode::TRADITIONAL));
+      printStatus(mutateAndVerify(
+          device.setComparatorMode(ADS1115::ComparatorMode::TRADITIONAL)));
     } else if (std::strcmp(arg, "window") == 0) {
-      printStatus(device.setComparatorMode(ADS1115::ComparatorMode::WINDOW));
+      printStatus(mutateAndVerify(
+          device.setComparatorMode(ADS1115::ComparatorMode::WINDOW)));
     } else {
       std::printf("Usage: comp mode [trad|window]\n");
     }
   } else if ((arg = argAfter(cmd, "comp pol ")) != nullptr) {
     if (std::strcmp(arg, "low") == 0 || std::strcmp(arg, "active_low") == 0) {
-      printStatus(device.setComparatorPolarity(ADS1115::ComparatorPolarity::ACTIVE_LOW));
+      printStatus(mutateAndVerify(
+          device.setComparatorPolarity(ADS1115::ComparatorPolarity::ACTIVE_LOW)));
     } else if (std::strcmp(arg, "high") == 0 || std::strcmp(arg, "active_high") == 0) {
-      printStatus(device.setComparatorPolarity(ADS1115::ComparatorPolarity::ACTIVE_HIGH));
+      printStatus(mutateAndVerify(
+          device.setComparatorPolarity(ADS1115::ComparatorPolarity::ACTIVE_HIGH)));
     } else {
       std::printf("Usage: comp pol [low|high]\n");
     }
@@ -1080,17 +1143,22 @@ void handleCompCommand(const char* cmd) {
       std::printf("Usage: comp latch [0|1]\n");
       return;
     }
-    printStatus(device.setComparatorLatch(value == 0 ? ADS1115::ComparatorLatch::NON_LATCHING
-                                                     : ADS1115::ComparatorLatch::LATCHING));
+    printStatus(mutateAndVerify(
+        device.setComparatorLatch(value == 0 ? ADS1115::ComparatorLatch::NON_LATCHING
+                                              : ADS1115::ComparatorLatch::LATCHING)));
   } else if ((arg = argAfter(cmd, "comp queue ")) != nullptr) {
     if (std::strcmp(arg, "1") == 0) {
-      printStatus(device.setComparatorQueue(ADS1115::ComparatorQueue::ASSERT_1));
+      printStatus(mutateAndVerify(
+          device.setComparatorQueue(ADS1115::ComparatorQueue::ASSERT_1)));
     } else if (std::strcmp(arg, "2") == 0) {
-      printStatus(device.setComparatorQueue(ADS1115::ComparatorQueue::ASSERT_2));
+      printStatus(mutateAndVerify(
+          device.setComparatorQueue(ADS1115::ComparatorQueue::ASSERT_2)));
     } else if (std::strcmp(arg, "4") == 0) {
-      printStatus(device.setComparatorQueue(ADS1115::ComparatorQueue::ASSERT_4));
+      printStatus(mutateAndVerify(
+          device.setComparatorQueue(ADS1115::ComparatorQueue::ASSERT_4)));
     } else if (std::strcmp(arg, "disable") == 0 || std::strcmp(arg, "off") == 0) {
-      printStatus(device.setComparatorQueue(ADS1115::ComparatorQueue::DISABLE));
+      printStatus(mutateAndVerify(
+          device.setComparatorQueue(ADS1115::ComparatorQueue::DISABLE)));
     } else {
       std::printf("Usage: comp queue [1|2|4|disable]\n");
     }
@@ -1113,11 +1181,12 @@ void handleCompCommand(const char* cmd) {
       std::printf("Thresholds must be in int16 range\n");
       return;
     }
-    printStatus(device.setThresholds(static_cast<int16_t>(low), static_cast<int16_t>(high)));
+    printStatus(mutateAndVerify(
+        device.setThresholds(static_cast<int16_t>(low), static_cast<int16_t>(high))));
   } else if (std::strcmp(cmd, "comp rdy") == 0) {
     printStatus(device.enableConversionReadyPin());
   } else if (std::strcmp(cmd, "comp disable") == 0) {
-    printStatus(device.disableComparator());
+    printStatus(mutateAndVerify(device.disableComparator()));
   } else {
     std::printf("Usage: comp [mode|pol|latch|queue|th|rdy|disable]\n");
   }
@@ -1273,7 +1342,8 @@ void processCommand(char* cmd) {
       std::printf("Invalid channel\n");
       return;
     }
-    printStatus(device.setMux(channelToMux(static_cast<int>(channel))));
+    printStatus(mutateAndVerify(
+        device.setMux(channelToMux(static_cast<int>(channel)))));
   } else if (std::strcmp(cmd, "diff") == 0) {
     printCurrentMux();
   } else if ((arg = argAfter(cmd, "diff ")) != nullptr) {
@@ -1282,7 +1352,7 @@ void processCommand(char* cmd) {
       std::printf("Invalid differential index\n");
       return;
     }
-    printStatus(device.setMux(diffToMux(static_cast<int>(diff))));
+    printStatus(mutateAndVerify(device.setMux(diffToMux(static_cast<int>(diff)))));
   } else if (std::strcmp(cmd, "gain") == 0) {
     std::printf("  Gain: %u (%s)\n", static_cast<unsigned>(device.getGain()),
                 gainToStr(device.getGain()));
@@ -1292,7 +1362,8 @@ void processCommand(char* cmd) {
       std::printf("Invalid gain\n");
       return;
     }
-    printStatus(device.setGain(static_cast<ADS1115::Gain>(gain)));
+    printStatus(mutateAndVerify(
+        device.setGain(static_cast<ADS1115::Gain>(gain))));
   } else if (std::strcmp(cmd, "rate") == 0) {
     std::printf("  Rate: %u (%s)\n", static_cast<unsigned>(device.getDataRate()),
                 rateToStr(device.getDataRate()));
@@ -1302,14 +1373,15 @@ void processCommand(char* cmd) {
       std::printf("Invalid rate\n");
       return;
     }
-    printStatus(device.setDataRate(static_cast<ADS1115::DataRate>(rate)));
+    printStatus(mutateAndVerify(
+        device.setDataRate(static_cast<ADS1115::DataRate>(rate))));
   } else if (std::strcmp(cmd, "mode") == 0) {
     std::printf("  Mode: %s\n", modeToStr(device.getMode()));
   } else if ((arg = argAfter(cmd, "mode ")) != nullptr) {
     if (std::strcmp(arg, "single") == 0) {
-      printStatus(device.setMode(ADS1115::Mode::SINGLE_SHOT));
+      printStatus(mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT)));
     } else if (std::strcmp(arg, "cont") == 0 || std::strcmp(arg, "continuous") == 0) {
-      printStatus(device.setMode(ADS1115::Mode::CONTINUOUS));
+      printStatus(mutateAndVerify(device.setMode(ADS1115::Mode::CONTINUOUS)));
     } else {
       std::printf("Invalid mode\n");
     }

@@ -58,6 +58,11 @@ const char* errToStr(ADS1115::Err err) {
     case Err::READBACK_MISMATCH:     return "READBACK_MISMATCH";
     case Err::HARDWARE_CONFIG_DIRTY: return "HARDWARE_CONFIG_DIRTY";
     case Err::CLOCK_STALLED:         return "CLOCK_STALLED";
+    case Err::CANCELLED:             return "CANCELLED";
+    case Err::CONFIG_UNKNOWN:        return "CONFIG_UNKNOWN";
+    case Err::RESULT_NOT_AVAILABLE:  return "RESULT_NOT_AVAILABLE";
+    case Err::TOKEN_MISMATCH:        return "TOKEN_MISMATCH";
+    case Err::INDETERMINATE:         return "INDETERMINATE";
     default:                        return "UNKNOWN";
   }
 }
@@ -87,8 +92,11 @@ const char* jobStateToStr(ADS1115::JobState st) {
     case JobState::APPLY_VERIFY_LOW_THRESHOLD: return "APPLY_VERIFY_LOW_THRESHOLD";
     case JobState::APPLY_VERIFY_HIGH_THRESHOLD: return "APPLY_VERIFY_HIGH_THRESHOLD";
     case JobState::APPLY_VERIFY_CONFIG: return "APPLY_VERIFY_CONFIG";
+    case JobState::WAIT_IDLE_AFTER_ABANDON: return "WAIT_IDLE_AFTER_ABANDON";
     case JobState::COMPLETE: return "COMPLETE";
     case JobState::FAILED: return "FAILED";
+    case JobState::CANCELLED: return "CANCELLED";
+    case JobState::TIMED_OUT: return "TIMED_OUT";
     default: return "UNKNOWN";
   }
 }
@@ -171,6 +179,34 @@ void printStatus(const ADS1115::Status& st) {
   if (st.msg && st.msg[0]) {
     Serial.printf("  Message: %s%s%s\n", LOG_COLOR_YELLOW, st.msg, LOG_COLOR_RESET);
   }
+}
+
+ADS1115::Status applyCachedProfileVerified() {
+  ADS1115::Status st = device.startApplyConfigJob();
+  if (!st.inProgress()) {
+    return st;
+  }
+  for (uint8_t step = 0; step < 3U; ++step) {
+    const ADS1115::PollResult progress = device.pollApplyConfig(millis(), 3);
+    if (!progress.done) {
+      continue;
+    }
+    ADS1115::OperationResult terminal;
+    st = device.takeResult(progress.token, terminal);
+    return st.ok() ? terminal.status : st;
+  }
+  const ADS1115::OperationToken token = device.activeOperationToken();
+  device.cancelJob();
+  ADS1115::OperationResult terminal;
+  if (device.terminalResultAvailable()) {
+    (void)device.takeResult(token, terminal);
+  }
+  return ADS1115::Status::Error(ADS1115::Err::INDETERMINATE,
+                                "Config verification did not terminate");
+}
+
+ADS1115::Status mutateAndVerify(const ADS1115::Status& mutation) {
+  return mutation.ok() ? applyCachedProfileVerified() : mutation;
 }
 
 void printDriverHealth() {
@@ -606,6 +642,10 @@ bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline,
     return false;
   }
   failure = device.setDataRate(baseline.dataRate);
+  if (!failure.ok()) {
+    return false;
+  }
+  failure = applyCachedProfileVerified();
   return failure.ok();
 }
 
@@ -631,6 +671,10 @@ bool restoreSelftestBaseline(const ADS1115::SettingsSnapshot& baseline,
     return false;
   }
   failure = device.setComparatorQueue(baseline.compQueue);
+  if (!failure.ok()) {
+    return false;
+  }
+  failure = applyCachedProfileVerified();
   return failure.ok();
 }
 
@@ -815,7 +859,8 @@ bool isSingleShotJobState(ADS1115::JobState st) {
   return st == JobState::SINGLE_SHOT_WRITE_CONFIG ||
          st == JobState::SINGLE_SHOT_WAIT_CONVERSION ||
          st == JobState::SINGLE_SHOT_POLL_READY ||
-         st == JobState::SINGLE_SHOT_READ_CONVERSION;
+         st == JobState::SINGLE_SHOT_READ_CONVERSION ||
+         st == JobState::WAIT_IDLE_AFTER_ABANDON;
 }
 
 bool isApplyJobState(ADS1115::JobState st) {
@@ -846,6 +891,19 @@ void printPollResult(const ADS1115::PollResult& result) {
   Serial.printf("  Last raw: %d\n", static_cast<int>(device.lastRawValue()));
 }
 
+void printAndAcknowledgePollResult(const ADS1115::PollResult& result) {
+  printPollResult(result);
+  if (!result.done || !result.token.valid()) {
+    return;
+  }
+  ADS1115::OperationResult terminal;
+  const ADS1115::Status st = device.takeResult(result.token, terminal);
+  if (!st.ok()) {
+    Serial.println("  Terminal result acknowledgement failed:");
+    printStatus(st);
+  }
+}
+
 void handleJobCommand(const String& cmd) {
   if (cmd == "job") {
     printJobStatus();
@@ -856,7 +914,12 @@ void handleJobCommand(const String& cmd) {
     printStatus(device.startApplyConfigJob());
     printJobStatus();
   } else if (cmd == "job cancel") {
+    const ADS1115::OperationToken token = device.activeOperationToken();
     device.cancelJob();
+    if (token.valid() && device.terminalResultAvailable()) {
+      ADS1115::OperationResult terminal;
+      (void)device.takeResult(token, terminal);
+    }
     printJobStatus();
   } else if (cmd == "job poll" || cmd.startsWith("job poll ")) {
     uint32_t budget = 1;
@@ -868,9 +931,11 @@ void handleJobCommand(const String& cmd) {
     }
     const ADS1115::JobState st = device.jobState();
     if (isSingleShotJobState(st)) {
-      printPollResult(device.pollSingleShot(millis(), static_cast<uint8_t>(budget)));
+      printAndAcknowledgePollResult(
+          device.pollSingleShot(millis(), static_cast<uint8_t>(budget)));
     } else if (isApplyJobState(st)) {
-      printPollResult(device.pollApplyConfig(millis(), static_cast<uint8_t>(budget)));
+      printAndAcknowledgePollResult(
+          device.pollApplyConfig(millis(), static_cast<uint8_t>(budget)));
     } else {
       Serial.println("No active pollable job");
       printJobStatus();
@@ -916,7 +981,7 @@ void runStressMix(int count) {
   Serial.printf("=== stress_mix (%d ops, addr=0x%02X) ===\n", count, activeI2cAddress);
 
   if (haveBaseline && baseline.mode != ADS1115::Mode::SINGLE_SHOT) {
-    prepStatus = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+    prepStatus = mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT));
   }
 
   for (int i = 0; i < count; ++i) {
@@ -969,12 +1034,12 @@ void runStressMix(int count) {
         }
         case 4: {
           const ADS1115::Gain gain = static_cast<ADS1115::Gain>(i % 6);
-          st = device.setGain(gain);
+          st = mutateAndVerify(device.setGain(gain));
           break;
         }
         case 5: {
           const ADS1115::DataRate rate = static_cast<ADS1115::DataRate>(i % 8);
-          st = device.setDataRate(rate);
+          st = mutateAndVerify(device.setDataRate(rate));
           break;
         }
         default:
@@ -1359,6 +1424,9 @@ void runSelfTest() {
     reportStatusCondition("verify mux bits", false, verifySt, "write/read verify failed", false);
   }
 
+  st = applyCachedProfileVerified();
+  reportStatusCheck("apply+verify typed-read profile", st, false);
+
   st = device.startConversion();
   const bool started = reportStartCheck("startConversion(raw)", st);
   if (started) {
@@ -1599,7 +1667,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Invalid channel");
       return;
     }
-    auto st = device.setMux(channelToMux(static_cast<int>(channel)));
+    auto st = mutateAndVerify(device.setMux(channelToMux(static_cast<int>(channel))));
     printStatus(st);
   } else if (cmd == "diff") {
     printCurrentMux();
@@ -1613,7 +1681,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Invalid differential index");
       return;
     }
-    auto st = device.setMux(diffToMux(static_cast<int>(idx)));
+    auto st = mutateAndVerify(device.setMux(diffToMux(static_cast<int>(idx))));
     printStatus(st);
   } else if (cmd == "gain") {
     printCurrentGain();
@@ -1627,7 +1695,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Invalid gain");
       return;
     }
-    auto st = device.setGain(static_cast<ADS1115::Gain>(gain));
+    auto st = mutateAndVerify(device.setGain(static_cast<ADS1115::Gain>(gain)));
     printStatus(st);
   } else if (cmd == "rate") {
     printCurrentRate();
@@ -1641,7 +1709,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Invalid rate");
       return;
     }
-    auto st = device.setDataRate(static_cast<ADS1115::DataRate>(rate));
+    auto st = mutateAndVerify(device.setDataRate(static_cast<ADS1115::DataRate>(rate)));
     printStatus(st);
   } else if (cmd == "mode") {
     printCurrentMode();
@@ -1649,10 +1717,10 @@ void processCommand(const String& cmdLine) {
     String mode = cmd.substring(5);
     mode.trim();
     if (mode == "single") {
-      auto st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+      auto st = mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT));
       printStatus(st);
     } else if (mode == "cont" || mode == "continuous") {
-      auto st = device.setMode(ADS1115::Mode::CONTINUOUS);
+      auto st = mutateAndVerify(device.setMode(ADS1115::Mode::CONTINUOUS));
       printStatus(st);
     } else {
       LOGW("Invalid mode");
@@ -1675,7 +1743,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Usage: comp mode [trad|window]");
       return;
     }
-    printStatus(device.setComparatorMode(mode));
+    printStatus(mutateAndVerify(device.setComparatorMode(mode)));
   } else if (cmd.startsWith("comp pol ")) {
     String token = cmd.substring(9);
     token.trim();
@@ -1688,7 +1756,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Usage: comp pol [low|high]");
       return;
     }
-    printStatus(device.setComparatorPolarity(polarity));
+    printStatus(mutateAndVerify(device.setComparatorPolarity(polarity)));
   } else if (cmd.startsWith("comp latch ")) {
     int32_t val = 0;
     if (!parseI32(cmd.substring(11), val)) {
@@ -1702,7 +1770,7 @@ void processCommand(const String& cmdLine) {
     const ADS1115::ComparatorLatch latch =
         (val == 0) ? ADS1115::ComparatorLatch::NON_LATCHING
                    : ADS1115::ComparatorLatch::LATCHING;
-    printStatus(device.setComparatorLatch(latch));
+    printStatus(mutateAndVerify(device.setComparatorLatch(latch)));
   } else if (cmd.startsWith("comp queue ")) {
     String token = cmd.substring(11);
     token.trim();
@@ -1719,7 +1787,7 @@ void processCommand(const String& cmdLine) {
       LOGW("Usage: comp queue [1|2|4|disable]");
       return;
     }
-    printStatus(device.setComparatorQueue(queue));
+    printStatus(mutateAndVerify(device.setComparatorQueue(queue)));
   } else if (cmd.startsWith("comp th ")) {
     String args = cmd.substring(8);
     args.trim();
@@ -1739,11 +1807,12 @@ void processCommand(const String& cmdLine) {
       LOGW("Thresholds must be in int16 range");
       return;
     }
-    printStatus(device.setThresholds(static_cast<int16_t>(low), static_cast<int16_t>(high)));
+    printStatus(mutateAndVerify(
+        device.setThresholds(static_cast<int16_t>(low), static_cast<int16_t>(high))));
   } else if (cmd == "comp rdy") {
     printStatus(device.enableConversionReadyPin());
   } else if (cmd == "comp disable") {
-    printStatus(device.disableComparator());
+    printStatus(mutateAndVerify(device.disableComparator()));
   } else if (cmd.startsWith("config write ")) {
     uint32_t value = 0;
     String token = cmd.substring(13);

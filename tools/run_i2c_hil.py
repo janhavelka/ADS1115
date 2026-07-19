@@ -234,6 +234,9 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
         elif validator == "status_in_progress":
             if status_token(plain) != "IN_PROGRESS":
                 return "Status: IN_PROGRESS not found"
+        elif validator == "status_unsupported":
+            if status_token(plain) != "UNSUPPORTED_OPERATION":
+                return "Status: UNSUPPORTED_OPERATION not found"
         elif validator == "driver_ready":
             if "State: READY" not in plain and "state=READY" not in plain:
                 return "driver state is not READY"
@@ -529,7 +532,7 @@ def per_address_plan(address: str, *, full: bool, benchmark: bool) -> list[Comma
             CommandSpec("MODE-{address}-004", "Mode", "read", "Read after single-shot path", ("Raw:", "Voltage:"), ("raw_sample", "voltage"), timeout_s=12.0, unknown_on_pass=True),
             CommandSpec("MODE-{address}-005", "Mode", "mode cont", "Set continuous mode", ("Status: OK",), ("status_ok",)),
             CommandSpec("MODE-{address}-006", "Mode", "raw", "Read latest raw in continuous mode", ("Raw:",), ("raw_sample",), timeout_s=8.0, unknown_on_pass=True),
-            CommandSpec("MODE-{address}-007", "Mode", "voltage", "Read voltage in continuous mode", ("Voltage:",), ("voltage",), timeout_s=8.0, unknown_on_pass=True),
+            CommandSpec("MODE-{address}-007", "Mode", "voltage", "Reject scaled read in continuous mode", ("Status: UNSUPPORTED_OPERATION",), ("status_unsupported",), timeout_s=8.0, expected_failure=True),
             CommandSpec("MODE-{address}-008", "Mode", "mode single", "Restore single-shot mode", ("Status: OK",), ("status_ok",)),
             CommandSpec("COMP-{address}-001", "Comparator", "comp", "Read comparator configuration", ("=== Comparator ===",), timeout_s=8.0),
             CommandSpec("COMP-{address}-002", "Comparator", "comp mode trad", "Set traditional comparator", ("Status: OK",), ("status_ok",)),
@@ -559,7 +562,8 @@ def per_address_plan(address: str, *, full: bool, benchmark: bool) -> list[Comma
             CommandSpec("JOB-{address}-005", "Staged Jobs", "job apply", "Start poll-chunked config apply job", ("Status:", "=== Job Status ==="), ("job_active",), timeout_s=5.0),
             CommandSpec("JOB-{address}-006", "Staged Jobs", "job poll 0", "Zero-budget apply poll consumes no instructions", ("=== Job Poll Result ===",), ("job_zero_budget",), timeout_s=5.0),
             CommandSpec("JOB-{address}-007", "Staged Jobs", "job poll 1", "One-instruction apply poll advances", ("=== Job Poll Result ===",), timeout_s=5.0),
-            CommandSpec("JOB-{address}-008", "Staged Jobs", "job poll 3", "Full-budget apply poll completes", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
+            CommandSpec("JOB-{address}-008", "Staged Jobs", "job poll 3", "First full-budget apply poll advances", ("=== Job Poll Result ===",), timeout_s=8.0),
+            CommandSpec("JOB-{address}-009", "Staged Jobs", "job poll 3", "Second full-budget apply poll completes", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
             CommandSpec("SHUT-{address}-001", "Lifecycle", "shutdown", "Shutdown writes single-shot idle and keeps initialized", ("Status: OK", "Mode:"), ("status_ok",), timeout_s=5.0),
             CommandSpec("SHUT-{address}-002", "Lifecycle", "settings", "Driver remains initialized after shutdown", ("Initialized: YES",), ("driver_ready",), timeout_s=5.0),
             CommandSpec("INV-{address}-001", "Invalid Input", "unknown_cmd", "Unknown command is rejected visibly", ("Unknown command:",), ("invalid_or_usage",), expected_failure=True),
@@ -617,8 +621,8 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
         CommandSpec("TGT-{address}-MODE-POLL", "Mode", "poll", "Poll conversion readiness", ("Conversion ready:", "Status:"), timeout_s=5.0, unknown_on_pass=True),
         CommandSpec("TGT-{address}-MODE-READ", "Mode", "read", "Read after single-shot start", ("Raw:", "Voltage:"), ("raw_sample", "voltage"), timeout_s=12.0, unknown_on_pass=True),
         CommandSpec("TGT-{address}-MODE-CONT", "Mode", "mode cont", "Set continuous mode", ("Status: OK",), ("status_ok",)),
-        CommandSpec("TGT-{address}-MODE-RAW", "Mode", "raw", "Read latest raw in continuous mode", ("Raw:",), ("raw_sample",), timeout_s=8.0, unknown_on_pass=True),
-        CommandSpec("TGT-{address}-MODE-VOLTAGE", "Mode", "voltage", "Read voltage in continuous mode", ("Voltage:",), ("voltage",), timeout_s=8.0, unknown_on_pass=True),
+        CommandSpec("TGT-{address}-MODE-RAW", "Mode", "raw", "Read latest raw code in continuous mode", ("Raw:",), ("raw_sample",), timeout_s=8.0, unknown_on_pass=True),
+        CommandSpec("TGT-{address}-MODE-VOLTAGE-REJECT", "Mode", "voltage", "Reject scaled read in continuous mode", ("Status: UNSUPPORTED_OPERATION",), ("status_unsupported",), timeout_s=8.0, expected_failure=True),
         CommandSpec("TGT-{address}-MODE-RESTORE", "Mode", "mode single", "Restore single-shot mode", ("Status: OK",), ("status_ok",)),
         CommandSpec("TGT-{address}-COMP-0", "Comparator", "comp", "Read comparator state", ("=== Comparator ===",), timeout_s=5.0),
         CommandSpec("TGT-{address}-COMP-TRAD", "Comparator", "comp mode trad", "Set traditional comparator", ("Status: OK",), ("status_ok",)),
@@ -655,7 +659,8 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
         CommandSpec("TGT-{address}-JOB-APPLY-POLL0", "Staged Jobs", "job poll 0", "Zero-budget apply poll consumes no instructions", ("=== Job Poll Result ===",), ("job_zero_budget",), timeout_s=5.0),
         CommandSpec("TGT-{address}-JOB-CFG-BUSY", "Staged Jobs", "config write 0x8583", "Config write is BUSY while apply job is active", ("Status:",), ("status_busy",), timeout_s=5.0),
         CommandSpec("TGT-{address}-JOB-APPLY-POLL1", "Staged Jobs", "job poll 1", "One-instruction apply poll advances", ("=== Job Poll Result ===",), timeout_s=5.0),
-        CommandSpec("TGT-{address}-JOB-APPLY-POLL255", "Staged Jobs", "job poll 255", "Huge budget is clamped and completes apply job", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
+        CommandSpec("TGT-{address}-JOB-APPLY-POLL255-1", "Staged Jobs", "job poll 255", "First huge budget is clamped and advances apply", ("=== Job Poll Result ===",), timeout_s=8.0),
+        CommandSpec("TGT-{address}-JOB-APPLY-POLL255-2", "Staged Jobs", "job poll 255", "Second clamped poll completes apply", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
         CommandSpec("TGT-{address}-STRESS-READ", "Stress", "stress 2", "Short scalar stress", ("=== Stress Summary ===",), ("stress_zero_errors", "rate_report"), timeout_s=25.0),
         CommandSpec("TGT-{address}-STRESS-MIX", "Stress", "stress_mix 3", "Short mixed stress", ("=== stress_mix summary ===",), ("stress_mix_zero_fail", "rate_report"), timeout_s=25.0),
         CommandSpec("TGT-{address}-INV-READ0", "Invalid Input", "read 0", "Reject zero read count", ("Invalid count",), ("invalid_or_usage",), expected_failure=True),
@@ -703,8 +708,7 @@ def soak_step_plan(addresses: list[str]) -> list[CommandSpec]:
         CommandSpec("SOAK-{address}-READ", "Soak", "read", "Blocking read", ("Raw:", "Voltage:"), ("raw_sample", "voltage"), timeout_s=12.0, unknown_on_pass=True),
         CommandSpec("SOAK-{address}-READV", "Soak", "readv", "Blocking voltage read", ("Blocking voltage:", "Voltage:"), ("voltage",), timeout_s=12.0, unknown_on_pass=True),
         CommandSpec("SOAK-{address}-CONT", "Soak", "mode cont", "Continuous mode", ("Status: OK",), ("status_ok",)),
-        CommandSpec("SOAK-{address}-RAW", "Soak", "raw", "Continuous raw read", ("Raw:",), ("raw_sample",), timeout_s=8.0, unknown_on_pass=True),
-        CommandSpec("SOAK-{address}-VOLTAGE", "Soak", "voltage", "Continuous voltage read", ("Voltage:",), ("voltage",), timeout_s=8.0, unknown_on_pass=True),
+        CommandSpec("SOAK-{address}-RAW", "Soak", "raw", "Continuous latest-raw read", ("Raw:",), ("raw_sample",), timeout_s=8.0, unknown_on_pass=True),
         CommandSpec("SOAK-{address}-SINGLE", "Soak", "mode single", "Single-shot restore", ("Status: OK",), ("status_ok",)),
         CommandSpec("SOAK-{address}-RATE0", "Soak", "rate 0", "Slow boundary rate", ("Status: OK",), ("status_ok",)),
         CommandSpec("SOAK-{address}-RATE0-READ", "Soak", "read", "Slow boundary read", ("Raw:", "Voltage:"), ("raw_sample", "voltage"), timeout_s=20.0, unknown_on_pass=True),
@@ -765,6 +769,31 @@ def parser_self_test() -> None:
         result, reason = classify_output(spec, output)
         if result != expected:
             raise AssertionError(f"{spec.feature}: expected {expected}, got {result} ({reason})")
+    targeted_plan = targeted_address_plan("0x48")
+    targeted_ids = [spec.test_id for spec in targeted_plan]
+    if len(targeted_ids) != len(set(targeted_ids)):
+        raise AssertionError("targeted plan test IDs must be unique")
+    targeted = {spec.test_id: spec for spec in targeted_plan}
+    continuous = targeted.get("TGT-48-MODE-RAW")
+    if continuous is None or continuous.command != "raw" or continuous.validators != ("raw_sample",):
+        raise AssertionError("targeted continuous-mode contract must use latest raw diagnostics")
+    scaled_reject = targeted.get("TGT-48-MODE-VOLTAGE-REJECT")
+    if (scaled_reject is None or scaled_reject.command != "voltage" or
+            scaled_reject.validators != ("status_unsupported",) or
+            not scaled_reject.expected_failure):
+        raise AssertionError("targeted scaled continuous read must be an explicit rejection test")
+    apply_poll_1 = targeted.get("TGT-48-JOB-APPLY-POLL255-1")
+    apply_poll_2 = targeted.get("TGT-48-JOB-APPLY-POLL255-2")
+    if (apply_poll_1 is None or "job_done" in apply_poll_1.validators or
+            apply_poll_2 is None or "job_done" not in apply_poll_2.validators):
+        raise AssertionError("six-transfer staged apply must require both clamped polls")
+    full_plan = per_address_plan("0x48", full=True, benchmark=False)
+    full_ids = [spec.test_id for spec in full_plan]
+    if len(full_ids) != len(set(full_ids)):
+        raise AssertionError("full address plan test IDs must be unique")
+    soak_ids = [spec.test_id for spec in soak_step_plan(["0x48"])]
+    if len(soak_ids) != len(set(soak_ids)):
+        raise AssertionError("soak plan test IDs must be unique")
     verdict_rows = [
         StepResult("V1", "Digital", "version", "", "", 0.0, RESULT_PASS, ""),
         StepResult("V2", "Analog", "read", "", "", 0.0, RESULT_EVIDENCE_REQUIRED, "",

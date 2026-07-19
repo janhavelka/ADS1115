@@ -29,7 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native fault injection for applied-then-error writes, token/result lifetime,
   per-poll budgets, deadline reconciliation, cancellation after each effect
   stage, unknown configuration, passive health, verified shutdown, continuous
-  settling, and bus-silent teardown. The native suite now contains 168 tests.
+  settling, active-conversion rebind rejection, owner-time health timestamps,
+  post-callback abandoned-conversion timing, multi-callback deadline
+  partitioning, staged terminal acknowledgement, threshold-profile trust, and
+  bus-silent teardown. The native suite now contains 174 tests.
 - A compiled owner-safe Arduino example with a static shared-bus mutex,
   deadline-aware callback timeout policy, and one callback per owner-loop pass.
 
@@ -40,11 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not chip identity.
 - Owner single-shot reads verify CONFIG before reading conversion data and
   publish samples only from `VERIFIED`, clean configuration state.
-- Whole-operation deadlines now clamp each callback timeout to the remaining
-  time. Conversion waits consume no transport budget.
+- Whole-operation deadlines partition the remaining time across each poll's
+  callback budget, so the sum of callback timeout caps cannot exceed the
+  remaining boundary. Conversion waits consume no transport budget.
 - Cancel/timeout after a confirmed or ambiguous start now enters bus-silent
-  wait-idle reconciliation; abandoned conversions cannot be reused under a new
-  MUX or gain.
+  wait-idle reconciliation timed from the first post-callback owner poll;
+  abandoned conversions cannot be reused under a new MUX or gain.
 - Health `OFFLINE` is now a passive diagnostic threshold. It no longer denies
   owner-authorized transport callbacks or owns recovery admission.
 - `end()` is bus-silent. Hardware idle is requested explicitly through
@@ -53,11 +57,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supplied `strictInitVerify` value. The field remains for source migration.
 - Direct typed/raw mutation APIs are classified as advanced diagnostics and
   move configuration trust to `UNKNOWN`/dirty until verified replay.
+- Diagnostic CLIs now complete typed mutations with a bounded full
+  apply/readback, acknowledge staged terminal tokens, and test continuous mode
+  through latest-raw success plus explicit scaled-read rejection.
 - Production acquisition is fixed-profile single-shot OS polling. Continuous
   latest-register and ALERT/RDY GPIO paths remain diagnostic; continuous timing
   now accounts for -10% rate tolerance and two settling periods after change.
-- PlatformIO Core is pinned to `6.1.19`, pioarduino espressif32 to the exact
-  `54.03.20` archive, and ESP-IDF CI to the `v5.3.5` image digest.
+- PlatformIO Core is pinned to `6.1.19`, PlatformIO Native to `1.2.1`,
+  pioarduino espressif32 to the exact `54.03.20` archive, and ESP-IDF CI to the
+  `v5.3.5` image digest. Host runner/compiler variability remains explicit.
 
 ### Compatibility
 

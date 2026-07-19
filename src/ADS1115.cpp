@@ -260,6 +260,9 @@ Status ADS1115::bind(const DriverConfig& driverConfig, const DeviceProfile& prof
   if (_jobActive || _terminalResultAvailable) {
     return Status::Error(Err::BUSY, "Finish active binding operation before rebind");
   }
+  if (_singleShotMayBeActive()) {
+    return _activeHardwareBusyStatus();
+  }
 
   unbind();
   _driverConfig = driverConfig;
@@ -310,6 +313,7 @@ void ADS1115::unbind() {
   _operationToken = OperationToken{};
   _operationStartMs = 0;
   _operationDeadlineMs = 0;
+  _pollNowMs = 0;
   _activeTransferTimeoutMs = 0;
   _resetOperationScratch();
 }
@@ -352,6 +356,10 @@ Status ADS1115::startInitialize(uint32_t nowMs, uint32_t deadlineMs,
   if (!_bound) {
     token = OperationToken{};
     return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
+  }
+  if (_singleShotMayBeActive()) {
+    token = OperationToken{};
+    return _activeHardwareBusyStatus();
   }
   Status st = _beginOperation(OperationKind::INITIALIZE, nowMs, deadlineMs, token);
   if (st.code != Err::IN_PROGRESS) {
@@ -479,15 +487,22 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
     return _pollResult(Status::Ok(), 0, true);
   }
 
-  const uint8_t budget = _instructionBudget(maxTransactions);
+  _pollNowMs = nowMs;
+  uint8_t budget = _instructionBudget(maxTransactions);
   uint8_t used = 0;
 
   const int32_t remainingMs = static_cast<int32_t>(_operationDeadlineMs - nowMs);
   if (remainingMs > 0) {
     const uint32_t remaining = static_cast<uint32_t>(remainingMs);
-    _activeTransferTimeoutMs = remaining < _driverConfig.transferTimeoutMs
-                                   ? remaining
-                                   : _driverConfig.transferTimeoutMs;
+    if (budget > remaining) {
+      budget = static_cast<uint8_t>(remaining);
+    }
+    const uint32_t perCallbackBudget =
+        budget == 0 ? remaining : remaining / budget;
+    _activeTransferTimeoutMs =
+        perCallbackBudget < _driverConfig.transferTimeoutMs
+            ? perCallbackBudget
+            : _driverConfig.transferTimeoutMs;
   }
 
   if (_deadlineReached(nowMs) && _jobState != JobState::WAIT_IDLE_AFTER_ABANDON) {
@@ -501,6 +516,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
       _abandonStatus = timeout;
       _operationState = OperationState::RECONCILING;
       _jobState = JobState::WAIT_IDLE_AFTER_ABANDON;
+      _abandonWaitStartPending = true;
       _configurationState = ConfigurationState::UNKNOWN;
       _markHardwareConfigDirty(timeout);
       return _pollResult(timeout, 0, false);
@@ -689,6 +705,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
             _abandonStatus = st;
             _operationState = OperationState::RECONCILING;
             _jobState = JobState::WAIT_IDLE_AFTER_ABANDON;
+            _abandonWaitStartPending = true;
             _conversionStarted = true;
             _conversionReady = false;
             _configurationState = ConfigurationState::UNKNOWN;
@@ -798,9 +815,17 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
       }
 
       case JobState::WAIT_IDLE_AFTER_ABANDON: {
+        if (_abandonWaitStartPending) {
+          // The timestamp supplied to the I2C-start poll was sampled before the
+          // blocking callback. Arm the quiet interval only at the next owner
+          // poll, which is the first trustworthy post-callback boundary.
+          _abandonWaitStartMs = nowMs;
+          _abandonWaitStartPending = false;
+          return _pollResult(_abandonStatus, used, false);
+        }
         const uint32_t conversionMs =
             (worstCaseConversionTimeUs(_desiredProfile.dataRate) + 999UL) / 1000UL;
-        if (!elapsedAtLeast(_conversionStartMs, conversionMs, nowMs)) {
+        if (!elapsedAtLeast(_abandonWaitStartMs, conversionMs, nowMs)) {
           return _pollResult(_abandonStatus, used, false);
         }
         _conversionStarted = false;
@@ -855,6 +880,7 @@ CancelDisposition ADS1115::cancelActiveOperation() {
     _abandonStatus = cancelled;
     _operationState = OperationState::RECONCILING;
     _jobState = JobState::WAIT_IDLE_AFTER_ABANDON;
+    _abandonWaitStartPending = true;
     _configurationState = ConfigurationState::UNKNOWN;
     _markHardwareConfigDirty(cancelled);
     return CancelDisposition::RECONCILIATION_REQUIRED;
@@ -1398,8 +1424,15 @@ Status ADS1115::readLatestRaw(int16_t& out) {
 }
 
 Status ADS1115::readVoltage(float& volts) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_config.mode == Mode::CONTINUOUS) {
+    return Status::Error(Err::UNSUPPORTED_OPERATION,
+                         "Scaled read requires single-shot mode");
+  }
   if (_configurationState != ConfigurationState::VERIFIED ||
-      _hardwareConfigDirty || _config.mode == Mode::CONTINUOUS) {
+      _hardwareConfigDirty) {
     return Status::Error(Err::CONFIG_UNKNOWN,
                          "Verified single-shot configuration required for scaled read");
   }
@@ -1457,6 +1490,7 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
           _abandonStatus = stalled;
           _operationState = OperationState::RECONCILING;
           _jobState = JobState::WAIT_IDLE_AFTER_ABANDON;
+          _abandonWaitStartPending = true;
           _configurationState = ConfigurationState::UNKNOWN;
         } else {
           (void)_finishOperation(stalled, OperationState::FAILED, 0);
@@ -1494,8 +1528,15 @@ Status ADS1115::readBlocking(int16_t& out, uint32_t timeoutMs) {
 }
 
 Status ADS1115::readBlockingVoltage(float& volts, uint32_t timeoutMs) {
+  if (!_initialized) {
+    return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
+  }
+  if (_config.mode == Mode::CONTINUOUS) {
+    return Status::Error(Err::UNSUPPORTED_OPERATION,
+                         "Blocking scaled read requires single-shot mode");
+  }
   if (_configurationState != ConfigurationState::VERIFIED ||
-      _hardwareConfigDirty || _config.mode == Mode::CONTINUOUS) {
+      _hardwareConfigDirty) {
     return Status::Error(Err::CONFIG_UNKNOWN,
                          "Verified single-shot configuration required for scaled read");
   }
@@ -1781,6 +1822,15 @@ Status ADS1115::getThresholds(int16_t& low, int16_t& high) {
   high = static_cast<int16_t>(highReg);
   _config.compThresholdLow = low;
   _config.compThresholdHigh = high;
+  // Preserve an existing full-profile verification only when the observed
+  // thresholds still match that committed profile. A mismatch is useful
+  // diagnostic evidence that the hardware/cache contract is no longer known.
+  if (_configurationState == ConfigurationState::VERIFIED &&
+      (_hardwareConfigDirty ||
+       low != _appliedProfile.comparator.lowThreshold ||
+       high != _appliedProfile.comparator.highThreshold)) {
+    _configurationState = ConfigurationState::UNKNOWN;
+  }
   return Status::Ok();
 }
 
@@ -2046,6 +2096,8 @@ void ADS1115::_resetOperationScratch() {
   _jobAnyWriteConfirmed = false;
   _jobNextReadyPollMs = 0;
   _abandonStatus = Status::Ok();
+  _abandonWaitStartPending = false;
+  _abandonWaitStartMs = 0;
   _workingSample = SampleResult{};
 }
 
@@ -2251,7 +2303,7 @@ Status ADS1115::_updateHealth(const Status& st) {
     return st;
   }
 
-  uint32_t nowMs = _nowMs();
+  const uint32_t nowMs = _jobActive ? _pollNowMs : _nowMs();
 
   if (st.ok()) {
     _lastOkMs = nowMs;

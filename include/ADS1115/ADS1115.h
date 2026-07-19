@@ -195,8 +195,9 @@ struct SettingsSnapshot {
 /// The owner-safe API is bind()/start*()/poll()/takeResult()/unbind(). Start,
 /// cancel, result consumption, and unbind are bus-silent. poll() is the only
 /// owner-safe method that calls transport callbacks and honors the caller's
-/// transaction budget (clamped to three). Each callback receives the smaller
-/// of DriverConfig::transferTimeoutMs and the remaining whole-operation time.
+/// transaction budget (clamped to three). Callback timeout caps are partitioned
+/// so their sum cannot exceed the remaining whole-operation time sampled at the
+/// poll boundary; each is also capped by DriverConfig::transferTimeoutMs.
 ///
 /// All public methods require external serialization and task context. The
 /// driver owns no bus, lock, GPIO, clock, retry policy, recovery policy, or
@@ -239,7 +240,8 @@ public:
   Status startShutdown(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Advance the active operation by at most maxTransactions callbacks.
   /// @param nowMs Current time in the operation's original time domain.
-  /// @param maxTransactions Callback budget, clamped to three; zero is bus-silent.
+  /// @param maxTransactions Callback budget, clamped to three and to the whole
+  ///        milliseconds remaining before the deadline; zero is bus-silent.
   /// @return Current/terminal status, budget used, token, and operation state.
   PollResult poll(uint32_t nowMs, uint8_t maxTransactions = 1);
   /// Request cancellation without I2C.
@@ -250,7 +252,9 @@ public:
   /// A token mismatch does not consume the result.
   Status takeResult(OperationToken token, OperationResult& out);
   /// Drop the binding and all local state without I2C.
-  /// Call startShutdown() first when a hardware idle request is required.
+  /// First cancel and poll any conversion through reconciliation, and call
+  /// startShutdown() when a hardware idle request is required. Immediate reuse
+  /// of the same device after abandoning an active conversion is caller-unsafe.
   void unbind();
 
   /// Compatibility synchronous initialization facade.
@@ -310,8 +314,7 @@ public:
   /// @return Status::Ok() when the CONFIG register can be read.
   Status probe();
   /// Attempt recovery from DEGRADED or OFFLINE state using tracked I2C.
-  /// Transaction count: one CONFIG read plus three writes; strict mode adds
-  /// three read-back transactions.
+  /// Transaction count: one CONFIG read, three writes, and three readbacks.
   /// @return Status::Ok() when the device responds and cached configuration is restored.
   Status recover();
 
@@ -401,6 +404,8 @@ public:
   Status readRaw(int16_t& out);
 
   /// Read a signed sample and scale it using the active gain.
+  /// Requires a verified, clean, single-shot configuration. Direct diagnostic
+  /// mutations return Err::CONFIG_UNKNOWN until a full apply/recover succeeds.
   /// @param[out] volts Converted input voltage.
   /// @return Status::Ok() on a successful sample read and conversion.
   Status readVoltage(float& volts);
@@ -416,18 +421,17 @@ public:
   /// @return Status::Ok() on a successful register read.
   Status readLatestRaw(int16_t& out);
 
-  /// Start or join a single-shot conversion, or wait for a fresh continuous
-  /// sample, with a finite deadline.
+  /// Perform a fresh single-shot conversion with a finite deadline.
+  /// Requires a verified, clean, single-shot configuration. This hardened
+  /// compatibility path does not support continuous mode.
   /// Requires Config::nowMs; returns INVALID_CONFIG before starting conversion
   /// when no monotonic clock hook is configured.
-  /// In continuous mode this waits until the configured data-rate interval marks
-  /// a fresh sample ready, then reads the conversion register. Use
-  /// readLatestRaw() when the caller intentionally wants the current register
-  /// value immediately.
-  /// Transaction count in single-shot mode: one CONFIG write to start plus
-  /// conversion-register read; OS-bit polling can add CONFIG reads. Continuous
-  /// mode performs one conversion-register read after readiness. Worst-case wall
-  /// time is bounded by timeoutMs plus active I2C transaction timeouts. Polling
+  /// Use readLatestRaw() when the caller intentionally wants the current
+  /// continuous-mode register value immediately.
+  /// Transaction count: one CONFIG write to start plus one CONFIG readback and
+  /// one conversion-register read. Worst-case wall time is bounded by timeoutMs
+  /// plus bus-silent post-callback reconciliation after an ambiguous start.
+  /// Polling
   /// occurs at most once per observed millisecond tick when I2C is needed; a
   /// stalled clock returns Err::CLOCK_STALLED after a finite same-tick guard.
   /// @param[out] out Signed conversion code.
@@ -437,7 +441,8 @@ public:
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
 
   /// Blocking read with voltage scaling.
-  /// Requires Config::nowMs under the same contract as readBlocking().
+  /// Requires Config::nowMs plus the verified, clean, single-shot contract of
+  /// readBlocking().
   /// @param[out] volts Converted input voltage.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
@@ -448,6 +453,8 @@ public:
   /// While any poll-chunked job is active, normal public I2C/configuration APIs
   /// return Err::BUSY; use the matching poll method or cancelJob().
   /// Use pollSingleShot() to advance the job with an explicit transaction budget.
+  /// A terminal poll result remains pending; call takeResult(result.token, ...)
+  /// before starting another operation.
   /// @return Err::IN_PROGRESS when the job is scheduled.
   Status startSingleShot();
 
@@ -459,6 +466,8 @@ public:
   /// Advance a single-shot job by at most maxInstructions transport callbacks.
   /// maxInstructions is clamped to 3; passing 0 performs no transport work.
   /// Delay gates return with instructionsUsed == 0.
+  /// On a terminal result, consume the result token with takeResult() before
+  /// starting another operation.
   /// @param nowMs Current monotonic time in milliseconds.
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
   /// @return Job progress, terminal status, and callbacks consumed.
@@ -469,8 +478,10 @@ public:
   /// return Err::BUSY; use the matching poll method or cancelJob().
   /// Normal continuous-mode background conversion state is allowed; an active
   /// single-shot conversion is rejected with Err::BUSY.
-  /// The job writes low threshold, high threshold, CONFIG, and performs strict
-  /// or dirty-state readback when required by the current cache state.
+  /// The job writes low threshold, high threshold, CONFIG, then always reads
+  /// back all three registers before committing the applied profile.
+  /// A terminal poll result remains pending; call takeResult(result.token, ...)
+  /// before starting another operation.
   /// @return Err::IN_PROGRESS when the job is scheduled.
   Status startApplyConfigJob();
 
@@ -586,7 +597,9 @@ public:
   /// @return Status::Ok() when both threshold registers are written.
   Status setThresholds(int16_t low, int16_t high);
 
-  /// Read signed comparator thresholds and sync the cache.
+  /// Read signed comparator thresholds and sync the legacy cache.
+  /// Matching values preserve an existing clean VERIFIED profile. A mismatch
+  /// invalidates full-profile trust until a complete apply/recover succeeds.
   /// Transaction count: two threshold reads.
   /// @param[out] low Low threshold raw code.
   /// @param[out] high High threshold raw code.
@@ -637,7 +650,7 @@ public:
   /// be short; continuous-mode pulses are approximately 8 us per the datasheet
   /// caveat. Use an interrupt-capable input or latching strategy when polling
   /// cannot guarantee capture.
-  /// Transaction count: three writes; strict mode adds three read-back reads.
+  /// Transaction count: three writes and three read-back reads.
   /// @return Status::Ok() when thresholds and CONFIG are written.
   Status enableConversionReadyPin();
 
@@ -736,6 +749,8 @@ private:
   bool _jobAnyWriteConfirmed = false;
   uint32_t _jobNextReadyPollMs = 0;
   Status _abandonStatus = Status::Ok();
+  bool _abandonWaitStartPending = false;
+  uint32_t _abandonWaitStartMs = 0;
 
   // === Owner Operation State ===
   OperationKind _operationKind = OperationKind::NONE;
@@ -744,6 +759,7 @@ private:
   uint32_t _nextOperationToken = 1;
   uint32_t _operationStartMs = 0;
   uint32_t _operationDeadlineMs = 0;
+  uint32_t _pollNowMs = 0;
   uint32_t _activeTransferTimeoutMs = 0;
   bool _terminalResultAvailable = false;
   OperationResult _terminalResult{};

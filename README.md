@@ -64,9 +64,10 @@ For PlatformIO, add the library to `lib_deps`, or copy `include/ADS1115/` and
 `src/` into the project. For ESP-IDF, use this repository as a component or the
 native project under `examples/esp_idf/basic`.
 
-The repository's reproducible build inputs are PlatformIO Core `6.1.19`, the
+The repository pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, the
 exact pioarduino espressif32 `54.03.20` release archive, and ESP-IDF `v5.3.5`
-for the native IDF CI build.
+for the native IDF CI build. CI action revisions, runner images, and the host
+compiler still vary over time; host builds are not claimed bit-reproducible.
 
 ## Owner-Safe Quick Start
 
@@ -119,13 +120,16 @@ request.gain = ADS1115::Gain::FSR_1_024V;
 
 const uint32_t nowMs = appNowMs();
 const uint32_t durationMs =
-    ADS1115::operationDeadlineMs(1, profile.dataRate, 20);
+    ADS1115::operationDeadlineMs(1, profile.dataRate,
+                                 3 * transport.transferTimeoutMs + 5);
 st = adc.startRead(request, nowMs, nowMs + durationMs, token);
 ```
 
 `operationDeadlineMs()` returns a duration, not an absolute timestamp. It uses
 the datasheet's -10% data-rate tolerance plus a one-millisecond conversion
-guard and the caller's scheduling margin.
+guard and the caller's scheduling margin. For a read, that margin must cover
+the three possible callback runtimes plus owner scheduling jitter; the helper
+cannot infer application transport timing from a `DataRate` alone.
 
 ## Profiles And Configuration Trust
 
@@ -174,9 +178,16 @@ Conversion-time wait polls consume zero callbacks.
 | Single-shot read | start CONFIG write, masked CONFIG verification, conversion read | 3 |
 | Shutdown | single-shot CONFIG write and readback | 2 |
 
-The callback timeout is `min(transferTimeoutMs, deadline - nowMs)`. The owner
-must pass `nowMs` from the same monotonic time domain used at start. Deadlines
-must be in the future by at most `INT32_MAX` milliseconds.
+Callback timeout caps are partitioned across the requested poll budget so their
+sum cannot exceed `deadline - nowMs` as sampled at the poll boundary. Every cap
+is also limited by `transferTimeoutMs`. The owner must pass `nowMs` from the same
+monotonic time domain used at start. Deadlines must be in the future by at most
+`INT32_MAX` milliseconds.
+
+When a poll budget allows multiple callbacks, `nowMs` is sampled only at the
+poll boundary and the remaining timeout is divided conservatively between the
+callbacks. Use a budget of one when the system requires one-transfer scheduling
+or wants to make unused callback time available to a later scheduler cycle.
 
 When `PollResult::done` becomes true, call `takeResult()` with the matching
 token. A wrong token returns `TOKEN_MISMATCH` without consuming the result.
@@ -249,6 +260,9 @@ use the compatibility clock hook when available.
 Health is passive. `OFFLINE` never blocks a callback selected by the external
 owner and never starts retries or bus recovery. The application remains the only
 owner of admission, retry, backoff, reset, and recovery policy.
+Tracked callbacks executed by owner operations timestamp health with that
+operation's current `poll(nowMs, ...)` value; legacy direct calls use the
+optional `Config::nowMs` hook.
 
 Multi-register writes can partially reach hardware. The driver preserves the
 original transport/readback error through `hardwareConfigDirtyError()` and the
@@ -306,6 +320,9 @@ typed/scaled acquisition resumes.
    return a meaningful `Status`.
 5. `unbind()` and `end()` are always bus-silent; shutdown is an explicit fallible
    operation.
+   Cancel and finish wait-idle reconciliation before unbinding an active
+   conversion; otherwise the caller must enforce the same worst-case quiet
+   interval before reusing that physical device.
 6. PGA full-scale selection does not change ADS1115 absolute input limits.
    Keep analog pins within the powered-device datasheet limits.
 7. The ADDR pin is continuously sampled. Board strap choice and I2C/ALERT pull-up
