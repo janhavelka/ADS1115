@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Kept explicitly staged diagnostic jobs under `job poll` ownership in both
   Arduino and ESP-IDF loops so zero and bounded callback budgets remain
   observable instead of being consumed by background service.
+- Gave operator-polled diagnostic jobs their own finite deadline through the
+  owner API so serial command round trips cannot consume scheduler-sized job
+  deadlines before an explicit completion poll.
 - Hardened the HIL gate so exhaustive runs include full and targeted boundary
   coverage, all current error statuses are rejected, self-test skips fail the
   contract, any soak command failure fails the soak, and a failed prerequisite

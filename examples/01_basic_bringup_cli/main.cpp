@@ -31,6 +31,7 @@ uint8_t activeI2cAddress = DEFAULT_ADS1115_ADDRESS;
 uint8_t requestedI2cAddress = DEFAULT_ADS1115_ADDRESS;
 ADS1115::Status lastAddressSelectionStatus = ADS1115::Status::Ok();
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
+static constexpr uint32_t DIAGNOSTIC_JOB_TIMEOUT_MS = 5000U;
 
 // ============================================================================
 // Helper Functions
@@ -904,14 +905,35 @@ void printAndAcknowledgePollResult(const ADS1115::PollResult& result) {
   }
 }
 
+ADS1115::Status startDiagnosticSingleShotJob() {
+  ADS1115::ChannelRequest request;
+  request.mux = device.getMux();
+  request.gain = device.getGain();
+  const uint32_t now = millis();
+  ADS1115::OperationToken token;
+  return device.startRead(request, now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token);
+}
+
+ADS1115::Status startDiagnosticApplyJob() {
+  ADS1115::AppliedProfileSnapshot applied;
+  ADS1115::Status st = device.getAppliedProfile(applied);
+  if (!st.ok()) {
+    return st;
+  }
+  const uint32_t now = millis();
+  ADS1115::OperationToken token;
+  return device.startApplyProfile(
+      applied.profile, now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token);
+}
+
 void handleJobCommand(const String& cmd) {
   if (cmd == "job") {
     printJobStatus();
   } else if (cmd == "job single") {
-    printStatus(device.startSingleShot());
+    printStatus(startDiagnosticSingleShotJob());
     printJobStatus();
   } else if (cmd == "job apply") {
-    printStatus(device.startApplyConfigJob());
+    printStatus(startDiagnosticApplyJob());
     printJobStatus();
   } else if (cmd == "job cancel") {
     const ADS1115::OperationToken token = device.activeOperationToken();

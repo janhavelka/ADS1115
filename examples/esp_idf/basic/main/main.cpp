@@ -32,6 +32,7 @@ static constexpr uint8_t DEFAULT_ADS1115_ADDRESS = 0x48U;
 static constexpr int ALERT_RDY_PIN = -1;
 static constexpr size_t MAX_LINE_LEN = 128U;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
+static constexpr uint32_t DIAGNOSTIC_JOB_TIMEOUT_MS = 5000U;
 
 static constexpr const char* COLOR_RESET = "\033[0m";
 static constexpr const char* COLOR_RED = "\033[31m";
@@ -778,15 +779,36 @@ void printAndAcknowledgePollResult(const ADS1115::PollResult& result) {
   }
 }
 
+ADS1115::Status startDiagnosticSingleShotJob() {
+  ADS1115::ChannelRequest request;
+  request.mux = device.getMux();
+  request.gain = device.getGain();
+  const uint32_t now = nowMs();
+  ADS1115::OperationToken token;
+  return device.startRead(request, now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token);
+}
+
+ADS1115::Status startDiagnosticApplyJob() {
+  ADS1115::AppliedProfileSnapshot applied;
+  ADS1115::Status st = device.getAppliedProfile(applied);
+  if (!st.ok()) {
+    return st;
+  }
+  const uint32_t now = nowMs();
+  ADS1115::OperationToken token;
+  return device.startApplyProfile(
+      applied.profile, now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token);
+}
+
 void handleJobCommand(const char* cmd) {
   const char* arg = nullptr;
   if (std::strcmp(cmd, "job") == 0) {
     printJobStatus();
   } else if (std::strcmp(cmd, "job single") == 0) {
-    printStatus(device.startSingleShot());
+    printStatus(startDiagnosticSingleShotJob());
     printJobStatus();
   } else if (std::strcmp(cmd, "job apply") == 0) {
-    printStatus(device.startApplyConfigJob());
+    printStatus(startDiagnosticApplyJob());
     printJobStatus();
   } else if (std::strcmp(cmd, "job cancel") == 0) {
     const ADS1115::OperationToken token = device.activeOperationToken();

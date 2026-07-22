@@ -81,6 +81,9 @@ REQUIRED_IDF_TOKENS = [
     "hardwareConfigDirtyAddress",
     "device.service(nowMs())",
     "device.isInitialized() && !device.jobActive()",
+    "DIAGNOSTIC_JOB_TIMEOUT_MS",
+    "startDiagnosticSingleShotJob",
+    "startDiagnosticApplyJob",
 ]
 REQUIRED_CORE_DIRTY_ADDRESS_TOKENS = [
     "out.hardwareConfigDirtyAddress = _hardwareConfigDirtyAddress",

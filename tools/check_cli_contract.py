@@ -103,6 +103,9 @@ def main() -> int:
         "printAndAcknowledgePollResult",
         "device.takeResult(result.token",
         "device.isInitialized() && !device.jobActive()",
+        "DIAGNOSTIC_JOB_TIMEOUT_MS",
+        "startDiagnosticSingleShotJob",
+        "startDiagnosticApplyJob",
     ):
         if token not in text:
             fail(f"bringup CLI must include token: {token!r}")
