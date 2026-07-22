@@ -1,6 +1,6 @@
 # Open Release And Integration Items
 
-Last reviewed: 2026-07-22 against ADS1115 v2.0.0 (`785515a`)
+Last reviewed: 2026-07-22 against ADS1115 v2.0.0 (`dd25d61`)
 
 This is the single index of unfinished repository-level work. Completed
 hardening reports are under [`archive/`](archive/), and dated hardware evidence
@@ -12,8 +12,13 @@ integration, not a known core-driver implementation defect.
 
 ## Physical Release Evidence
 
-- [ ] Capture clean, dated v2.0 HIL tied to an immutable commit and exact
-  fixture identity. Existing COM19/COM8 runs predate v2.0.
+A clean, dated v2.0 ESP32-S2 diagnostic run is recorded in
+[`evidence/hil/2026-07-22_COM6/README.md`](evidence/hil/2026-07-22_COM6/README.md).
+Only the following unfinished physical and final-product evidence remains:
+
+- [ ] Copy the ignored 2026-07-22 raw captures and flashed firmware into an
+  immutable external archive, preserving the paths, sizes, and SHA-256 hashes
+  recorded by the evidence summary.
 - [ ] Validate final-board address straps, supply, pull-ups, bus speed, analog
   source impedance, protection, input limits, accuracy, saturation,
   disconnection, and calibration for every supported production profile.

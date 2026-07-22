@@ -9,10 +9,11 @@ limitations.
 | --- | --- | --- | --- |
 | [`2026-06-02_COM19/README.md`](2026-06-02_COM19/README.md) | 1.0.0, clean short commit `9551bee` | Limited address selection/restore, safe selftest, and short stress on one ESP32-S2-class COM19 setup | Historical only; predates 2.0 |
 | [`2026-06-25_COM8/README.md`](2026-06-25_COM8/README.md) | 1.1.0, dirty short commit `8476da2` | Broad CLI runs and 8-hour/20-hour digital soaks on one ESP32-S2 COM8 setup | Historical diagnostic evidence only; dirty firmware and predates 2.0 |
+| [`2026-07-22_COM6/README.md`](2026-07-22_COM6/README.md) | 2.0.0, clean commit `dd25d61` | Two-device exhaustive ESP32-S2 coverage, absent-address checks, 87,956-command one-hour soak, and post-soak smoke with zero digital failures | Current diagnostic baseline; physical and product evidence remains open |
 
 ## Current Gap
 
-There is no repository record of a physical 2.0 HIL run. Parser tests and
-dry-runs validate the host runner only. Current electrical, analog, fault,
-native ESP-IDF, ESP32-S2/ESP32-S3, and final-board acceptance gates remain in
+A clean ESP32-S2 Arduino diagnostic HIL baseline now exists for v2.0. Current
+electrical, calibrated analog, injected-fault, native ESP-IDF, ESP32-S3,
+shared-bus product workload, and final-board acceptance gates remain in
 `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`.

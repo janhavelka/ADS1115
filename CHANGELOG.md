@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Recorded clean two-device ESP32-S2 exhaustive HIL at `dd25d61`, including a
+  3,600-second, 87,956-command soak with zero digital-contract failures; the
+  summary keeps unproven analog, electrical, injected-fault, and final-product
+  behavior explicit.
 - Consolidated unfinished release and integration work in `docs/OPEN_ITEMS.md`
   and moved completed release/audit material out of the active documentation.
 - Replaced long HIL transcripts and prompt-era reports with concise historical
