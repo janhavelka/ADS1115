@@ -19,11 +19,11 @@ evidence and historical implementation reports.
 | --- | --- |
 | [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for the still-open v2.0 physical evidence gates. |
 | [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md) | Compact dated-results template. |
-| [`evidence/hil/`](evidence/hil/) | Index of dated fixture evidence, limitations, and retained artifact hashes, including the current v2 ESP32-S2 baseline. |
+| [`evidence/hil/`](evidence/hil/) | Index of compact dated fixture outcomes and limitations, including the current v2 ESP32-S2 baseline. |
 
-Long serial transcripts are not review documents. Keep concise outcomes,
-failures, fixture identity, commands, and hashes; retain a raw artifact only
-when it adds reproducible evidence that the summary cannot preserve.
+Do not retain full serial transcripts or detailed generated runner summaries.
+After verifying the dated fixture identity, concise outcomes, failures, and
+limitations, delete the raw HIL output.
 
 ## API Reference
 

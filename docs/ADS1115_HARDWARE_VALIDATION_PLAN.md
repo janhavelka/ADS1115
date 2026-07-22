@@ -14,24 +14,24 @@ firmware commit, hardware, wiring, instruments, command, observed result, and
 evidence location. ADS1115 has no identity register, so a successful probe and
 configuration readback prove only reachability and plausibility.
 
-Keep lengthy serial, scope, logic-analyzer, photo, and build artifacts in an
-immutable evidence archive rather than committing full transcripts. The
-repository record must retain each artifact's location, SHA-256, byte size,
-capture time, and a concise result or failure summary.
+Do not retain full serial transcripts, detailed runner summaries, or firmware
+dumps after extracting the result. The repository record is the compact dated
+summary: exact identity and command, result counts, failures, limitations, and
+only the small external instrument references needed for physical claims.
 
 ## Unfinished Gates
 
 | Gate | Required coverage | Evidence needed |
 | --- | --- | --- |
-| Tagged release identity | Firmware built from the tagged 2.0 commit, matching `version` output and build timestamp; COM6 tested clean post-tag `dd25d61`, not tag `v2.0.0` | Build record, startup identity, manifest |
-| Remaining Arduino physical HIL | ESP32-S3 targeted/full plans; final-board ESP32-S2 rerun when applicable; populated and expected-absent addresses | Runner summaries plus hashed transcripts |
+| Tagged release identity | Firmware built from the tagged 2.0 commit, matching `version` output and build timestamp; COM6 tested clean post-tag `dd25d61`, not tag `v2.0.0` | Compact build and startup identity summary |
+| Remaining Arduino physical HIL | ESP32-S3 targeted/full plans; final-board ESP32-S2 rerun when applicable; populated and expected-absent addresses | Compact dated result table |
 | Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
 | Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
 | Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |
 | Comparator electrical | Traditional/window, polarity, latch, and queue depth | Applied stimulus, thresholds, output levels, captures |
 | Physical faults and recovery | Missing device, unplug/replug, stuck SDA/SCL, ADS1115 brownout/reset, raw-write dirty state, partial/ambiguous transfer | Exact status/detail/message, dirty/trust state, recovery result |
-| Shared-bus workload | External serialization, contention, bounded callback latency, cancellation/reconciliation, production task cadence | Target integration log and timing/fault summary |
-| Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Build/flash/monitor summaries and manifests |
+| Shared-bus workload | External serialization, contention, bounded callback latency, cancellation/reconciliation, production task cadence | Compact integration timing/fault result |
+| Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Compact build/flash/monitor outcomes |
 | Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run; the COM6 diagnostic one-hour soak is only a baseline | Duration, cycles/commands, latency, failures, resets, environment |
 | Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
 
@@ -75,8 +75,9 @@ python tools/run_i2c_hil.py --parser-test
 python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
 ```
 
-Then capture each board/setup to an external evidence directory. Adjust address
-arguments to the physical setup and list known-absent addresses explicitly.
+Use a temporary output directory for each board/setup. Adjust address arguments
+to the physical setup, list known-absent addresses explicitly, extract the
+compact result, then delete the generated transcript and detailed summary.
 
 ```text
 python tools/run_i2c_hil.py --port <PORT> --address 0x48 --address 0x49 --absent-address 0x4A --absent-address 0x4B --suite targeted --stop-on-fail --out <EVIDENCE_DIR>
@@ -138,12 +139,13 @@ idf.py -C examples/esp_idf/basic -p <PORT> flash monitor
 ```
 
 Record the IDF version, board, wiring, bus-owner policy, exact error mapping,
-and hashed build/monitor artifacts. CI builds and Arduino runs do not substitute
-for these physical native-IDF runs.
+and compact build/flash/monitor outcomes. Retain only small physical references
+needed to support electrical claims. CI builds and Arduino runs do not
+substitute for these physical native-IDF runs.
 
 ## Closeout
 
 A release-facing summary should contain only the identity, concise result
-matrix, failures, remaining gaps, and evidence manifest. Remove resolved items
+matrix, failures, remaining gaps, and necessary physical references. Remove resolved items
 from the active follow-up list; preserve their dated outcome in the results
 matrix. Never claim unrun hardware coverage.

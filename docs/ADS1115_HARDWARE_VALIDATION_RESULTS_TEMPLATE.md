@@ -1,8 +1,8 @@
 # ADS1115 Hardware Validation Results Template
 
-Copy this file for each dated physical run. Keep this repository record
-concise; store lengthy raw artifacts externally and identify them in the
-manifest. Status values are `Pending`, `Pass`, `Fail`, `Blocked`, and
+Copy this file for each dated physical run. Keep only this concise record;
+delete full serial/build transcripts and detailed runner output after the
+result is extracted. Status values are `Pending`, `Pass`, `Fail`, `Blocked`, and
 `Not applicable`. The `Pending` rows below are copy-time placeholders, not the
 repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_ITEMS.md).
 
@@ -17,7 +17,7 @@ repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_
 | Firmware build timestamp | |
 | Host OS and tool versions | |
 | Exact build/flash/HIL commands | |
-| Evidence archive location | |
+| Compact results file / physical-reference location | |
 
 ## Hardware and Integration Setup
 
@@ -35,25 +35,22 @@ repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_
 | Bus owner, locking, timeout, recovery policy | |
 | Task cadence/workload | |
 
-## Evidence Manifest
+## Compact Evidence References
 
-Every external artifact needs a stable location and integrity metadata. Do not
-paste full serial or build transcripts into this report.
+Do not attach or retain full serial/build transcripts. Link only the small
+physical references necessary for claims that cannot be represented by the
+result matrix.
 
-| Artifact | Location | Captured at | Bytes | SHA-256 | Retention |
-| --- | --- | --- | ---: | --- | --- |
-| Firmware/build record | | | | | |
-| CLI transcript and generated summary | | | | | |
-| ESP-IDF build/monitor record | | | | | |
-| Analog measurements | | | | | |
-| I2C / ALERT-RDY captures | | | | | |
-| Wiring photos/diagram | | | | | |
-| Fault and soak records | | | | | |
+| Evidence | Reference | Concise result |
+| --- | --- | --- |
+| Firmware/runtime identity | | |
+| Analog instrument readings | | |
+| I2C / ALERT-RDY capture | | |
+| Wiring/photo/diagram | | |
 
 ## Results
 
-List one row per tested setup/family and put detailed values in the referenced
-artifact. Split a family into separate rows when results differ.
+List one row per tested setup/family. Split a family when results differ.
 
 | Area | Required case | Status | Concise observed result | Evidence ID |
 | --- | --- | --- | --- | --- |

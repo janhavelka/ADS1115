@@ -674,9 +674,9 @@ Prompt 07 implementation on `hardening/ads1115-industry-standard-p0`:
   ESP32-S2/S3 builds, ESP-IDF S2/S3 container builds, and package validation.
 - Added `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` and
   `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` for HIL execution.
-- Added `tools/hil_ads1115_capture.py`, an optional serial transcript helper
-  with dry-run command listing and timestamped log capture; it does not declare
-  pass/fail.
+- Added `tools/hil_ads1115_capture.py`, an optional serial capture helper with a
+  dry-run command listing; it does not declare pass/fail. Generated output is
+  temporary and is not retained as release evidence.
 
 Prompt 07 validation on `hardening/ads1115-industry-standard-p0`:
 
@@ -759,19 +759,14 @@ Final release-readiness conclusions are recorded in
 
 ## Post-Prompt 08 HIL/CLI Address Handling Fix
 
-After uploading the diagnostic CLI to `COM19`, two automated transcripts were
-captured under ignored `hil_logs/`:
-
-- `ads1115_hil_20260602_125817.log`
-- `ads1115_hil_20260602_130040.log`
-
-The first full-suite transcript is not valid full hardware validation evidence:
+After uploading the diagnostic CLI to `COM19`, two automated runs were attempted.
+The first full-suite run is not valid full hardware validation evidence:
 the helper selected absent `0x4A`/`0x4B` addresses and then continued functional
 tests while the CLI-requested address was not initialized. It remains useful
 only as partial address-probe evidence for `0x48`/`0x49` positive checks and
 `0x4A`/`0x4B` negative checks.
 
-The focused `0x48` transcript captured useful positive evidence: firmware
+The focused `0x48` run captured useful positive evidence: firmware
 identity at commit `cacff70`, READY state, clean hardware/cache state,
 single-ended and differential readings, mode commands, and short stress runs
 with `20/20` and `50/50` successful samples.
@@ -790,7 +785,7 @@ Focused fix scope:
 - `selftest` is treated as a READY-gated command; if it follows an unavailable
   requested address, the helper restores `0x48` instead of running selftest
   against an uninitialized/requested address.
-- Address transcript notes explicitly classify initialized addresses as
+- Address result notes explicitly classify initialized addresses as
   `present/pass` and absent `0x4A`/`0x4B` checks as
   `absent/pass-as-negative-test`.
 - The HIL helper now waits for the CLI prompt before sending the next command
@@ -816,10 +811,8 @@ Validation after the fix:
   classification failed before any serial command was sent with the same
   `COM19` pySerial `PermissionError`.
 - After reuploading firmware and fixing the helper prompt wait, the corrected
-  HIL sequence completed successfully and saved
-  `hil_logs/ads1115_hil_20260602_205201.log`.
-- The raw transcript was copied into tracked release evidence at
-  `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`.
+  HIL sequence completed successfully. Only its compact result is retained at
+  `docs/evidence/hil/2026-06-02_COM19/README.md`.
 - The successful HIL run recorded host helper commit
   `e32822341e251a821febe4710a6879f1aff08312` and firmware/library commit
   `9551bee` clean.

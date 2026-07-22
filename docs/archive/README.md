@@ -8,7 +8,7 @@ describe their dated revision; they are not active work items.
 
 Paths quoted inside an archived report may identify artifacts that were later
 removed or condensed. Use [`../evidence/hil/README.md`](../evidence/hil/README.md)
-for the retained HIL summaries and hashes.
+for the retained compact HIL outcomes and limitations.
 
 ## Subdirectories
 

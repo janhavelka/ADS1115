@@ -726,7 +726,7 @@ The retained hardware summary says:
 
 - COM19 limited run used clean older v1.0.0 firmware.
 - COM8 targeted, 8-hour, and about 20-hour evidence used dirty v1.1-era firmware.
-- Long raw COM8 transcripts were removed; only summary metrics and hashes remain.
+- Long raw COM8 output was removed; only compact summary metrics remain.
 - No clean v1.2 hardware run exists.
 - Analog accuracy, comparator electrical behavior, physical fault recovery, and pure ESP-IDF HIL remain incomplete.
 
@@ -1069,7 +1069,7 @@ The repository contains useful but limited hardware evidence.
 - ESP32-S2 class board
 - ADS-range devices at `0x48` and `0x49`
 - address selection, absent-address negative cases, restore behavior, self-test, and short stress passed
-- tracked raw transcript exists for this limited run
+- only a compact dated result remains for this limited run
 
 Missing fixture facts include exact module/revision, VDD, I2C rate, pull-ups, instruments, and wiring photos.
 
@@ -1078,7 +1078,7 @@ Missing fixture facts include exact module/revision, VDD, I2C rate, pull-ups, in
 - targeted, broad, 8-hour, and about 20-hour runs reported zero classified command failures in the retained summaries
 - firmware was dirty v1.1-era code, not clean v1.2.0
 - the about 20-hour run processed roughly 1.79 million commands
-- long raw transcripts were removed after hashes and summaries were recorded
+- long raw output was removed after the compact summary was recorded
 - evidence rows remained marked `EVIDENCE_REQUIRED`
 
 This is strong evidence for digital API/CLI stability on those fixtures. It does not prove final analog correctness or product integration.

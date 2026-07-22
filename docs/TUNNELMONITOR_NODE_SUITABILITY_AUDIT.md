@@ -95,4 +95,4 @@ measurement validation.
 Use [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md)
 for the physical evidence format. Keep raw console transcripts out of this
 document; store only the compact result, fixture identity, failures, artifact
-hashes, and links required to reproduce or inspect the run.
+limitations, and reproduction command needed to interpret the run.

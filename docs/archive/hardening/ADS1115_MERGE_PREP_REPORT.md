@@ -77,11 +77,7 @@ is pushed and CI completes.
 
 ## Corrected HIL Evidence
 
-Tracked raw transcript:
-
-- `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`
-
-Results report:
+Retained compact result:
 
 - `docs/evidence/hil/2026-06-02_COM19/README.md`
 

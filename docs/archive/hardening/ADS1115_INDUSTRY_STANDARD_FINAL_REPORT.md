@@ -205,7 +205,7 @@ Validation:
 | `Remove-Item -LiteralPath .\ADS1115-1.0.0.tar.gz` | Exit 0; `removed ADS1115-1.0.0.tar.gz` |
 | `idf.py --version` | Exit 1; `idf.py : The term 'idf.py' is not recognized as the name of a cmdlet, function, script file, or operable program.` Local pure ESP-IDF builds were not run. |
 | Earlier corrected COM19 HIL attempt through `tools/hil_ads1115_capture.py` | Exit 1 before serial commands; pySerial could not configure `COM19`: `PermissionError(13, 'A device attached to the system is not functioning.', None, 31)` |
-| Corrected COM19 HIL sequence after prompt-wait helper fix | Exit 0; saved tracked copy `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`; `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test; `selftest` reported `pass=29 fail=0`; `stress 500` and `stress 1000` reported zero errors; `stress_mix 200` reported `ok=200 fail=0`; final driver state `READY`, online `yes`, total failures `0`, last error `never` |
+| Corrected COM19 HIL sequence after prompt-wait helper fix | Exit 0; compact result retained in `docs/evidence/hil/2026-06-02_COM19/README.md`; `0x48` and `0x49` present/pass; `0x4A` and `0x4B` absent/pass-as-negative-test; `selftest` reported `pass=29 fail=0`; `stress 500` and `stress 1000` reported zero errors; `stress_mix 200` reported `ok=200 fail=0`; final driver state `READY`, online `yes`, total failures `0`, last error `never` |
 
 ## CI Coverage
 
@@ -234,33 +234,26 @@ contents against an allow/deny export policy.
 
 ## Hardware Validation Status
 
-Hardware validation is still incomplete. An initial automated serial capture was
-run on 2026-06-02 after uploading the Arduino diagnostic CLI to `COM19`, but the
-first full-suite transcript is invalid as full validation because the helper
+Hardware validation is still incomplete. An initial automated run on 2026-06-02
 selected absent addresses `0x4A`/`0x4B` and then continued functional tests while
-the driver was `UNINIT` at the requested address. That transcript may only be
-used as partial address-probe evidence.
+the driver was `UNINIT`, so only its address-probe outcome was usable.
 
-A second focused transcript restored `0x48` and captured useful positive
+A second focused run restored `0x48` and captured useful positive
 evidence: firmware identity, `0x48` READY state, clean cache state, single-ended
 and differential read output, continuous/single-shot command paths, and short
 stress runs with `20/20` and `50/50` successful samples. Do not claim
-mux/gain/rate/stress/comparator validation from the invalid full-suite log.
+mux/gain/rate/stress/comparator validation from the invalid full-suite run.
 
 The HIL helper and CLI were later fixed to restore a known-good address after
 absent-address checks and to require READY state before functional command
-groups, including `selftest`. Address transcript annotations now separate
+groups, including `selftest`. Address result annotations now separate
 `present/pass` from `absent/pass-as-negative-test`. A follow-up helper fix made
 serial command reads wait for the CLI prompt before sending the next command, so
 long stress commands cannot overlap.
 
-A corrected automated transcript was captured on 2026-06-02:
+A corrected automated run completed on 2026-06-02. Its retained compact record is
+`docs/evidence/hil/2026-06-02_COM19/README.md`:
 
-- Raw local transcript: `hil_logs/ads1115_hil_20260602_205201.log`
-- Tracked transcript copy:
-  `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`
-- Results report:
-  `docs/evidence/hil/2026-06-02_COM19/README.md`
 - `0x48` and `0x49` were initialized and classified as `present/pass`.
 - `0x4A` and `0x4B` were classified as `absent/pass-as-negative-test`.
 - Failed address selection preserved the initialized driver and did not destroy
@@ -280,9 +273,9 @@ or another bus condition. The HIL helper classified those addresses as
 restore checks; this is not a general claim of precise Arduino read-phase NACK
 taxonomy.
 
-No oscilloscope captures, logic-analyzer traces, long soak logs, external
-comparator validation records, ALERT/RDY captures, or fault-injection
-transcripts are present.
+No oscilloscope captures, logic-analyzer traces, long-soak results, external
+comparator validation records, ALERT/RDY captures, or fault-injection results
+are present.
 
 Prepared artifacts:
 
@@ -310,7 +303,7 @@ Must fix before merge:
 
 Must validate before release:
 
-- Complete the HIL validation plan and attach/archive dated raw logs/captures.
+- Complete the HIL validation plan and retain compact dated results/captures.
 - Capture ALERT/RDY timing evidence at 8, 128, and 860 SPS.
 - Validate comparator traditional/window, latch, polarity, and queue behavior.
 - Validate stuck bus, unplug/replug, brownout/reset, recover, and partial write
@@ -325,19 +318,19 @@ Future industry-grade evidence:
 - Package archive contents allow/deny guard.
 - Behavioral integration tests for CLI and ESP-IDF examples beyond token guards.
 - Multiple module/board/pull-up/bus-speed validation matrix runs.
-- Environmental and long-soak logs across realistic operating conditions.
+- Environmental and long-soak results across realistic operating conditions.
 
 Nice-to-have:
 
 - Broaden package validation to inspect `library.json` export behavior.
-- Add automated parsing for selected HIL transcripts while keeping raw logs.
+- Add automated extraction of compact HIL results from temporary runner output.
 - Add a README pointer that this Prompt 08 final report supersedes older
   historical hardening reports.
 
 ## Release Wording Recommendation
 
 Acceptable wording if the final rebased branch passes checks but HIL remains
-limited to the current COM19 transcript:
+limited to the current COM19 result:
 
 > Production-oriented ADS1115 driver with framework-neutral core, injected I2C
 > transport, explicit timing/error contracts, strong native fault tests, Arduino

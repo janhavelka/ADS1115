@@ -1,9 +1,8 @@
 # HIL Evidence Index
 
-Only compact evidence summaries are kept in the repository. Long serial and
-instrument transcripts belong in an immutable external archive; summaries must
-record their hashes, sizes, dates, hardware identity, commands, outcomes, and
-limitations.
+Only compact dated outcomes are retained. Raw serial logs, detailed runner
+summaries, firmware dumps, and transcript hashes are deliberately discarded
+after the result table and limitations are verified.
 
 | Evidence | Firmware | What it establishes | Current use |
 | --- | --- | --- | --- |

@@ -41,14 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Consolidated unfinished release and integration work in `docs/OPEN_ITEMS.md`
   and moved completed release/audit material out of the active documentation.
 - Replaced long HIL transcripts and prompt-era reports with concise historical
-  summaries that preserve identities, commands, outcomes, limitations, and
-  artifact hashes.
+  result tables that preserve identities, outcomes, and limitations.
 - Removed the redundant generated datasheet text extraction and aligned
   contributor, security, Doxygen, and engineering-contract documentation with
   the 2.0 owner-safe lifecycle.
 
 ### Removed
 
+- Deleted all ignored HIL transcripts, detailed runner summaries, and firmware
+  readbacks; dated fixture evidence is now retained only as compact result
+  tables with limitations.
 - Removed the legacy unclassified HIL capture helper; the classified runner is
   now the single supported serial validation path.
 
@@ -190,8 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native coverage for invalid config boundaries, tracked I2C status taxonomy, strict read-back recover branches, signed threshold/scaling boundaries, setter rollback variants, and dirty-state preservation.
 - Version metadata checks now verify `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h` agree.
 - Limited COM19 HIL evidence for address handling, restore sequencing,
-  initialized-address selftests, and short stress runs. The raw transcript is
-  tracked under `docs/evidence/hil/2026-06-02_COM19/`.
+  initialized-address selftests, and short stress runs. Only the compact dated
+  outcome remains under `docs/evidence/hil/2026-06-02_COM19/`.
 
 ### Changed
 - Driver core timing/yield ownership moved fully behind application callbacks;

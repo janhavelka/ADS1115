@@ -20,9 +20,6 @@ Only the following unfinished physical and final-product evidence remains:
 - [ ] Validate the intended tagged release artifact with matching clean runtime
   identity. The COM6 baseline used clean post-tag commit `dd25d61`, not the
   `v2.0.0` tag at `785515a`.
-- [ ] Copy the ignored 2026-07-22 raw captures and flashed firmware into an
-  immutable external archive, preserving the paths, sizes, and SHA-256 hashes
-  recorded by the evidence summary.
 - [ ] Validate final-board address straps, supply, pull-ups, bus speed, analog
   source impedance, protection, input limits, accuracy, saturation,
   disconnection, and calibration for every supported production profile.
@@ -40,7 +37,7 @@ Only the following unfinished physical and final-product evidence remains:
 The execution procedure and evidence fields live in
 [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) and
 the results template. Do not paste long serial transcripts into review-facing
-documents; retain compact outcomes and hashes for any archived raw artifacts.
+documents or retain them in the workspace; keep only compact dated outcomes.
 
 ## TunnelMonitor-node
 
