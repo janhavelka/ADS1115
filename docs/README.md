@@ -1,7 +1,7 @@
 # ADS1115 Documentation
 
-Use this page to distinguish current contracts and unfinished work from dated
-evidence and historical implementation reports.
+Use this page to find current contracts, unfinished work, compact dated
+evidence, and preserved technical reference material.
 
 ## Current
 
@@ -10,7 +10,6 @@ evidence and historical implementation reports.
 | [`../README.md`](../README.md) | User guide, owner-safe API contract, examples, and reproducible checks. |
 | [`OPEN_ITEMS.md`](OPEN_ITEMS.md) | Single index of unfinished release evidence, CI maintenance, and product integration work. |
 | [`IDF_PORT.md`](IDF_PORT.md) | ESP-IDF adapter ownership, timeout, and error-mapping contract. |
-| [`TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`](TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md) | Unfinished TunnelMonitor product, adapter, capacity, and final-board gates only. |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Release history and migration notes. |
 
 ## Hardware Validation
@@ -35,13 +34,8 @@ the current Markdown pages listed above.
 
 ## Reference Material
 
-[`reference/`](reference/) contains the TI ADS111x Rev. E datasheet, compact
-derived notes, and an upstream TI reference-driver snapshot. It supports
-contract review but is not release evidence.
-
-## Archive
-
-[`archive/`](archive/) contains completed release records, prompts, audits,
-merge reports, and hardening journals. Any checklist or "remaining" section
-there describes its dated revision and is not the active backlog. The live
-backlog is [`OPEN_ITEMS.md`](OPEN_ITEMS.md).
+[`reference/`](reference/) is deliberately retained for AI-assisted and human
+contract review. It contains the TI ADS111x Rev. E datasheet, the curated
+datasheet-derived Markdown transcripts in `extracted-md/`, and an upstream TI
+reference-driver snapshot. It is technical source material, not release
+evidence.

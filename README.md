@@ -411,27 +411,27 @@ behavior. See the compact
 The unfinished gates remain in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md);
 execution details belong in the hardware validation plan.
 
-## TunnelMonitor-node Re-audit Boundary
+## TunnelMonitor-node Integration Boundary
 
-The 2.0 owner API closes the library-side findings from the v1.2.0 audit. No
-TunnelMonitor firmware contract was changed. The live
-[`TunnelMonitor integration page`](docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md)
-now contains only the unfinished product, adapter, capacity, and final-board
-gates; the full dated audit is archived for traceability.
+The 2.0 owner API is ready for an adapter, but no TunnelMonitor firmware
+contract was changed. The unfinished product, board/profile, adapter, capacity,
+and final-board gates are consolidated in
+[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md). The recommended initial scope is a
+fixed compile-time profile, single-shot reads with OS-bit polling,
+comparator/ALERT-RDY disabled, and one I2C callback per owner-task poll.
 
 ## Documentation
 
 - `CHANGELOG.md` - release history and 2.0 migration notes
 - `docs/OPEN_ITEMS.md` - single index of unfinished release and integration work
-- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - unfinished TunnelMonitor
-  product and integration gates
 - `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
 - `docs/evidence/hil/README.md` - compact index of dated fixture evidence
+- `docs/reference/extracted-md/` - retained datasheet-derived transcripts for
+  quick human and AI-assisted contract review
 - `docs/README.md` - current documentation index
 - `Doxyfile` - warning-enforced generated public API reference
-- `docs/archive/` - completed release, audit, and hardening records
 
 ## License
 

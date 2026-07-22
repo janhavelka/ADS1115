@@ -39,18 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summary keeps unproven analog, electrical, injected-fault, and final-product
   behavior explicit.
 - Consolidated unfinished release and integration work in `docs/OPEN_ITEMS.md`
-  and moved completed release/audit material out of the active documentation.
-- Replaced long HIL transcripts and prompt-era reports with concise historical
-  result tables that preserve identities, outcomes, and limitations.
-- Removed the redundant generated datasheet text extraction and aligned
-  contributor, security, Doxygen, and engineering-contract documentation with
-  the 2.0 owner-safe lifecycle.
+  and removed completed audit, release, prompt, merge, and hardening reports.
+- Replaced long HIL transcripts with concise result tables that preserve
+  identities, outcomes, and limitations.
+- Preserved the curated datasheet-derived Markdown reference corpus for human
+  and AI-assisted contract review while removing only redundant generated
+  extraction output.
+- Aligned contributor, security, Doxygen, and engineering-contract
+  documentation with the 2.0 owner-safe lifecycle.
 
 ### Removed
 
 - Deleted all ignored HIL transcripts, detailed runner summaries, and firmware
   readbacks; dated fixture evidence is now retained only as compact result
   tables with limitations.
+- Deleted the historical `docs/archive/` report collection and the redundant
+  TunnelMonitor audit page after consolidating every unfinished gate into
+  `docs/OPEN_ITEMS.md`.
 - Removed the legacy unclassified HIL capture helper; the classified runner is
   now the single supported serial validation path.
 
@@ -219,7 +224,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/common/` is now Arduino example glue only; the IDF example owns its
   native stdio CLI, GPIO, timing, scan, and transport code.
 - Release-facing documentation now has an explicit `docs/README.md` index.
-  Historical audit and hardening reports were moved under `docs/archive/`.
+  Historical audit and hardening reports were separated from active guidance
+  at release and removed in the later documentation cleanup.
 - README validation wording now distinguishes limited COM19 HIL evidence from
   hardware validation that remains pending.
 

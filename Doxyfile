@@ -39,11 +39,10 @@ INPUT                  = README.md \
                          docs/IDF_PORT.md \
                          docs/ADS1115_HARDWARE_VALIDATION_PLAN.md \
                          docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md \
-                         docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md \
                          docs/evidence/hil/2026-07-22_COM6/README.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/archive/* */docs/reference/* */docs/_pdf_extracts/*
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/reference/*
 EXCLUDE_SYMBOLS        = ADS1115_VERSION_STRING ADS1115_BUILD_DATE \
                          ADS1115_BUILD_TIME ADS1115_BUILD_TIMESTAMP \
                          ADS1115_GIT_COMMIT ADS1115_GIT_STATUS \
