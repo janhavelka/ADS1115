@@ -39,9 +39,10 @@ Begin this work only after the product and board profile above is frozen.
   append-only enum changes where compatibility requires them.
 - [ ] Add the smallest adapter around the v2.0 owner-safe lifecycle. Keep the
   TunnelMonitor I2C task as the sole bus owner, bridge ADS callbacks only to the
-  planned one-transfer `transferOnce` seam, and allow one callback per normal
-  owner poll. Do not use the retrying/recovering `transferDevice()` path inside
-  one ADS callback because it hides ambiguous write effects.
+  planned one-transfer owner seam (for example, `transferOnce`), and allow one
+  callback per normal owner poll. Do not use the retrying/recovering
+  `transferDevice()` path inside one ADS callback because it hides ambiguous
+  write effects.
 - [ ] Establish address presence in a separate owner probe phase. Until the
   Tunnel transport distinguishes address and data NACK, map generic NACK from
   an ADS transfer conservatively to `I2C_NACK_DATA` or `I2C_ERROR`, never to a

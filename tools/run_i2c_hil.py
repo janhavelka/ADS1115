@@ -65,6 +65,7 @@ REBOOT_MARKERS = (
 
 STATUS_FAILURES = {
     "DEVICE_NOT_FOUND",
+    "CONVERSION_NOT_READY",
     "I2C_NACK_ADDR",
     "I2C_NACK_DATA",
     "I2C_TIMEOUT",
@@ -840,6 +841,7 @@ def parser_self_test() -> None:
         (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=0\n> ", RESULT_PASS),
         (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=1\n> ", RESULT_FAIL),
         (CommandSpec("T", "Status", "start", "", ("Status:",)), "Status: CONFIG_UNKNOWN (code=20, detail=0)\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Status", "poll", "", ("Status:",)), "Status: CONVERSION_NOT_READY (code=7, detail=0)\n> ", RESULT_FAIL),
         (CommandSpec("T", "Reset", "read", "", ("Raw:",), ("raw_sample",)), "=== ADS1115 Diagnostic Bring-up CLI ===\nReset reason: WDT\nRaw: 1\n> ", RESULT_FAIL),
         (CommandSpec("T", "Version", "version", "", ("ADS1115 library commit:",), ("firmware_clean_commit",)), f"ADS1115 library commit: {host_short_commit} (clean)\n> ", RESULT_PASS),
         (CommandSpec("T", "Version", "version", "", ("ADS1115 library commit:",), ("firmware_clean_commit",)), f"ADS1115 library commit: {host_short_commit} (dirty)\n> ", RESULT_FAIL),
@@ -1161,11 +1163,11 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
 
         soak_stats = None
         plan_failed = any(row.result == RESULT_FAIL for row in rows)
-        if args.soak and not (args.stop_on_fail and plan_failed):
+        if args.soak and not plan_failed:
             soak_stats = run_soak(ser, args, write_log)
             rows.extend(soak_stats_to_rows(soak_stats))
         elif args.soak:
-            write_log("# SOAK NOT RUN because the command plan failed under --stop-on-fail.\n")
+            write_log("# SOAK NOT RUN because the prerequisite command plan failed.\n")
             rows.append(
                 StepResult(
                     test_id="SOAK-SUMMARY",
@@ -1175,7 +1177,7 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
                     observed="not run",
                     elapsed_s=0.0,
                     result=RESULT_NOT_RUN,
-                    notes="command plan failed under --stop-on-fail",
+                    notes="prerequisite command plan failed",
                 )
             )
 
