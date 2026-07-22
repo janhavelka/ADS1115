@@ -9,7 +9,7 @@ namespace ADS1115 {
 /// @brief Error codes for all ADS1115 operations.
 enum class Err : uint8_t {
   OK = 0,                    ///< Operation successful
-  NOT_INITIALIZED,           ///< begin() not called
+  NOT_INITIALIZED,           ///< Required compatibility or owner initialization has not completed
   INVALID_CONFIG,            ///< Invalid configuration parameter
   I2C_ERROR,                 ///< I2C communication failure
   TIMEOUT,                   ///< Operation timed out
@@ -18,7 +18,7 @@ enum class Err : uint8_t {
   CONVERSION_NOT_READY,      ///< Conversion not yet complete
   MEASUREMENT_NOT_READY = CONVERSION_NOT_READY, ///< Alias for cross-library uniformity
   BUSY,                      ///< Device is busy with conversion
-  IN_PROGRESS,               ///< Operation scheduled; call tick() to complete
+  IN_PROGRESS,               ///< Operation accepted; complete it through the matching poll API
   I2C_NACK_ADDR,             ///< I2C address phase was not acknowledged
   I2C_NACK_DATA,             ///< I2C data phase was not acknowledged
   I2C_TIMEOUT,               ///< I2C transaction timed out

@@ -1,5 +1,9 @@
 # ADS1115 ESP-IDF Port Implementation
 
+> Historical implementation record. Use [`../../IDF_PORT.md`](../../IDF_PORT.md)
+> for the current integration contract and [`../../OPEN_ITEMS.md`](../../OPEN_ITEMS.md)
+> for unfinished work.
+
 Date: 2026-05-19
 
 ## Implemented

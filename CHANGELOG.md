@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidated unfinished release and integration work in `docs/OPEN_ITEMS.md`
+  and moved completed release/audit material out of the active documentation.
+- Replaced long HIL transcripts and prompt-era reports with concise historical
+  summaries that preserve identities, commands, outcomes, limitations, and
+  artifact hashes.
+- Removed the redundant generated datasheet text extraction and aligned
+  contributor, security, Doxygen, and engineering-contract documentation with
+  the 2.0 owner-safe lifecycle.
+
 ## [2.0.0] - 2026-07-19
 
 ### Added

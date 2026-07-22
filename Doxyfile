@@ -35,10 +35,11 @@ INPUT                  = README.md \
                          CHANGELOG.md \
                          include \
                          docs/README.md \
+                         docs/OPEN_ITEMS.md \
                          docs/IDF_PORT.md \
                          docs/ADS1115_HARDWARE_VALIDATION_PLAN.md \
                          docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md \
-                         docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md
+                         docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/archive/* */docs/evidence/* */docs/reference/* */docs/_pdf_extracts/*

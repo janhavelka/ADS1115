@@ -93,8 +93,12 @@ Rules:
 - Deterministic: no unbounded loops/waits; all timeouts via deadlines, never `delay()` in library code.
 - No unbounded waits, retries, loops, allocations, queues, or buffers in steady
   paths.
-- Non-blocking lifecycle: `Status begin(const Config&)`, `void tick(uint32_t nowMs)`, `void end()`.
-- Any I/O that can exceed ~1-2 ms must be split into state machine steps driven by `tick()`.
+- Production lifecycle: bus-silent `bind()` / `start*()`, owner-driven
+  `poll(uint32_t nowMs, uint8_t maxTransactions)`, exactly-once
+  `takeResult()`, and bus-silent `unbind()`.
+- Split multi-transfer work into bounded state-machine steps driven by the
+  serialized owner's `poll()` calls. Compatibility facades may be synchronous
+  only when their documented transfer count and timeout remain bounded.
 - No heap allocation in steady state (no `String`, `std::vector`, `new` in normal ops).
 - Avoid dynamic allocation in steady embedded paths unless it is already an
   accepted local pattern and the bound is clear.
@@ -140,8 +144,8 @@ Rules:
   behavior.
 - Do not add fake devices, simulated buses, or test doubles to production paths.
 - Example adapters that are diagnostic-only must say so. Production examples
-  must demonstrate shared-bus ownership, external serialization/locking, timeout
-  policy, and nonblocking tick scheduling.
+  must demonstrate shared-bus ownership, external serialization/locking,
+  timeout policy, and bounded owner `poll()` scheduling.
 - ESP-IDF adapters/examples own IDF bus handles and map `esp_err_t` to
   `Status`; the core must never expose or store IDF handles.
 
@@ -167,7 +171,8 @@ struct Status {
 ## ADS1115 Driver Requirements
 
 - I2C address configurable: 0x48 (ADDR->GND), 0x49 (ADDR->VDD), 0x4A (ADDR->SDA), 0x4B (ADDR->SCL).
-- Check device presence in `begin()` by reading config register.
+- Initialization must check reachability by reading the CONFIG register and
+  must verify the complete writable profile. ADS1115 has no identity register.
 - Support input multiplexer configurations:
   - 4 single-ended input selections (AIN0-AIN3 vs GND)
   - 4 differential MUX selections (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
@@ -185,20 +190,27 @@ struct Status {
 
 ---
 
-## Driver Architecture: Managed Synchronous Driver
+## Driver Architecture: Owner-Safe Managed Driver
 
-The driver follows a **managed synchronous** model with health tracking:
+The production path follows a fixed-memory, owner-polled model with health
+tracking. The compatibility path retains bounded synchronous facades:
 
-- All public I2C operations are **blocking** (no complex async - ADS1115 has no EEPROM/NVM writes).
-- `tick()` may be used for single-shot conversion wait or continuous mode polling.
+- `start*()`, cancellation, result consumption, `bind()`, and `unbind()` are
+  bus-silent. Only owner-authorized `poll()` performs I2C for production
+  operations.
+- Individual transport callbacks may block only within their supplied timeout;
+  an owner operation is split across bounded `poll()` steps.
+- `tick()` and synchronous calls remain compatibility/diagnostic surfaces, not
+  the production shared-bus lifecycle.
 - Health is tracked via **tracked transport wrappers** -- public API never calls `_updateHealth()` directly.
-- Recovery is **manual** via `recover()` - the application controls retry strategy.
+- Recovery is application-controlled through `startRecover()` / `poll()`;
+  `recover()` is the bounded synchronous compatibility facade.
 
 ### DriverState (4 states only)
 
 ```cpp
 enum class DriverState : uint8_t {
-  UNINIT,    // begin() not called or end() called
+  UNINIT,    // No successful initialization; also after end()/unbind()
   READY,     // Operational, consecutiveFailures == 0
   DEGRADED,  // 1 <= consecutiveFailures < offlineThreshold
   OFFLINE    // consecutiveFailures >= offlineThreshold
@@ -206,38 +218,41 @@ enum class DriverState : uint8_t {
 ```
 
 State transitions:
-- `begin()` success -> READY
-- Any I2C failure in READY -> DEGRADED
-- Success in DEGRADED/OFFLINE -> READY
+- `bind()` -> UNINIT with configuration state `UNCONFIGURED` and no I2C
+- Successful owner initialization or compatibility `begin()` -> READY
+- Any tracked I2C failure after initialization in READY -> DEGRADED
+- Successful tracked I2C in DEGRADED/OFFLINE -> READY
 - Failures reach `offlineThreshold` -> OFFLINE
-- `end()` -> UNINIT
+- `unbind()` / `end()` -> UNINIT
 
 ### Transport Wrapper Architecture
 
 All I2C goes through layered wrappers:
 
 ```
-Public API (readAdc, startConversion, etc.)
+Owner `poll()` steps and compatibility/diagnostic I2C APIs
     ↓
-Register helpers (readRegs, writeRegs)
+Register helpers (_readRegister16Tracked, _writeRegister16Tracked)
     ↓
 TRACKED wrappers (_i2cWriteReadTracked, _i2cWriteTracked)
     ↓  <- _updateHealth() called here ONLY
 RAW wrappers (_i2cWriteReadRaw, _i2cWriteRaw)
     ↓
-Transport callbacks (Config::i2cWrite, i2cWriteRead)
+Injected transport callbacks (DriverConfig/Config)
 ```
 
 **Rules:**
 - Public API methods NEVER call `_updateHealth()` directly
-- `readRegs()`/`writeRegs()` use TRACKED wrappers -> health updated automatically
+- Tracked register helpers use TRACKED wrappers -> health updated automatically
 - `probe()` uses RAW wrappers -> no health tracking (diagnostic only)
-- `recover()` tracks probe failures (driver is initialized, so failures count)
+- Owner and compatibility recovery use a tracked CONFIG read for their probe
+  step, so failures count after initialization
 
 ### Health Tracking Rules
 
 - `_updateHealth()` called ONLY inside tracked transport wrappers.
-- State transitions guarded by `_initialized` (no DEGRADED/OFFLINE before `begin()` succeeds).
+- State transitions are guarded by `_initialized` (no DEGRADED/OFFLINE before
+  successful owner initialization or compatibility `begin()`).
 - NOT called for config/param validation errors (INVALID_CONFIG, INVALID_PARAM).
 - NOT called for precondition errors (NOT_INITIALIZED).
 - `probe()` uses raw I2C and does NOT update health (diagnostic only).

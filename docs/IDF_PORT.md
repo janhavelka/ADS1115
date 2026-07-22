@@ -1,6 +1,6 @@
 # ADS1115 ESP-IDF Portability Status
 
-Last audited: 2026-07-19
+Applies to ADS1115 v2.0.
 
 ## Current Contract
 
@@ -69,10 +69,10 @@ if (progress.done) {
 }
 ```
 
-The adapter should convert the callback timeout to IDF ticks without exceeding
-it, serialize the complete write/repeated-start/read sequence, and preserve the
-raw `esp_err_t` in `Status::detail`. The driver already clamps the callback cap
-to the remaining whole-operation time.
+The adapter should range-check and pass the callback timeout to the IDF transfer,
+serialize the complete write/repeated-start/read sequence, and preserve the raw
+`esp_err_t` in `Status::detail`. The driver already clamps the callback cap to
+the remaining whole-operation time.
 
 ## Verification And Identity Limits
 
@@ -118,8 +118,7 @@ python scripts/generate_version.py check
 python -m platformio test -e native
 ```
 
-Local claims require actual command output. If `idf.py` is unavailable, report
-that gap and rely only on CI evidence after the pinned job completes.
-
-Hardware behavior still requires a dated target run and final-board electrical,
-fault, cancellation, shared-bus, and workload validation.
+Local claims require actual command output; configured CI is not evidence that
+an unobserved local command passed. Native ESP-IDF target HIL and final-board
+electrical, fault, cancellation, shared-bus, and workload validation remain in
+[`OPEN_ITEMS.md`](OPEN_ITEMS.md).

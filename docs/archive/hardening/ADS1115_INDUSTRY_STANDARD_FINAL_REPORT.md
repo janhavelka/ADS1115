@@ -1,5 +1,9 @@
 # ADS1115 Industry-Standard Hardening Final Report
 
+> Historical branch report. Its blockers and recommendations describe the
+> dated revision and are not current work items. See
+> [`../../OPEN_ITEMS.md`](../../OPEN_ITEMS.md) for unfinished work.
+
 Date: 2026-06-02
 Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
@@ -256,7 +260,7 @@ A corrected automated transcript was captured on 2026-06-02:
 - Tracked transcript copy:
   `docs/evidence/hil/2026-06-02_COM19/ads1115_hil_20260602_205201.log`
 - Results report:
-  `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
+  `docs/evidence/hil/2026-06-02_COM19/README.md`
 - `0x48` and `0x49` were initialized and classified as `present/pass`.
 - `0x4A` and `0x4B` were classified as `absent/pass-as-negative-test`.
 - Failed address selection preserved the initialized driver and did not destroy
@@ -284,7 +288,7 @@ Prepared artifacts:
 
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`
-- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
+- `docs/evidence/hil/2026-06-02_COM19/README.md`
 - `tools/hil_ads1115_capture.py`
 
 The hardware validation plan covers branch/commit/version identity, ADS1115

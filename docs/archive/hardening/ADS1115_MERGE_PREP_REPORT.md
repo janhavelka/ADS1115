@@ -1,5 +1,9 @@
 # ADS1115 Merge-Prep Report
 
+> Historical merge-preparation record. Its remaining-gap language applies to
+> the dated branch, not to the current release. See
+> [`../../OPEN_ITEMS.md`](../../OPEN_ITEMS.md) for unfinished work.
+
 Date: 2026-06-02
 Branch: `hardening/ads1115-industry-standard-p0`
 Resolved merge commit: `fc262d934b68eff54b08e598ace31b06a69f0998`
@@ -79,7 +83,7 @@ Tracked raw transcript:
 
 Results report:
 
-- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
+- `docs/evidence/hil/2026-06-02_COM19/README.md`
 
 Limited COM19 evidence summary:
 

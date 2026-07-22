@@ -1,5 +1,9 @@
 # ADS1115 Selftest Polish Report
 
+> Historical implementation record. Its limitations describe the dated branch
+> and are not the current backlog. See
+> [`../../OPEN_ITEMS.md`](../../OPEN_ITEMS.md) for unfinished work.
+
 Date: 2026-05-29
 Branch at original pass: `hardening/ads1115-industry-readiness`
 Current hardening continuation: `hardening/ads1115-industry-standard-p0`. See

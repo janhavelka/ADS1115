@@ -1,6 +1,9 @@
 # ADS1115 compact documentation inventory
 
-This directory summarizes ADS1115 facts from the ADS111x Rev. E datasheet: ADDR-selected I2C addresses, address-pointer transactions, four 16-bit registers, reset values, PGA scaling, data-rate settings, comparator/ready behavior, and ADS1113/ADS1114/ADS1115 differences. The raw extraction archive remains in `docs/reference/pdf-extracted-md/`.
+This directory summarizes ADS1115 facts from the checked-in ADS111x Rev. E
+datasheet: ADDR-selected I2C addresses, address-pointer transactions, four
+16-bit registers, reset values, PGA scaling, data-rate settings,
+comparator/ready behavior, and ADS1113/ADS1114/ADS1115 differences.
 
 | File | Purpose |
 | --- | --- |
@@ -12,10 +15,10 @@ This directory summarizes ADS1115 facts from the ADS111x Rev. E datasheet: ADDR-
 | `05_register_map.md` | Four-register map and key bit fields. |
 | `06_modes_interrupts_status_and_faults.md` | Single-shot/continuous modes, comparator, conversion-ready pin, and status behavior. |
 | `07_initialization_reset_and_operational_notes.md` | Startup, reset, sampling sequence, scaling, and operational cautions. |
-| `08_variant_differences_and_open_questions.md` | ADS1113/ADS1114/ADS1115 differences plus facts not documented or ambiguous in the checked-in PDF. |
+| `08_variant_differences_and_source_caveats.md` | ADS1113/ADS1114/ADS1115 differences plus facts not documented or ambiguous in the checked-in PDF. |
 
 ## Source documents
 
-| Source PDF | Raw extract | Pages used | Notes |
-| --- | --- | --- | --- |
-| `docs/reference/ADS111x_datasheet_revE.pdf` | `docs/reference/pdf-extracted-md/ADS111x_datasheet_revE.md` | 1, 3-6, 12-28, 37 | Primary source for compact notes. |
+| Source PDF | Pages used | Notes |
+| --- | --- | --- |
+| `docs/reference/ADS111x_datasheet_revE.pdf` | 1, 3-6, 12-28, 37 | Primary source for compact notes. |

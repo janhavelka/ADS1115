@@ -7,8 +7,8 @@ timeouts, recovery, retries, and scheduling.
 
 Version 2.0 introduces a fixed-memory, owner-safe operation engine for
 production shared-bus use. Native fault injection and ESP32 build coverage are
-strong; field release still requires the board-specific electrical and HIL
-evidence listed below.
+strong. Board-specific electrical, HIL, and product-integration work that is
+still open is tracked in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
 
 ## Production Contract
 
@@ -302,11 +302,12 @@ configuration-trust behavior changed.
 
 `examples/common/` is example-only glue and is not part of the library.
 
-The diagnostic Arduino bring-up CLI and ESP-IDF CLI predate the owner-safe
-example. Current examples are diagnostic except for the explicitly scoped
-`02_owner_safe_poll` ownership pattern. The ESP-IDF diagnostic example
-does not include a shared-bus mutex. Production applications should implement their own
-board/profile meanings, shared-bus admission, and system recovery policy.
+Current examples are diagnostic except for the ownership pattern demonstrated
+by `02_owner_safe_poll`. The diagnostic Arduino bring-up CLI and ESP-IDF CLI do
+not provide a production bus manager.
+The ESP-IDF diagnostic example does not include a shared-bus mutex.
+Production applications should implement their own board/profile meanings,
+shared-bus admission, and recovery policy.
 Raw writes bypass the typed config helpers and require a verified replay before
 typed/scaled acquisition resumes.
 
@@ -350,40 +351,31 @@ idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
-If `idf.py` or hardware is unavailable locally, record that gap; do not report
-a pass. Existing COM19/COM8 evidence is limited and predates 2.0.
-
-Before field release, capture dated evidence for all four address straps used by
-supported boards, all selected MUX/PGA/rate combinations, analog accuracy and
-source impedance, saturation/disconnect behavior, ALERT/RDY if enabled, stuck
-bus/unplug/replug/brownout, ambiguous/partial writes, shared-bus contention,
-cancel/timeout reconciliation, and the final target workload.
+Do not report an unrun build or hardware case as passed. Existing COM19/COM8
+evidence predates 2.0. The current unfinished evidence gates are maintained in
+[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md); execution details belong in the
+hardware validation plan, not in this user guide.
 
 ## TunnelMonitor-node Re-audit Boundary
 
-The 2.0 owner API resolves the library-side ownership, deadline, cancellation,
-configuration-trust, sample-provenance, passive-health, and verified-init gaps
-identified in `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`.
-
-No TunnelMonitor firmware contracts were changed. Integration remains blocked
-on a product decision: ADS1115 must be defined either as a proven replacement
-for the existing power-monitor meaning or as a distinct analog source. Address,
-board revision, channel meanings, analog front end, calibration, engineering
-units, required/optional role, capacity, and final HIL remain external gates.
+The 2.0 owner API closes the library-side findings from the v1.2.0 audit. No
+TunnelMonitor firmware contract was changed. The live
+[`TunnelMonitor integration page`](docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md)
+now contains only the unfinished product, adapter, capacity, and final-board
+gates; the full dated audit is archived for traceability.
 
 ## Documentation
 
 - `CHANGELOG.md` - release history and 2.0 migration notes
-- `docs/ADS1115_RELEASE_VALIDATION_SUMMARY_2026-07-19.md` - immutable
-  implementation commit, verification matrix, compatibility impact, and open
-  physical/product gates
-- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - finding-by-finding evidence
-  and implementation disposition
+- `docs/OPEN_ITEMS.md` - single index of unfinished release and integration work
+- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md` - unfinished TunnelMonitor
+  product and integration gates
 - `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
+- `docs/evidence/hil/README.md` - compact index of historical fixture evidence
 - `docs/README.md` - current documentation index
-- `docs/archive/` - historical audits and hardening reports
+- `docs/archive/` - completed release, audit, and hardening records
 
 ## License
 

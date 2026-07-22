@@ -3,20 +3,27 @@
 This archive contains historical hardening reports, audit reports, and prompt
 material. These files explain how the current branch was produced, but they do
 not supersede the release-facing documentation in the repository root and
-`docs/`.
+`docs/`. Checklists, blockers, and recommendations inside archived reports
+describe their dated revision; they are not active work items.
+
+Paths quoted inside an archived report may identify artifacts that were later
+removed or condensed. Use [`../evidence/hil/README.md`](../evidence/hil/README.md)
+for the retained HIL summaries and hashes.
 
 ## Subdirectories
 
 | Directory | Contents |
 | --- | --- |
 | `hardening/` | Chunked hardening implementation reports, merge-prep report, selftest notes, and earlier final reports. |
-| `audits/` | Industry-readiness audit material used to drive the hardening work. |
+| `audits/` | Completed TunnelMonitor v1.2.0 audit and implementation disposition. |
 | `prompts/` | Historical prompt/specification material. |
+| `releases/` | Completed, dated release-validation records. |
 
 Use current release claims from:
 
 - `README.md`
 - `CHANGELOG.md`
 - `docs/README.md`
-- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`
+- `docs/OPEN_ITEMS.md`
+- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`

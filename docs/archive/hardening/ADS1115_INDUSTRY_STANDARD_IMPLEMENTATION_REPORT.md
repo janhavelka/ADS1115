@@ -1,5 +1,9 @@
 # ADS1115 Industry-Standard Implementation Report
 
+> Historical implementation journal. Intermediate gaps, prompt statuses, and
+> validation counts are preserved for traceability and are not the current
+> backlog. See [`../../OPEN_ITEMS.md`](../../OPEN_ITEMS.md).
+
 Branch: `hardening/ads1115-industry-standard-p0`
 Starting commit: `65f6fdcc5c7b1d4da2d94eec5e4393614598e3f7`
 Source audit report: `exploration/ads1115-industry-standard:docs/ADS1115_INDUSTRY_STANDARD_EXPLORATION.md` at `d6f163534d59ad8bdd4b597bfd7f64a93615ac94`
@@ -831,7 +835,7 @@ Validation after the fix:
   `stress_mix 200` all completed with zero errors; final `drv` reported
   `READY`, total failures `0`, and last error `never`.
 - Dated results were added in
-  `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_2026-06-02_COM19.md`.
+  `docs/evidence/hil/2026-06-02_COM19/README.md`.
 - Absent `0x4A` and `0x4B` returned `I2C_ERROR` in this Arduino run because the
   read phase produced a zero-byte `Wire.requestFrom()` result without exposing
   whether the cause was address NACK, timeout, or another bus condition. This is

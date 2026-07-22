@@ -1,414 +1,146 @@
-# ADS1115 Hardware Validation Plan
+# ADS1115 2.0 Open Hardware Validation Plan
 
-This plan prepares hardware-in-the-loop validation for the ADS1115 hardening
-branch. It is an operator procedure, not validation evidence. Do not mark a
-case passed without dated logs, captures, and hardware identity recorded in the
-results template.
+This is the operator plan for hardware evidence that is still missing for the
+2.0 release. It is not validation evidence. The repository's COM19 and COM8
+captures predate 2.0 and are historical only; see `docs/evidence/hil/README.md`.
 
-## Evidence Rules
+## Acceptance Rule
 
-- Record branch, commit, library version, build timestamp, board, ADS1115 module,
-  VDD, pull-up values, bus speed, ambient conditions, wiring, instruments, and
-  operator.
-- Save raw serial logs and scope/logic-analyzer captures with timestamps.
-- Record exact commands used and exact observed output.
-- Mark unrun cases as `Pending`; mark blocked cases with the blocker.
-- Do not infer address-NACK/data-NACK precision from adapters that only expose
-  coarse transport errors.
+Mark a case `Pass` only when a dated results record identifies the exact clean
+firmware commit, hardware, wiring, instruments, command, observed result, and
+evidence location. ADS1115 has no identity register, so a successful probe and
+configuration readback prove only reachability and plausibility.
 
-## Required Equipment
+Keep lengthy serial, scope, logic-analyzer, photo, and build artifacts in an
+immutable evidence archive rather than committing full transcripts. The
+repository record must retain each artifact's location, SHA-256, byte size,
+capture time, and a concise result or failure summary.
 
-| Item | Requirement |
-| --- | --- |
-| Host | PlatformIO and serial terminal; ESP-IDF `idf.py` when running native IDF hardware checks |
-| Boards | ESP32-S2 and ESP32-S3 targets used by the examples |
-| ADC | ADS1115 module or reference board with accessible ADDR, ALERT/RDY, SDA, SCL, VDD, GND, AIN0..AIN3 |
-| Instruments | DMM for DC levels; oscilloscope or logic analyzer for I2C and ALERT/RDY pulse capture |
-| Pull-ups | Document SDA/SCL and ALERT/RDY pull-up values and voltage domains |
-| Supplies | Current-limited supply capable of brownout/reset tests |
+## Unfinished Gates
 
-## Test Identity
+| Gate | Required coverage | Evidence needed |
+| --- | --- | --- |
+| Clean release identity | Tagged 2.0 commit, clean firmware, matching `version` output and build timestamp | Build record, startup identity, manifest |
+| Arduino physical HIL | ESP32-S2 and ESP32-S3; targeted/full command plans; all fitted addresses and expected-absent addresses | Runner summaries plus hashed transcripts |
+| Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
+| Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
+| Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |
+| Comparator electrical | Traditional/window, polarity, latch, and queue depth | Applied stimulus, thresholds, output levels, captures |
+| Physical faults and recovery | Missing device, unplug/replug, stuck SDA/SCL, ADS1115 brownout/reset, raw-write dirty state, partial/ambiguous transfer | Exact status/detail/message, dirty/trust state, recovery result |
+| Shared-bus workload | External serialization, contention, bounded callback latency, cancellation/reconciliation, production task cadence | Target integration log and timing/fault summary |
+| Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Build/flash/monitor summaries and manifests |
+| Endurance | Acceptance-duration nominal soak and worst-rate stress, with limits chosen before the run | Duration, cycles/commands, latency, failures, resets, environment |
+| Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
 
-Record these fields before starting:
+## Record Identity Before Testing
 
-| Field | Operator entry |
-| --- | --- |
-| Date/time | |
-| Operator | |
-| Branch | |
-| Commit | |
-| Library version | |
-| Firmware build timestamp | |
-| Host OS/tool versions | |
-| ESP32 board | |
-| ADS1115 module/vendor/revision | |
-| ADS1115 VDD | |
-| SDA/SCL pull-ups | |
-| ALERT/RDY pull-up | |
-| I2C speed | |
-| Ambient temperature | |
-| Wiring notes | |
-| Instruments and settings | |
-| Evidence directory | |
+Use `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`. At minimum record:
 
-Suggested host commands:
+- start/end time, operator, branch, full commit, tag/version, and clean/dirty
+  state;
+- host OS and tool versions, firmware build timestamp, and exact build/flash
+  commands;
+- ESP32 board/revision, ADS1115 module/revision, address strap, VDD, bus speed,
+  pull-ups, wiring, ambient conditions, and instrument identifiers;
+- externally serialized bus owner, transfer timeout, locking, recovery policy,
+  and task cadence used by the target integration.
 
-```bash
+Suggested identity/build checks:
+
+```text
+git status --short
 git branch --show-current
 git rev-parse HEAD
+git describe --tags --always --dirty
 python scripts/generate_version.py check
-python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
+python -m platformio run -e esp32s3dev
 ```
 
-Suggested Arduino CLI identity commands:
+Do not proceed as release-candidate evidence if the worktree or runtime
+`version` output is dirty, or if the firmware identity does not match the
+intended commit. A dirty run may be retained only as explicitly non-release
+diagnostic evidence.
+
+## Digital CLI Runs
+
+The Arduino diagnostic CLI is an operator surface, not a production bus
+manager. First validate the runner without hardware:
 
 ```text
-version
-addr
-state
-cfg
-drv
+python tools/run_i2c_hil.py --parser-test
+python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
 ```
 
-## Arduino CLI Capture
-
-Use the diagnostic Arduino CLI for most operator-driven validation. The CLI is
-not a production shared-bus manager; it is the HIL command surface.
-
-Build and upload with the appropriate environment and port:
-
-```bash
-python -m platformio run -e esp32s3dev --target upload --upload-port <PORT>
-python -m platformio run -e esp32s2dev --target upload --upload-port <PORT>
-```
-
-Capture logs manually or with:
-
-```bash
-python tools/hil_ads1115_capture.py --dry-run --suite identity
-python tools/hil_ads1115_capture.py --port <PORT> --suite identity --suite address --out-dir hil_logs
-python tools/hil_ads1115_capture.py --port <PORT> --suite all --out-dir hil_logs
-```
-
-The automated helper treats missing address checks as negative tests and
-restores `0x48` before functional groups. Functional evidence is valid only
-when the preceding `cfg` shows `Initialized: YES` and `State: READY`.
-
-## Address Strap Tests
-
-Run each ADDR strap as a separate physical setup. Photograph or record the strap
-for the evidence bundle.
-
-| Strap | Expected address | Commands | Required evidence |
-| --- | --- | --- | --- |
-| ADDR to GND | `0x48` | `addr 0x48`, `probe`, `cfg`, `read` | Serial log, I2C capture optional |
-| ADDR to VDD | `0x49` | `addr 0x49`, `probe`, `cfg`, `read` | Serial log |
-| ADDR to SDA | `0x4A` | `addr 0x4A`, `probe`, `cfg`, `read` | Serial log plus note that SDA strap timing caveat was considered |
-| ADDR to SCL | `0x4B` | `addr 0x4B`, `probe`, `cfg`, `read` | Serial log |
-
-Wrong/missing address tests:
+Then capture each board/setup to an external evidence directory. Adjust address
+arguments to the physical setup and list known-absent addresses explicitly.
 
 ```text
-addr 0x48
-probe
-addr 0x49
-probe
-addr 0x4A
-probe
-cfg
-addr 0x48
-probe
-cfg
-selftest
-addr 0x4B
-probe
-cfg
-addr 0x48
-probe
-cfg
-selftest
+python tools/run_i2c_hil.py --port <PORT> --address 0x48 --address 0x49 --absent-address 0x4A --absent-address 0x4B --suite targeted --stop-on-fail --out <EVIDENCE_DIR>
+python tools/run_i2c_hil.py --port <PORT> --address 0x48 --address 0x49 --absent-address 0x4A --absent-address 0x4B --suite exhaustive --benchmark --stop-on-fail --out <EVIDENCE_DIR>
 ```
 
-Expected evidence: the selected strapped address probes successfully; the other
-addresses fail with the adapter's observed transport/status mapping and do not
-corrupt the initialized driver address or transport callbacks. Do not claim
-precise address-NACK unless the adapter and bus capture prove it.
+The contract verdict covers only CLI-observable behavior. An
+`EVIDENCE_REQUIRED` verdict is expected where electrical observation is needed;
+it is not a pass and must be closed with the analog, timing, comparator, or
+fault evidence below. Preserve coarse transport mappings as observed. Do not
+reinterpret a generic read failure as a proven address NACK.
 
-## MUX Raw And Voltage Tests
+## Electrical and Analog Procedure
 
-Use safe input levels inside ADS1115 absolute input limits (`GND - 0.3 V` to
-`VDD + 0.3 V`). For each case, record applied voltage, DMM measurement, raw
-code, calculated voltage, and tolerance.
+- Keep every analog input within ADS1115 absolute limits; PGA selection does
+  not raise those limits.
+- Exercise all single-ended/differential MUX, PGA, and data-rate combinations
+  required by the acceptance matrix. Record the applied DMM value, raw code,
+  converted value, error, and predeclared tolerance.
+- Capture conversion-ready behavior at 8, 128, and 860 SPS. Select instrument
+  bandwidth/sample rate before the run; the 860 SPS pulse can be only several
+  microseconds wide.
+- Drive both traditional and window comparator crossings and verify polarity,
+  latch clearing, and queue depths electrically.
+- For address straps, record a separate physical setup for each address. Note
+  the SDA-strap timing caveat for `0x4A`.
+
+## Fault, Recovery, and Endurance Procedure
+
+Use safe current limiting for stuck-line and brownout work. For each injected
+fault, record the physical action, transaction stage when known, exact returned
+`Status`, health/trust/dirty diagnostics, and the result of the explicit
+recovery/resync path. Do not call an ambiguous partial write clean merely
+because a later probe succeeds.
+
+Choose soak duration, error limit, latency limit, supply range, and thermal
+range before running. A typical automated command is:
 
 ```text
-gain 2
-rate 4
-mode single
-ch 0
-read
-readv
-ch 1
-read
-readv
-ch 2
-read
-readv
-ch 3
-read
-readv
-diff 0
-read
-readv
-diff 1
-read
-readv
-diff 2
-read
-readv
-diff 3
-read
-readv
+python tools/run_i2c_hil.py --port <PORT> --address <ADDR> --suite exhaustive --benchmark --soak --soak-duration-s <SECONDS> --soak-max-consecutive-failures <LIMIT> --out <EVIDENCE_DIR>
 ```
 
-## PGA/Gain Tests
+Record start/end time, duration, cycles and commands, classified results,
+maximum and mean latency, reset reason, final health/trust state, supply, and
+ambient temperature. Serial disconnects and host exceptions are failures or
+invalidated runs, not implicit passes.
 
-Use safe source levels for each full-scale range. PGA selection does not raise
-absolute input limits.
+## Native ESP-IDF Runs
+
+On a host with the intended ESP-IDF toolchain, build and run the native example
+on both targets:
 
 ```text
-gain 0
-readv
-gain 1
-readv
-gain 2
-readv
-gain 3
-readv
-gain 4
-readv
-gain 5
-readv
-timing
-```
-
-Required evidence: DMM voltage, selected gain, raw value, reported voltage, and
-tolerance for each gain.
-
-## Data-Rate Tests
-
-For each rate, record the configured rate, nominal conversion time, and observed
-sample cadence from serial timestamps or a logic analyzer.
-
-```text
-rate 0
-timing
-stress 20
-rate 1
-timing
-stress 20
-rate 2
-timing
-stress 20
-rate 3
-timing
-stress 20
-rate 4
-timing
-stress 50
-rate 5
-timing
-stress 50
-rate 6
-timing
-stress 100
-rate 7
-timing
-stress 100
-```
-
-## Conversion Mode And Timing Paths
-
-Single-shot, blocking, and readiness:
-
-```text
-mode single
-start
-poll
-read
-readv
-stress 50
-```
-
-Continuous mode:
-
-```text
-mode cont
-poll
-raw
-voltage
-stress 50
-mode single
-```
-
-Service/tick path evidence: the Arduino CLI calls `service()` in the main loop
-and readiness waits call `tick()`/readiness paths during stress/selftest. Record
-`state`, `drv`, and `selftest` output after the runs.
-
-## Comparator And ALERT/RDY
-
-Traditional comparator:
-
-```text
-comp
-comp mode trad
-comp pol low
-comp latch 0
-comp queue 1
-comp th <low_code> <high_code>
-comp
-```
-
-Window comparator:
-
-```text
-comp mode window
-comp pol high
-comp latch 1
-comp queue 2
-comp th <low_code> <high_code>
-comp
-```
-
-Required evidence: stimulus voltage, threshold codes, ALERT/RDY level, polarity,
-latch behavior, queue behavior, and a scope/logic-analyzer capture when the pin
-is used.
-
-ALERT/RDY conversion-ready pulse capture:
-
-```text
-comp rdy
-rate 0
-start
-poll
-rate 4
-start
-poll
-rate 7
-start
-poll
-comp disable
-```
-
-Capture ALERT/RDY at 8, 128, and 860 SPS. At 860 SPS, the continuous-mode pulse
-can be approximately 8 us; use an instrument sample rate that can prove whether
-the pulse was present and whether the host strategy could capture it.
-
-## Fault Injection And Recovery
-
-Wrong address and missing target:
-
-```text
-addr <wrong_address>
-probe
-read
-drv
-recover
-drv
-```
-
-Unplug/replug:
-
-```text
-mode single
-read
-# unplug ADS1115
-read
-drv
-# replug ADS1115
-recover
-read
-drv
-```
-
-Stuck bus: hold SDA or SCL low only with safe hardware current limiting.
-
-```text
-read
-drv
-recover
-drv
-```
-
-Brownout/reset: lower ADS1115 VDD until failure is observed, then restore.
-
-```text
-read
-drv
-recover
-read
-```
-
-Raw diagnostic partial-state visibility:
-
-```text
-wreg 1 0x8583
-cfg
-drv
-recover
-cfg
-```
-
-Required evidence: exact status code/detail/message, dirty-state visibility,
-recovery behavior, and physical fault description. Partial write/fault injection
-with an I2C fault injector is optional but should record where the transaction
-was interrupted.
-
-## ESP-IDF Example Hardware Checks
-
-Local build commands when `idf.py` is installed:
-
-```bash
 idf.py --version
-idf.py -C examples/esp_idf/basic set-target esp32s3 build
-idf.py -C examples/esp_idf/basic -p <PORT> flash monitor
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 idf.py -C examples/esp_idf/basic -p <PORT> flash monitor
+idf.py -C examples/esp_idf/basic set-target esp32s3 build
+idf.py -C examples/esp_idf/basic -p <PORT> flash monitor
 ```
 
-Required evidence: build logs, monitor logs, board identity, ADS1115 wiring, and
-whether errors are coarse ESP-IDF mappings or instrument-proven bus faults.
+Record the IDF version, board, wiring, bus-owner policy, exact error mapping,
+and hashed build/monitor artifacts. CI builds and Arduino runs do not substitute
+for these physical native-IDF runs.
 
-## Soak And Stress
+## Closeout
 
-Nominal 24-hour soak:
-
-```text
-version
-addr
-cfg
-stress 100000
-drv
-```
-
-Two-hour 860 SPS stress:
-
-```text
-rate 7
-mode single
-stress 100000
-stress_mix 10000
-drv
-```
-
-Record start/end timestamps, supply voltage, ambient temperature, reset reason,
-failure count, health state, and any transport errors.
-
-## Required Artifacts
-
-- Completed `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`.
-- Raw serial logs for every board/run.
-- Build logs for Arduino and ESP-IDF examples.
-- Scope/logic-analyzer captures for I2C and ALERT/RDY pulse tests.
-- Photos or wiring diagrams for each ADDR strap setup.
-- Operator notes for deviations, blocked tests, and environmental conditions.
+A release-facing summary should contain only the identity, concise result
+matrix, failures, remaining gaps, and evidence manifest. Remove resolved items
+from the active follow-up list; preserve their dated outcome in the results
+matrix. Never claim unrun hardware coverage.
