@@ -6,9 +6,13 @@ transport callbacks and retain ownership of handles, pins, locking, clock rate,
 timeouts, recovery, retries, and scheduling.
 
 Version 2.0 introduces a fixed-memory, owner-safe operation engine for
-production shared-bus use. Native fault injection and ESP32 build coverage are
-strong. Board-specific electrical, HIL, and product-integration work that is
-still open is tracked in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
+production shared-bus use. The native suite contains 178 fault-injection and
+contract tests, and CI builds four Arduino environments plus native ESP-IDF for
+ESP32-S2/S3. A clean two-device ESP32-S2 diagnostic campaign and one-hour soak
+recorded zero digital-contract failures. Calibrated analog,
+electrical, injected-fault, native ESP-IDF/ESP32-S3, and product-integration
+work that is still open is tracked in
+[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
 
 ## Production Contract
 
@@ -37,7 +41,8 @@ The owner-safe API provides:
 - per-transfer timeout clamping to the remaining operation deadline;
 - mandatory profile readback before configuration becomes `VERIFIED`;
 - bus-silent cancellation with post-start wait-idle reconciliation;
-- fixed-memory `SampleResult` provenance and exact ADC-input microvolts;
+- fixed-memory `SampleResult` provenance and deterministically rounded nominal
+  ADC-input microvolts;
 - passive health diagnostics that never suppress owner-authorized I2C.
 
 All driver calls require external serialization. No public API is ISR-safe.
@@ -47,7 +52,7 @@ All driver calls require external serialization. No public API is ISR-safe.
 - No Arduino, Wire, ESP-IDF, FreeRTOS, logging, heap, or global-bus dependency
   in `include/` or `src/`
 - Injected, non-owning I2C transport with explicit callback timeouts
-- Four legal addresses: `0x48` through `0x4B`
+- Four legal address straps: `0x48`/GND, `0x49`/VDD, `0x4A`/SDA, `0x4B`/SCL
 - Four single-ended and four differential MUX selections
 - Six PGA ranges from +/-6.144 V through +/-0.256 V
 - Eight data rates from 8 SPS through 860 SPS
@@ -60,14 +65,34 @@ All driver calls require external serialization. No public API is ISR-safe.
 
 ## Installation
 
-For PlatformIO, add the library to `lib_deps`, or copy `include/ADS1115/` and
-`src/` into the project. For ESP-IDF, use this repository as a component or the
-native project under `examples/esp_idf/basic`.
+The library requires C++17. Pin production dependencies to an approved tag or
+full commit instead of tracking a moving branch. A tagged PlatformIO dependency
+is:
 
-The repository pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, the
-exact pioarduino espressif32 `54.03.20` release archive, and ESP-IDF `v5.3.5`
-for the native IDF CI build. CI action revisions, runner images, and the host
-compiler still vary over time; host builds are not claimed bit-reproducible.
+```ini
+lib_deps =
+  https://github.com/janhavelka/ADS1115.git#v2.0.0
+```
+
+For ESP-IDF, place the repository under the application's `components/`
+directory and pin it, for example with a submodule checked out at `v2.0.0`.
+The native component example is under `examples/esp_idf/basic`. A source-vendored
+installation must preserve both `include/ADS1115/` and `src/`.
+
+## Transport Adapter Contract
+
+Transport/context lifetime, bus handles, pins, locking, clock rate, retries,
+recovery, and scheduling remain application-owned. Each callback invocation
+must represent one bounded physical transfer attempt: acquire the external
+lock, perform the transfer, and release the lock within the supplied timeout.
+Do not hide retry, recovery, or multiple transfer attempts inside a callback;
+an ambiguous mutating write must remain observable to the driver.
+
+Callback buffers are valid only for the call. Preserve meaningful transport
+failures in `Status` and native detail codes in `Status::detail`. Report address
+or data NACK only when the transport can prove the phase. A generic NACK after
+a potentially mutating write is not definite address absence. All callbacks
+and driver calls require serialized task context and are not ISR-safe.
 
 ## Owner-Safe Quick Start
 
@@ -81,6 +106,7 @@ callback per pass.
 
 ADS1115::ADS1115 adc;
 ADS1115::OperationToken token;
+bool initializationPending = false;
 
 ADS1115::DriverConfig transport{
     appI2cWrite, appI2cWriteRead, &sharedBusOwner, 20};
@@ -97,15 +123,21 @@ ADS1115::Status st = adc.bind(transport, profile); // no I2C
 if (st.ok()) {
   const uint32_t nowMs = appNowMs();
   st = adc.startInitialize(nowMs, nowMs + 200U, token); // no I2C
+  initializationPending = st.inProgress();
 }
 
-// Called only by the serialized bus owner:
-ADS1115::PollResult progress = adc.poll(appNowMs(), 1);
-if (progress.done) {
-  ADS1115::OperationResult result;
-  ADS1115::Status access = adc.takeResult(token, result);
-  if (access.ok() && result.status.ok()) {
-    // Initialization is verified, or result.sample is an atomic typed sample.
+// On each serialized owner-loop pass while initializationPending:
+if (initializationPending) {
+  ADS1115::PollResult progress = adc.poll(appNowMs(), 1);
+  // done is authoritative. During reconciliation, status may be an error while
+  // done remains false and the owner must continue bus-silent polling.
+  if (progress.done) {
+    ADS1115::OperationResult result;
+    ADS1115::Status access = adc.takeResult(token, result);
+    initializationPending = false;
+    if (access.ok() && result.status.ok()) {
+      // Initialization completed with verified, clean configuration.
+    }
   }
 }
 ```
@@ -158,10 +190,13 @@ Configuration state is explicit:
 | `VERIFIED` | All writable profile fields matched readback. |
 | `UNKNOWN` | Hardware/cache agreement cannot safely label or scale a sample. |
 
-Profile generation increments only after verified commit. Raw writes,
+Profile generation increments after each verified profile commit and after a
+read-specific MUX/PGA CONFIG is verified ready. Raw writes,
 ambiguous/partial writes, post-effect cancellation, and operation timeout can
 move the state to `UNKNOWN`. `startRead()` rejects unverified or dirty state;
 use a successful `startRecover()` operation to replay and verify the profile.
+`startApplyProfile()` cannot change the bound I2C address; use a quiescent
+`unbind()` followed by `bind()` for an address change.
 
 ## Operations, Budgets, And Results
 
@@ -189,6 +224,16 @@ poll boundary and the remaining timeout is divided conservatively between the
 callbacks. Use a budget of one when the system requires one-transfer scheduling
 or wants to make unused callback time available to a later scheduler cycle.
 
+Size every operation deadline for all possible callbacks in the table plus
+owner scheduling jitter. `operationDeadlineMs()` helps with conversion time,
+but the application must add callback and scheduling allowance for initialize,
+apply, recover, read, and shutdown operations.
+
+`PollResult::done` is the terminal indicator. In reconciliation,
+`PollResult::status` can already carry a preserved transport failure while
+`done` remains false; keep polling until terminal, then call `takeResult()` and
+inspect `OperationResult::status`.
+
 When `PollResult::done` becomes true, call `takeResult()` with the matching
 token. A wrong token returns `TOKEN_MISMATCH` without consuming the result.
 Reading twice returns `RESULT_NOT_AVAILABLE`. A new operation remains blocked
@@ -203,23 +248,29 @@ until the pending terminal result is consumed.
 - verified-configuration and positive/negative code-limit flags.
 
 The result is a value object. No pointer into mutable driver storage is exposed.
+It contains a sequence and configuration provenance, but no timestamp,
+freshness, or board-level validity. The application must attach its chosen
+capture/completion timestamp and freshness policy.
 
 ## Cancellation And Timeout Safety
 
 `cancelActiveOperation()` never performs I2C.
 
 - Before any hardware effect, cancellation publishes `CANCELLED` immediately.
-- After a confirmed or ambiguous conversion start, cancellation enters
-  `RECONCILING`. Subsequent polls remain bus-silent until the proven worst-case
-  conversion interval has elapsed.
+- While a confirmed or ambiguous conversion may still be active, cancellation
+  enters `RECONCILING`. Subsequent polls remain bus-silent until the proven
+  worst-case conversion interval has elapsed. Once OS/readback has proved the
+  conversion idle, cancellation can terminate without that quiet wait.
 - New reads and configuration mutations remain blocked during reconciliation.
 - The abandoned conversion is never published or reused for another MUX.
 - If the start callback already returned an ambiguous transport failure, that
   original failure remains the terminal result.
 
-A deadline reached after conversion start follows the same wait-idle rule and
-publishes `TIMED_OUT`. Profile-changing cancellations/timeouts retain
-`UNKNOWN`/dirty diagnostics when hardware may have changed.
+A deadline reached while the conversion may still be active follows the same
+wait-idle rule and publishes `TIMED_OUT`. Cancelled or timed-out reads before
+readiness verification, and profile-changing cancellations/timeouts, retain
+`UNKNOWN`/dirty diagnostics when hardware may have changed; recover before the
+next typed read.
 
 ## Units And Pure Helpers
 
@@ -260,6 +311,9 @@ use the compatibility clock hook when available.
 Health is passive. `OFFLINE` never blocks a callback selected by the external
 owner and never starts retries or bus recovery. The application remains the only
 owner of admission, retry, backoff, reset, and recovery policy.
+Likewise, `DriverState::READY` alone is not proof that a sample is publishable.
+Require successful terminal completion, `sampleValid`, and verified clean
+configuration provenance.
 Tracked callbacks executed by owner operations timestamp health with that
 operation's current `poll(nowMs, ...)` value; legacy direct calls use the
 optional `Config::nowMs` hook.
@@ -269,7 +323,7 @@ original transport/readback error through `hardwareConfigDirtyError()` and the
 address through `SettingsSnapshot::hardwareConfigDirtyAddress`. Only a complete
 verified replay clears the dirty state.
 
-## Compatibility And Advanced Diagnostics
+## Migrating From 1.x And Advanced Diagnostics
 
 The 1.x surface remains available for migration, bring-up, and service tools,
 but its behavior has intentionally hardened in 2.0:
@@ -282,7 +336,7 @@ but its behavior has intentionally hardened in 2.0:
 | Direct setters | Advanced diagnostics; a successful direct mutation makes profile state `UNKNOWN` until verified replay. |
 | Raw register writes | Advanced diagnostics; always mark cache/hardware state dirty or preserve an ambiguous write failure. |
 | `conversionReady()` bool overload | Lossy compatibility only; `false` conflates not-ready and error. |
-| Blocking reads | Bounded compatibility convenience; single-shot verified profiles only. |
+| Blocking reads | Bounded compatibility convenience requiring `Config::nowMs`; single-shot verified profiles only. |
 | Continuous mode | Latest-register diagnostics only; owner-safe `startRead()` deliberately rejects it. |
 | Legacy staged jobs | Compatibility wrappers over the owner operation engine. |
 
@@ -297,19 +351,10 @@ configuration-trust behavior changed.
 | Example | Intent | Limits |
 | --- | --- | --- |
 | `examples/02_owner_safe_poll/` | Production ownership pattern: static mutex, shared-bus timeout enforcement, tokened operations, and one callback per scheduler pass. | Example pins and sample channel meaning must be replaced by the product profile. |
-| `examples/01_basic_bringup_cli/` | Arduino diagnostic/HIL console. | Uses the compatibility and raw diagnostic surface; it is not a production bus manager. |
-| `examples/esp_idf/basic/` | Native IDF `app_main`, `i2c_master`, fixed-buffer diagnostic CLI, `esp_timer`, and FreeRTOS integration. | Externally serialized demo with coarse `esp_err_t` mapping; no shared-bus mutex. |
+| `examples/01_basic_bringup_cli/` | The diagnostic Arduino bring-up CLI and HIL console. | Uses the compatibility and raw diagnostic surface; it is not a production bus manager. |
+| `examples/esp_idf/basic/` | Native IDF `app_main`, `i2c_master`, fixed-buffer diagnostic CLI, `esp_timer`, and FreeRTOS integration. | Externally serialized demo with coarse `esp_err_t` mapping; it does not include a shared-bus mutex. |
 
 `examples/common/` is example-only glue and is not part of the library.
-
-Current examples are diagnostic except for the ownership pattern demonstrated
-by `02_owner_safe_poll`. The diagnostic Arduino bring-up CLI and ESP-IDF CLI do
-not provide a production bus manager.
-The ESP-IDF diagnostic example does not include a shared-bus mutex.
-Production applications should implement their own board/profile meanings,
-shared-bus admission, and recovery policy.
-Raw writes bypass the typed config helpers and require a verified replay before
-typed/scaled acquisition resumes.
 
 ## Resource, Threading, And Electrical Contracts
 
@@ -331,6 +376,11 @@ typed/scaled acquisition resumes.
 
 ## Validation And Reproducibility
 
+The repository pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, the
+exact pioarduino espressif32 `54.03.20` release archive, and ESP-IDF `v5.3.5`
+for the native IDF CI build. CI action revisions, runner images, Doxygen, and
+the host compiler still vary over time; builds are not claimed bit-reproducible.
+
 Configured CI runs:
 
 ```bash
@@ -341,6 +391,7 @@ python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python tools/run_i2c_hil.py --parser-test
 python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
+doxygen Doxyfile
 python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
 python -m platformio run -e owner_safe_s3
@@ -350,10 +401,15 @@ idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
-Do not report an unrun build or hardware case as passed. Existing COM19/COM8
-evidence predates 2.0. The current unfinished evidence gates are maintained in
-[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md); execution details belong in the
-hardware validation plan, not in this user guide.
+Do not report an unrun build or hardware case as passed. COM19/COM8 evidence
+predates 2.0. The clean 2026-07-22 COM6 campaign covers the Arduino diagnostic
+surface on ESP32-S2 at addresses `0x48` and `0x49`, absent-address checks at
+`0x4A` and `0x4B`, and a 3,600-second soak; it does not prove calibrated analog,
+ALERT/RDY electrical, injected-fault, ESP-IDF/ESP32-S3, or final-product
+behavior. See the compact
+[`COM6 evidence summary`](docs/evidence/hil/2026-07-22_COM6/README.md).
+The unfinished gates remain in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md);
+execution details belong in the hardware validation plan.
 
 ## TunnelMonitor-node Re-audit Boundary
 
@@ -372,8 +428,9 @@ gates; the full dated audit is archived for traceability.
 - `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
-- `docs/evidence/hil/README.md` - compact index of historical fixture evidence
+- `docs/evidence/hil/README.md` - compact index of dated fixture evidence
 - `docs/README.md` - current documentation index
+- `Doxyfile` - warning-enforced generated public API reference
 - `docs/archive/` - completed release, audit, and hardening records
 
 ## License

@@ -16,4 +16,4 @@ limitations.
 A clean ESP32-S2 Arduino diagnostic HIL baseline now exists for v2.0. Current
 electrical, calibrated analog, injected-fault, native ESP-IDF, ESP32-S3,
 shared-bus product workload, and final-board acceptance gates remain in
-`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`.
+the [`hardware validation plan`](../../ADS1115_HARDWARE_VALIDATION_PLAN.md).

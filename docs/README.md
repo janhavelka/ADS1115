@@ -19,11 +19,19 @@ evidence and historical implementation reports.
 | --- | --- |
 | [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for the still-open v2.0 physical evidence gates. |
 | [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md) | Compact dated-results template. |
-| [`evidence/hil/`](evidence/hil/) | Index of earlier fixture evidence, limitations, and retained artifact hashes. |
+| [`evidence/hil/`](evidence/hil/) | Index of dated fixture evidence, limitations, and retained artifact hashes, including the current v2 ESP32-S2 baseline. |
 
 Long serial transcripts are not review documents. Keep concise outcomes,
 failures, fixture identity, commands, and hashes; retain a raw artifact only
 when it adds reproducible evidence that the summary cannot preserve.
+
+## API Reference
+
+Run `doxygen Doxyfile` from the repository root. Undocumented public members,
+missing parameter/return contracts, malformed comments, and unresolved
+references fail the build. Generated HTML is written to ignored
+`docs/doxygen/html/`; source documentation remains in the public headers and
+the current Markdown pages listed above.
 
 ## Reference Material
 

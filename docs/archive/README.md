@@ -21,9 +21,9 @@ for the retained HIL summaries and hashes.
 
 Use current release claims from:
 
-- `README.md`
-- `CHANGELOG.md`
-- `docs/README.md`
-- `docs/OPEN_ITEMS.md`
-- `docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`
-- `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`
+- [`README.md`](../../README.md)
+- [`CHANGELOG.md`](../../CHANGELOG.md)
+- [`docs/README.md`](../README.md)
+- [`docs/OPEN_ITEMS.md`](../OPEN_ITEMS.md)
+- [`docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md`](../TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md)
+- [`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`](../ADS1115_HARDWARE_VALIDATION_PLAN.md)

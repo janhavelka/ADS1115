@@ -3,7 +3,8 @@
 Copy this file for each dated physical run. Keep this repository record
 concise; store lengthy raw artifacts externally and identify them in the
 manifest. Status values are `Pending`, `Pass`, `Fail`, `Blocked`, and
-`Not applicable`.
+`Not applicable`. The `Pending` rows below are copy-time placeholders, not the
+repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_ITEMS.md).
 
 ## Run Identity
 

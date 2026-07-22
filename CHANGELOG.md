@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Updated the README and documentation indexes to distinguish the clean
+  post-tag v2 COM6 diagnostic baseline from still-open tagged-release,
+  physical, native-target, and final-product evidence.
+- Documented owner-loop terminal handling, transport callback obligations,
+  address/profile changes, deadlines, sample validity/timestamps, cancellation,
+  and migration constraints in the README and installed public headers.
+- Made Doxygen extract documented public contracts only, include the current
+  HIL summary, fail on undocumented or malformed contracts and unresolved
+  references, and run as an explicit CI job.
 - Recorded clean two-device ESP32-S2 exhaustive HIL at `dd25d61`, including a
   3,600-second, 87,956-command soak with zero digital-contract failures; the
   summary keeps unproven analog, electrical, injected-fault, and final-product
@@ -111,7 +120,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The 1.x `Config`, blocking, direct setter/register, and staged-job APIs remain
   available for diagnostic/source migration, but lifecycle, verification,
   health admission, continuous reads, and shutdown behavior changed. Review
-  the 2.0 migration section in `README.md` before updating production callers.
+  "Migrating From 1.x And Advanced Diagnostics" in `README.md` before updating
+  production callers.
 
 ### Validation limits
 

@@ -16,7 +16,7 @@ BUILTIN_STL_SUPPORT    = YES
 JAVADOC_AUTOBRIEF      = YES
 MULTILINE_CPP_IS_BRIEF = YES
 
-EXTRACT_ALL            = YES
+EXTRACT_ALL            = NO
 EXTRACT_PRIVATE        = NO
 EXTRACT_STATIC         = YES
 EXTRACT_LOCAL_CLASSES  = YES
@@ -39,13 +39,15 @@ INPUT                  = README.md \
                          docs/IDF_PORT.md \
                          docs/ADS1115_HARDWARE_VALIDATION_PLAN.md \
                          docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md \
-                         docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md
+                         docs/TUNNELMONITOR_NODE_SUITABILITY_AUDIT.md \
+                         docs/evidence/hil/2026-07-22_COM6/README.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/archive/* */docs/evidence/* */docs/reference/* */docs/_pdf_extracts/*
-EXAMPLE_PATH           = examples/01_basic_bringup_cli \
-                         examples/02_owner_safe_poll
-
+EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/archive/* */docs/reference/* */docs/_pdf_extracts/*
+EXCLUDE_SYMBOLS        = ADS1115_VERSION_STRING ADS1115_BUILD_DATE \
+                         ADS1115_BUILD_TIME ADS1115_BUILD_TIMESTAMP \
+                         ADS1115_GIT_COMMIT ADS1115_GIT_STATUS \
+                         ADS1115_VERSION_FULL
 USE_MDFILE_AS_MAINPAGE = README.md
 FULL_PATH_NAMES        = NO
 SORT_MEMBER_DOCS       = YES
@@ -60,8 +62,8 @@ GENERATE_XML           = NO
 GENERATE_RTF           = NO
 GENERATE_MAN           = NO
 
-WARN_IF_UNDOCUMENTED   = NO
-WARN_NO_PARAMDOC       = NO
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
 WARN_IF_DOC_ERROR      = YES
-WARN_AS_ERROR          = NO
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
 QUIET                  = YES

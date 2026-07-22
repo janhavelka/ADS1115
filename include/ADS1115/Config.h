@@ -8,17 +8,26 @@
 
 namespace ADS1115 {
 
-/// I2C write callback signature
+/// I2C write callback signature.
+///
+/// Perform exactly one externally serialized physical transfer attempt. Do not
+/// hide retry or bus recovery in the callback. The data buffer is valid only
+/// for this call, and lock acquisition plus transfer must honor timeoutMs.
 /// @param addr     I2C device address (7-bit)
 /// @param data     Pointer to data to write
 /// @param len      Number of bytes to write
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure
+/// @return Meaningful library Status; preserve transport-native detail and do
+///         not report definite address/data NACK unless the phase is proven.
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
-/// I2C write-then-read callback signature
+/// I2C write-then-read callback signature.
+///
+/// Perform exactly one externally serialized write/repeated-start/read attempt.
+/// Do not hide retry or recovery. Buffers are valid only for this call, and
+/// lock acquisition plus the complete transfer must honor timeoutMs.
 /// @param addr     I2C device address (7-bit)
 /// @param txData   Pointer to data to write
 /// @param txLen    Number of bytes to write
@@ -26,7 +35,8 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @param rxLen    Number of bytes to read
 /// @param timeoutMs Maximum time to wait for completion
 /// @param user     User context pointer passed through from Config
-/// @return Status indicating success or failure
+/// @return Meaningful library Status; preserve transport-native detail and do
+///         not report definite address/data NACK unless the phase is proven.
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
@@ -125,69 +135,103 @@ enum class ComparatorUse : uint8_t {
 
 /// @brief Complete comparator configuration for atomic profile validation.
 struct ComparatorProfile {
-  ComparatorUse use = ComparatorUse::OFF;
-  ComparatorMode mode = ComparatorMode::TRADITIONAL;
-  ComparatorPolarity polarity = ComparatorPolarity::ACTIVE_LOW;
-  ComparatorLatch latch = ComparatorLatch::NON_LATCHING;
-  ComparatorQueue queue = ComparatorQueue::DISABLE;
-  int16_t lowThreshold = static_cast<int16_t>(0x8000);
-  int16_t highThreshold = 0x7FFF;
+  ComparatorUse use = ComparatorUse::OFF; ///< Output purpose and threshold encoding
+  ComparatorMode mode = ComparatorMode::TRADITIONAL; ///< Threshold/window behavior
+  ComparatorPolarity polarity = ComparatorPolarity::ACTIVE_LOW; ///< Active output level
+  ComparatorLatch latch = ComparatorLatch::NON_LATCHING; ///< Latching behavior
+  ComparatorQueue queue = ComparatorQueue::DISABLE; ///< Assertion queue depth
+  int16_t lowThreshold = static_cast<int16_t>(0x8000); ///< Signed raw low threshold
+  int16_t highThreshold = 0x7FFF; ///< Signed raw high threshold
 };
 
 /// @brief Non-owning transport binding used by the owner-safe API.
 ///
 /// Bus handles, pins, locking, clock rate, retries, recovery, and scheduling
 /// remain owned by the application. Each callback must enforce transferTimeoutMs.
+/// The context and callback targets must outlive the binding. Calls require
+/// externally serialized task context and are not ISR-safe.
 struct DriverConfig {
-  I2cWriteFn i2cWrite = nullptr;
-  I2cWriteReadFn i2cWriteRead = nullptr;
-  void* i2cUser = nullptr;
+  I2cWriteFn i2cWrite = nullptr; ///< Required application-owned write callback
+  I2cWriteReadFn i2cWriteRead = nullptr; ///< Required repeated-start read callback
+  void* i2cUser = nullptr; ///< Opaque application transport context
   uint32_t transferTimeoutMs = 50; ///< Per-callback cap; poll clamps to deadline remaining
 };
 
 /// @brief Complete desired hardware register profile.
 struct DeviceProfile {
-  uint8_t i2cAddress = 0x48;
-  Mux defaultMux = Mux::AIN0_GND;
-  Gain defaultGain = Gain::FSR_2_048V;
-  DataRate dataRate = DataRate::SPS_128;
-  Mode mode = Mode::SINGLE_SHOT;
-  ComparatorProfile comparator{};
+  uint8_t i2cAddress = 0x48; ///< Seven-bit address in the legal 0x48-0x4B range
+  Mux defaultMux = Mux::AIN0_GND; ///< MUX restored by profile apply/recovery
+  Gain defaultGain = Gain::FSR_2_048V; ///< PGA restored by profile apply/recovery
+  DataRate dataRate = DataRate::SPS_128; ///< Conversion data rate
+  Mode mode = Mode::SINGLE_SHOT; ///< Conversion mode; typed reads require single-shot
+  ComparatorProfile comparator{}; ///< Complete comparator/ALERT profile
 };
 
 /// @brief One typed single-shot channel request.
 struct ChannelRequest {
-  uint16_t channelId = 0;
-  Mux mux = Mux::AIN0_GND;
-  Gain gain = Gain::FSR_2_048V;
+  uint16_t channelId = 0; ///< Application-owned identity copied into SampleResult
+  Mux mux = Mux::AIN0_GND; ///< Input selection for this conversion
+  Gain gain = Gain::FSR_2_048V; ///< PGA range for this conversion
 };
 
 /// @name Pure owner helpers
 /// These functions perform no I2C, allocation, logging, or framework calls.
 /// @{
+
+/// @brief Validate a complete desired device profile without I2C.
+/// @param profile Candidate device profile.
+/// @return OK when every field and cross-field comparator rule is valid.
 Status validateDeviceProfile(const DeviceProfile& profile);
+/// @param request Candidate typed channel request.
+/// @return OK when the MUX and PGA values are valid.
 Status validateChannelRequest(const ChannelRequest& request);
+/// @param profile Candidate comparator profile.
+/// @return OK when use, queue, and threshold fields form a valid profile.
 Status validateComparatorProfile(const ComparatorProfile& profile);
-uint16_t dataRateSps(DataRate rate); ///< Returns zero for an invalid rate
+/// @param rate Data-rate enum value.
+/// @return Nominal samples per second, or zero for an invalid value.
+uint16_t dataRateSps(DataRate rate);
 /// Worst conversion interval including -10% minimum SPS tolerance and 1 ms guard.
+/// @param rate Data-rate enum value.
+/// @return Bounded interval in microseconds, or zero for an invalid value.
 uint32_t worstCaseConversionTimeUs(DataRate rate);
-int32_t gainFullScaleMicrovolts(Gain gain); ///< Returns zero for an invalid gain
+/// @param gain PGA range.
+/// @return Positive full-scale magnitude in microvolts, or zero if invalid.
+int32_t gainFullScaleMicrovolts(Gain gain);
 /// Convert a signed code to rounded ADC-input microvolts using int64 arithmetic.
+/// @param raw Signed ADC conversion code.
+/// @param gain PGA range used for the conversion.
+/// @param[out] out Rounded ADC-input microvolts, or zero on invalid gain.
+/// @return OK, or INVALID_PARAM for an invalid gain.
 Status rawToMicrovolts(int16_t raw, Gain gain, int32_t& out);
+/// @param mux Input multiplexer selection.
+/// @return true only for a valid AINx-to-GND selection.
 bool isSingleEnded(Mux mux);
-int8_t positiveInput(Mux mux); ///< AIN index, or -1 for invalid MUX
-int8_t negativeInput(Mux mux); ///< AIN index, -1 for GND, or -2 for invalid MUX
+/// @param mux Input multiplexer selection.
+/// @return Positive AIN index, or -1 for an invalid MUX.
+int8_t positiveInput(Mux mux);
+/// @param mux Input multiplexer selection.
+/// @return Negative AIN index, -1 for GND, or -2 for an invalid MUX.
+int8_t negativeInput(Mux mux);
 /// Derive a bounded duration for channelCount conversions plus caller margin.
+/// @param channelCount Number of sequential conversions.
+/// @param rate Conversion data rate.
+/// @param schedulingMarginMs Caller-owned callback and scheduling allowance.
+/// @return Duration in milliseconds, saturated at INT32_MAX; zero when the
+///         channel count or data rate is invalid.
 uint32_t operationDeadlineMs(uint8_t channelCount, DataRate rate,
                              uint32_t schedulingMarginMs);
 /// @}
 
-/// @brief Configuration for ADS1115 driver.
+/// @brief Compatibility configuration for the synchronous diagnostic surface.
+///
+/// Callback/context lifetime, external serialization, timeout enforcement, and
+/// non-ISR task context remain application responsibilities.
 struct Config {
   // === I2C Transport (required) ===
-  I2cWriteFn i2cWrite = nullptr;
-  I2cWriteReadFn i2cWriteRead = nullptr;
-  void* i2cUser = nullptr;
+  I2cWriteFn i2cWrite = nullptr; ///< Required application-owned write callback
+  I2cWriteReadFn i2cWriteRead = nullptr; ///< Required repeated-start read callback
+  void* i2cUser = nullptr; ///< Opaque application transport context
 
   // === Timing Hooks (optional; required by blocking conversion APIs) ===
   /// Monotonic source. Required by readBlocking* and by direct timing-based
@@ -211,17 +255,17 @@ struct Config {
   Mode mode = Mode::SINGLE_SHOT;         ///< Operating mode
 
   // === Comparator Settings (optional) ===
-  ComparatorMode compMode = ComparatorMode::TRADITIONAL;
-  ComparatorPolarity compPolarity = ComparatorPolarity::ACTIVE_LOW;
-  ComparatorLatch compLatch = ComparatorLatch::NON_LATCHING;
-  ComparatorQueue compQueue = ComparatorQueue::DISABLE;
+  ComparatorMode compMode = ComparatorMode::TRADITIONAL; ///< Threshold/window mode
+  ComparatorPolarity compPolarity = ComparatorPolarity::ACTIVE_LOW; ///< Active level
+  ComparatorLatch compLatch = ComparatorLatch::NON_LATCHING; ///< Latch policy
+  ComparatorQueue compQueue = ComparatorQueue::DISABLE; ///< Queue depth or disabled
   int16_t compThresholdHigh = 0x7FFF;  ///< High threshold (default: max)
   int16_t compThresholdLow = -32768;   ///< Low threshold (default: min, 0x8000)
 
   // === ALERT/RDY Pin (optional) ===
   int alertRdyPin = -1;        ///< GPIO pin for ALERT/RDY; -1 means not used
-  GpioReadFn gpioRead = nullptr;
-  void* gpioUser = nullptr;
+  GpioReadFn gpioRead = nullptr; ///< Application-owned GPIO level callback
+  void* gpioUser = nullptr; ///< Opaque GPIO callback context
 
   // === Health Tracking ===
   uint8_t offlineThreshold = 5;    ///< Passive diagnostic threshold; never gates owner I/O

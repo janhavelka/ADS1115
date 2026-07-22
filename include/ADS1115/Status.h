@@ -37,11 +37,16 @@ enum class Err : uint8_t {
 
 /// @brief Status structure returned by all fallible operations.
 struct Status {
-  Err code = Err::OK;
+  Err code = Err::OK;         ///< Stable library error code
   int32_t detail = 0;        ///< Implementation-specific detail such as raw transport code or observed register value
   const char* msg = "";      ///< Static string describing the error
 
+  /// Construct a successful default status.
   constexpr Status() = default;
+  /// Construct an explicit status value.
+  /// @param codeIn Stable library error code.
+  /// @param detailIn Transport/register detail meaningful to the caller.
+  /// @param msgIn Pointer to a static-lifetime diagnostic string.
   constexpr Status(Err codeIn, int32_t detailIn, const char* msgIn)
       : code(codeIn), detail(detailIn), msg(msgIn) {}
   
@@ -49,6 +54,7 @@ struct Status {
   constexpr bool ok() const { return code == Err::OK; }
 
   /// @return true if the status matches the provided error code
+  /// @param err Error code to compare.
   constexpr bool is(Err err) const { return code == err; }
   
   /// @return true if operation in progress (not a failure)
@@ -57,10 +63,15 @@ struct Status {
   /// @return true if operation succeeded
   explicit constexpr operator bool() const { return ok(); }
   
-  /// Create a success status
+  /// Create a success status.
+  /// @return Status with code OK, detail zero, and a static message.
   static constexpr Status Ok() { return Status{Err::OK, 0, "OK"}; }
   
-  /// Create an error status
+  /// Create an error status.
+  /// @param err Stable library error code.
+  /// @param message Pointer to a static-lifetime diagnostic string.
+  /// @param detailCode Optional transport/register-specific detail.
+  /// @return Status containing the supplied fields.
   static constexpr Status Error(Err err, const char* message, int32_t detailCode = 0) {
     return Status{err, detailCode, message};
   }

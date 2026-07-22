@@ -10,6 +10,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes doxygen
+
+      - name: Build warning-free API documentation
+        run: doxygen Doxyfile
+
   build:
     runs-on: ubuntu-latest
     strategy:

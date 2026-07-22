@@ -2,6 +2,8 @@
 
 Last reviewed: 2026-07-22 against the ADS1115 v2.0.0 working tree based on
 `db1b43d` and TunnelMonitor-node `prompt-45-platformization` at `0dc40d1`.
+The later COM6 diagnostic evidence used ADS1115 `dd25d61`; it did not change
+the TunnelMonitor source review basis.
 
 ## Status
 

@@ -1,6 +1,7 @@
 # Open Release And Integration Items
 
-Last reviewed: 2026-07-22 against ADS1115 v2.0.0 (`dd25d61`)
+Last reviewed: 2026-07-22 against post-v2.0.0 main at `dd25d61`
+(runtime library version 2.0.0)
 
 This is the single index of unfinished repository-level work. Completed
 hardening reports are under [`archive/`](archive/), and dated hardware evidence
@@ -16,6 +17,9 @@ A clean, dated v2.0 ESP32-S2 diagnostic run is recorded in
 [`evidence/hil/2026-07-22_COM6/README.md`](evidence/hil/2026-07-22_COM6/README.md).
 Only the following unfinished physical and final-product evidence remains:
 
+- [ ] Validate the intended tagged release artifact with matching clean runtime
+  identity. The COM6 baseline used clean post-tag commit `dd25d61`, not the
+  `v2.0.0` tag at `785515a`.
 - [ ] Copy the ignored 2026-07-22 raw captures and flashed firmware into an
   immutable external archive, preserving the paths, sizes, and SHA-256 hashes
   recorded by the evidence summary.

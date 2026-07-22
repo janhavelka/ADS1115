@@ -31,24 +31,24 @@ enum class ConfigurationState : uint8_t {
 
 /// @brief Operation classes owned by the poll-driven API.
 enum class OperationKind : uint8_t {
-  NONE,
-  INITIALIZE,
-  APPLY_PROFILE,
-  RECOVER,
-  READ_SINGLE_SHOT,
-  SHUTDOWN
+  NONE,              ///< No owner operation
+  INITIALIZE,        ///< Probe, apply, and verify initial profile
+  APPLY_PROFILE,     ///< Apply and verify a same-address profile
+  RECOVER,           ///< Probe, replay, and verify the desired profile
+  READ_SINGLE_SHOT,  ///< Start, verify, and read one typed conversion
+  SHUTDOWN           ///< Request and verify single-shot idle mode
 };
 
 /// @brief Lifecycle of one tokened owner operation.
 enum class OperationState : uint8_t {
-  IDLE,
-  ACTIVE,
-  RECONCILING,
-  SUCCEEDED,
-  FAILED,
-  CANCELLED,
-  TIMED_OUT,
-  INDETERMINATE
+  IDLE,          ///< No active operation or pending result
+  ACTIVE,        ///< Operation may perform bounded work through poll()
+  RECONCILING,   ///< Bus-silent wait for a possibly active conversion
+  SUCCEEDED,     ///< Terminal successful result
+  FAILED,        ///< Terminal definite failure
+  CANCELLED,     ///< Terminal caller cancellation
+  TIMED_OUT,     ///< Terminal whole-operation deadline expiry
+  INDETERMINATE  ///< Terminal state with uncertain hardware effect
 };
 
 /// @brief Nonzero identity assigned when an owner operation is accepted.
@@ -56,24 +56,27 @@ enum class OperationState : uint8_t {
 /// Tokens remain reserved through terminal completion and must be passed to
 /// takeResult(). A new operation is rejected until that result is consumed.
 struct OperationToken {
-  uint32_t value = 0;
+  uint32_t value = 0; ///< Zero means no accepted operation
+
+  /// @brief Check whether the token identifies an accepted operation.
+  /// @return true when this token identifies an accepted operation.
   constexpr bool valid() const { return value != 0; }
 };
 
 /// @brief Immediate, bus-silent cancellation disposition.
 enum class CancelDisposition : uint8_t {
-  NO_ACTIVE_OPERATION,
-  CANCELLED_BEFORE_EFFECT,
-  CANCELLED_AFTER_EFFECT,
-  RECONCILIATION_REQUIRED
+  NO_ACTIVE_OPERATION,       ///< Nothing was active to cancel
+  CANCELLED_BEFORE_EFFECT,   ///< Terminal cancellation before hardware effect
+  CANCELLED_AFTER_EFFECT,    ///< Terminal cancellation after a safe known effect
+  RECONCILIATION_REQUIRED    ///< Bus-silent quiet interval must finish first
 };
 
 /// @brief Provenance and boundary flags carried by SampleResult::flags.
 enum class SampleFlag : uint16_t {
-  NONE = 0,
-  CONFIG_VERIFIED = 1U << 0,
-  AT_POSITIVE_CODE_LIMIT = 1U << 1,
-  AT_NEGATIVE_CODE_LIMIT = 1U << 2
+  NONE = 0,                              ///< No flags set
+  CONFIG_VERIFIED = 1U << 0,             ///< Sample uses verified clean config
+  AT_POSITIVE_CODE_LIMIT = 1U << 1,      ///< Raw code equals INT16_MAX
+  AT_NEGATIVE_CODE_LIMIT = 1U << 2       ///< Raw code equals INT16_MIN
 };
 
 /// @brief Atomic fixed-memory result for one verified single-shot conversion.
@@ -82,31 +85,37 @@ enum class SampleFlag : uint16_t {
 /// shunt, amplifier, offset, calibration, and engineering-unit conversion stay
 /// in the application.
 struct SampleResult {
-  int16_t rawCode = 0;
-  int32_t microvolts = 0;
-  uint16_t channelId = 0;
-  Mux mux = Mux::AIN0_GND;
-  Gain gain = Gain::FSR_2_048V;
-  DataRate dataRate = DataRate::SPS_128;
-  uint16_t flags = 0;
-  uint32_t configGeneration = 0;
-  uint32_t sequence = 0;
+  int16_t rawCode = 0; ///< Signed two's-complement conversion code
+  int32_t microvolts = 0; ///< Deterministically rounded nominal ADC-input value
+  uint16_t channelId = 0; ///< Application identity copied from ChannelRequest
+  Mux mux = Mux::AIN0_GND; ///< MUX used for this sample
+  Gain gain = Gain::FSR_2_048V; ///< PGA range used for scaling
+  DataRate dataRate = DataRate::SPS_128; ///< Data rate used for conversion timing
+  uint16_t flags = 0; ///< Bitwise SampleFlag values
+  uint32_t configGeneration = 0; ///< Verified profile generation used
+  uint32_t sequence = 0; ///< Successful-sample sequence; wraps UINT32_MAX to 1
 };
 
+/// @brief Bus-silent snapshot of the last committed profile record and trust state.
+///
+/// Treat profile as verified hardware configuration only when state is VERIFIED.
+/// UNCONFIGURED means no profile has committed; UNKNOWN means the retained last
+/// committed record may no longer match hardware.
 struct AppliedProfileSnapshot {
-  DeviceProfile profile{};
-  ConfigurationState state = ConfigurationState::UNBOUND;
-  uint32_t generation = 0;
+  DeviceProfile profile{}; ///< Last committed record; validity is qualified by state
+  ConfigurationState state = ConfigurationState::UNBOUND; ///< Current trust state
+  uint32_t generation = 0; ///< Increments after each successful verified commit
 };
 
+/// @brief Exactly-once terminal result of a tokened owner operation.
 struct OperationResult {
-  OperationToken token{};
-  OperationKind kind = OperationKind::NONE;
-  OperationState state = OperationState::IDLE;
-  Status status = Status::Ok();
-  bool sampleValid = false;
-  bool hardwareStateUncertain = false;
-  SampleResult sample{};
+  OperationToken token{}; ///< Token assigned when the operation was accepted
+  OperationKind kind = OperationKind::NONE; ///< Completed operation kind
+  OperationState state = OperationState::IDLE; ///< Terminal lifecycle state
+  Status status = Status::Ok(); ///< Final operation outcome
+  bool sampleValid = false; ///< True only when sample contains a publishable read
+  bool hardwareStateUncertain = false; ///< Hardware effects may be partial/unknown
+  SampleResult sample{}; ///< Atomic sample; meaningful only when sampleValid is true
 };
 
 /// @brief State of the optional poll-chunked job executor.
@@ -137,53 +146,53 @@ struct PollResult {
   uint8_t instructionsUsed = 0;       ///< Transport callbacks used by this poll call.
   bool done = true;                   ///< True when the job is no longer active.
   JobState state = JobState::IDLE;    ///< State after this poll call.
-  OperationToken token{};
-  OperationKind kind = OperationKind::NONE;
-  OperationState operationState = OperationState::IDLE;
+  OperationToken token{};             ///< Active or terminal operation token.
+  OperationKind kind = OperationKind::NONE; ///< Active or terminal operation kind.
+  OperationState operationState = OperationState::IDLE; ///< Owner lifecycle state.
 };
 
 /// @brief Snapshot of driver configuration and runtime state without I2C access.
 struct SettingsSnapshot {
-  bool initialized = false;
-  bool bound = false;
-  DriverState state = DriverState::UNINIT;
-  ConfigurationState configurationState = ConfigurationState::UNBOUND;
-  uint32_t configGeneration = 0;
-  OperationKind operationKind = OperationKind::NONE;
-  OperationState operationState = OperationState::IDLE;
-  OperationToken operationToken{};
-  bool terminalResultAvailable = false;
-  uint8_t i2cAddress = 0x48;
-  uint32_t i2cTimeoutMs = 0;
-  uint8_t offlineThreshold = 0;
-  bool strictInitVerify = false;
-  bool hasNowMsHook = false;
-  bool timebaseAvailable = false;
-  bool hasGpioReadHook = false;
-  bool hasCooperativeYieldHook = false;
-  bool hardwareConfigDirty = false;
-  Status hardwareConfigDirtyError = Status::Ok();
-  uint8_t hardwareConfigDirtyAddress = 0x00;
-  bool hardwareConfigUncertain = false;
-  Status lastConfigApplyError = Status::Ok();
-  int alertRdyPin = -1;
-  bool alertRdyPinConfigured = false;
-  bool conversionReadyModeEnabled = false;
-  bool usesAlertRdyPin = false;
-  Mux mux = Mux::AIN0_GND;
-  Gain gain = Gain::FSR_2_048V;
-  DataRate dataRate = DataRate::SPS_128;
-  Mode mode = Mode::SINGLE_SHOT;
-  ComparatorMode compMode = ComparatorMode::TRADITIONAL;
-  ComparatorPolarity compPolarity = ComparatorPolarity::ACTIVE_LOW;
-  ComparatorLatch compLatch = ComparatorLatch::NON_LATCHING;
-  ComparatorQueue compQueue = ComparatorQueue::DISABLE;
-  int16_t compThresholdHigh = 0x7FFF;
-  int16_t compThresholdLow = static_cast<int16_t>(0x8000);
-  bool conversionStarted = false;
-  bool conversionReady = false;
-  uint32_t conversionStartMs = 0;
-  int16_t lastRawValue = 0;
+  bool initialized = false; ///< Compatibility begin() completed successfully
+  bool bound = false; ///< A valid transport/profile binding exists
+  DriverState state = DriverState::UNINIT; ///< Passive transport-health state
+  ConfigurationState configurationState = ConfigurationState::UNBOUND; ///< Trust state
+  uint32_t configGeneration = 0; ///< Verified profile generation
+  OperationKind operationKind = OperationKind::NONE; ///< Current owner operation kind
+  OperationState operationState = OperationState::IDLE; ///< Current owner state
+  OperationToken operationToken{}; ///< Active or unconsumed terminal token
+  bool terminalResultAvailable = false; ///< takeResult() can consume a result
+  uint8_t i2cAddress = 0x48; ///< Currently bound seven-bit address
+  uint32_t i2cTimeoutMs = 0; ///< Configured per-transfer timeout cap
+  uint8_t offlineThreshold = 0; ///< Passive consecutive-failure threshold
+  bool strictInitVerify = false; ///< Compatibility flag; production always verifies
+  bool hasNowMsHook = false; ///< Compatibility monotonic hook is configured
+  bool timebaseAvailable = false; ///< Compatibility monotonic hook is available
+  bool hasGpioReadHook = false; ///< Compatibility GPIO callback is configured
+  bool hasCooperativeYieldHook = false; ///< Blocking compatibility yield is configured
+  bool hardwareConfigDirty = false; ///< Hardware/cache agreement is not trusted
+  Status hardwareConfigDirtyError = Status::Ok(); ///< Error that dirtied trust
+  uint8_t hardwareConfigDirtyAddress = 0x00; ///< Address affected by dirty write
+  bool hardwareConfigUncertain = false; ///< Compatibility alias of dirty state
+  Status lastConfigApplyError = Status::Ok(); ///< Compatibility dirty-error alias
+  int alertRdyPin = -1; ///< Configured ALERT/RDY GPIO number
+  bool alertRdyPinConfigured = false; ///< ALERT/RDY pin and GPIO callback are configured
+  bool conversionReadyModeEnabled = false; ///< Thresholds encode ready mode
+  bool usesAlertRdyPin = false; ///< GPIO readiness path is active
+  Mux mux = Mux::AIN0_GND; ///< Cached MUX selection
+  Gain gain = Gain::FSR_2_048V; ///< Cached PGA range
+  DataRate dataRate = DataRate::SPS_128; ///< Cached data rate
+  Mode mode = Mode::SINGLE_SHOT; ///< Cached conversion mode
+  ComparatorMode compMode = ComparatorMode::TRADITIONAL; ///< Comparator mode
+  ComparatorPolarity compPolarity = ComparatorPolarity::ACTIVE_LOW; ///< Polarity
+  ComparatorLatch compLatch = ComparatorLatch::NON_LATCHING; ///< Latch policy
+  ComparatorQueue compQueue = ComparatorQueue::DISABLE; ///< Queue setting
+  int16_t compThresholdHigh = 0x7FFF; ///< Cached signed high threshold
+  int16_t compThresholdLow = static_cast<int16_t>(0x8000); ///< Cached low threshold
+  bool conversionStarted = false; ///< A direct conversion is outstanding
+  bool conversionReady = false; ///< Cached direct-conversion readiness
+  uint32_t conversionStartMs = 0; ///< Direct conversion start timestamp
+  int16_t lastRawValue = 0; ///< Most recent successfully read raw code
 };
 
 /// @brief Transport-agnostic ADS1115 driver.
@@ -215,9 +224,14 @@ public:
   ADS1115& operator=(ADS1115&&) = delete;
   ~ADS1115() = default;
 
-  // === Lifecycle ===
+  /// @name Lifecycle and owner operations
+  /// @{
+
   /// Bind a validated non-owning transport and desired profile without I2C.
-  /// @return OK, or INVALID_CONFIG without changing the prior binding.
+  /// @param driverConfig Required callback binding and transfer timeout cap.
+  /// @param profile Complete desired volatile hardware profile.
+  /// @return OK, INVALID_CONFIG without changing the prior binding, or BUSY
+  ///         while an operation/result/direct conversion prevents rebinding.
   Status bind(const DriverConfig& driverConfig, const DeviceProfile& profile);
   /// Schedule probe, full profile apply, and mandatory readback without I2C.
   /// @param nowMs Current owner monotonic time.
@@ -228,15 +242,34 @@ public:
   Status startInitialize(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Schedule a validated candidate-profile apply and readback without I2C.
   /// The candidate commits only after all writable fields are verified.
+  /// The I2C address cannot change; unbind and bind a new profile instead.
+  /// @param profile Candidate profile using the currently bound address.
+  /// @param nowMs Current owner monotonic time.
+  /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
+  /// @param[out] token Nonzero operation identity on acceptance.
+  /// @return IN_PROGRESS when scheduled, or a validation/precondition status.
   Status startApplyProfile(const DeviceProfile& profile, uint32_t nowMs,
                            uint32_t deadlineMs, OperationToken& token);
   /// Schedule owner-authorized probe and verified profile replay without I2C.
+  /// @param nowMs Current owner monotonic time.
+  /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
+  /// @param[out] token Nonzero operation identity on acceptance.
+  /// @return IN_PROGRESS when scheduled, or a precondition status.
   Status startRecover(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Schedule one typed, provenance-preserving single-shot conversion without I2C.
   /// Requires a VERIFIED single-shot profile with clean hardware state.
+  /// @param request Application channel identity, MUX, and PGA for the sample.
+  /// @param nowMs Current owner monotonic time.
+  /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
+  /// @param[out] token Nonzero operation identity on acceptance.
+  /// @return IN_PROGRESS when scheduled, or a validation/precondition status.
   Status startRead(const ChannelRequest& request, uint32_t nowMs,
                    uint32_t deadlineMs, OperationToken& token);
   /// Schedule explicit single-shot-idle shutdown and CONFIG readback without I2C.
+  /// @param nowMs Current owner monotonic time.
+  /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
+  /// @param[out] token Nonzero operation identity on acceptance.
+  /// @return IN_PROGRESS when scheduled, or a precondition status.
   Status startShutdown(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Advance the active operation by at most maxTransactions callbacks.
   /// @param nowMs Current time in the operation's original time domain.
@@ -247,9 +280,13 @@ public:
   /// Request cancellation without I2C.
   /// A confirmed or ambiguous conversion start enters bus-silent wait-idle
   /// reconciliation; the abandoned sample is never published or reused.
+  /// @return Immediate disposition and whether reconciliation remains active.
   CancelDisposition cancelActiveOperation();
   /// Consume the pending terminal result exactly once by token without I2C.
   /// A token mismatch does not consume the result.
+  /// @param token Token returned when the operation was accepted.
+  /// @param[out] out Terminal operation result on success.
+  /// @return OK, TOKEN_MISMATCH, or RESULT_NOT_AVAILABLE.
   Status takeResult(OperationToken token, OperationResult& out);
   /// Drop the binding and all local state without I2C.
   /// First cancel and poll any conversion through reconciliation, and call
@@ -284,25 +321,40 @@ public:
 
   /// Compatibility synchronous shutdown facade while keeping the binding.
   /// Transaction count: one CONFIG write and one masked CONFIG readback.
+  /// @return Final shutdown write/readback status.
   Status shutdown();
 
   /// Check if begin() completed successfully and end() has not been called.
   /// @return true when the driver is initialized.
   bool isInitialized() const { return _initialized; }
+  /// @return true when a valid transport/profile binding exists.
   bool isBound() const { return _bound; }
+  /// @return Current hardware/profile trust state.
   ConfigurationState configurationState() const { return _configurationState; }
+  /// @return Generation of the last verified profile commit.
   uint32_t configurationGeneration() const { return _configGeneration; }
+  /// @return Active or unconsumed terminal operation token.
   OperationToken activeOperationToken() const { return _operationToken; }
+  /// @return Active or unconsumed terminal operation kind.
   OperationKind operationKind() const { return _operationKind; }
+  /// @return Current operation lifecycle state.
   OperationState operationState() const { return _operationState; }
+  /// @return true when takeResult() can consume a terminal result.
   bool terminalResultAvailable() const { return _terminalResultAvailable; }
+  /// Snapshot the last committed profile record and current trust state without I2C.
+  /// @param[out] out Profile, state, and verified generation.
+  /// @return OK when bound, or NOT_INITIALIZED when unbound.
   Status getAppliedProfile(AppliedProfileSnapshot& out) const;
 
   /// Get the cached configuration snapshot currently owned by the driver.
   /// @return Cached driver configuration.
   const Config& getConfig() const { return _config; }
 
-  // === Diagnostics (no health tracking) ===
+  /// @}
+
+  /// @name Diagnostics and snapshots
+  /// @{
+
   /// Probe ADS1115 CONFIG-register reachability without updating health counters.
   /// ADS1115 has no chip-ID register; this is a diagnostic I2C/register
   /// plausibility check, not identity proof.
@@ -323,7 +375,11 @@ public:
   /// @return Status::Ok() always
   Status getSettings(SettingsSnapshot& out) const;
 
-  // === Driver State ===
+  /// @}
+
+  /// @name Driver state and passive health
+  /// @{
+
   /// @return Current coarse driver state.
   DriverState state() const { return _driverState; }
   /// @return Compatibility alias for state().
@@ -334,7 +390,6 @@ public:
            _driverState == DriverState::DEGRADED;
   }
 
-  // === Health Tracking ===
   /// @return Timestamp of the last successful tracked I2C operation.
   uint32_t lastOkMs() const { return _lastOkMs; }
   /// @return Timestamp of the last failed tracked I2C operation.
@@ -358,7 +413,11 @@ public:
   /// @return Lifetime tracked success count.
   uint32_t totalSuccess() const { return _totalSuccess; }
 
-  // === Conversion API ===
+  /// @}
+
+  /// @name Conversion and compatibility jobs
+  /// @{
+
   /// Start one single-shot conversion using the cached mux.
   /// @return Err::IN_PROGRESS when started, Err::UNSUPPORTED_OPERATION in
   /// continuous mode, or Err::BUSY when a single-shot conversion is already active.
@@ -503,7 +562,11 @@ public:
   /// @return Last raw conversion value captured by read APIs or poll jobs.
   int16_t lastRawValue() const { return _lastRawValue; }
 
-  // === Configuration ===
+  /// @}
+
+  /// @name Typed configuration diagnostics
+  /// @{
+
   /// Set the input multiplexer. Cache changes commit only after I2C success.
   /// Transaction count: one CONFIG write.
   /// @param mux Input mux selection.
@@ -549,7 +612,11 @@ public:
   /// @return Status::Ok() when the register is written and cache is updated.
   Status writeConfig(uint16_t config);
 
-  // === Raw Register Access ===
+  /// @}
+
+  /// @name Raw register diagnostics
+  /// @{
+
   /// Read a 16-bit register using tracked I2C access.
   /// Valid register pointers are 0x00..0x03.
   /// @param reg Register pointer.
@@ -586,7 +653,11 @@ public:
   /// @return Status::Ok() on a successful register write.
   Status writeRegister(uint8_t reg, uint16_t value) { return writeRegister16(reg, value); }
 
-  // === Comparator ===
+  /// @}
+
+  /// @name Comparator and ALERT/RDY diagnostics
+  /// @{
+
   /// Set signed comparator thresholds. Cache changes commit after both writes succeed.
   /// Thresholds are signed raw conversion codes and must be recalculated if the
   /// gain/full-scale range changes. If the second write fails after the first
@@ -659,7 +730,11 @@ public:
   /// @return Status::Ok() when CONFIG was written.
   Status disableComparator();
 
-  // === Utility ===
+  /// @}
+
+  /// @name Conversion utilities
+  /// @{
+
   /// @param raw Signed conversion code.
   /// @return Input voltage using the cached PGA range.
   float rawToVoltage(int16_t raw) const;
@@ -667,6 +742,8 @@ public:
   float getLsbVoltage() const;
   /// @return Conservative conversion time in milliseconds for the cached data rate.
   uint32_t getConversionTimeMs() const;
+
+  /// @}
 
 private:
   // === Transport Wrappers ===

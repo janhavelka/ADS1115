@@ -1,8 +1,11 @@
 # ADS1115 2.0 Open Hardware Validation Plan
 
-This is the operator plan for hardware evidence that is still missing for the
-2.0 release. It is not validation evidence. The repository's COM19 and COM8
-captures predate 2.0 and are historical only; see `docs/evidence/hil/README.md`.
+This is the operator plan for hardware evidence that is still missing after the
+2.0 release. It is not validation evidence. COM19 and COM8 captures predate
+2.0. The clean post-tag COM6 run establishes an ESP32-S2 Arduino diagnostic
+baseline, but not tagged-release, calibrated, electrical, injected-fault,
+native ESP-IDF, ESP32-S3, or final-product acceptance. See the
+[`HIL evidence index`](evidence/hil/README.md).
 
 ## Acceptance Rule
 
@@ -20,8 +23,8 @@ capture time, and a concise result or failure summary.
 
 | Gate | Required coverage | Evidence needed |
 | --- | --- | --- |
-| Clean release identity | Tagged 2.0 commit, clean firmware, matching `version` output and build timestamp | Build record, startup identity, manifest |
-| Arduino physical HIL | ESP32-S2 and ESP32-S3; targeted/full command plans; all fitted addresses and expected-absent addresses | Runner summaries plus hashed transcripts |
+| Tagged release identity | Firmware built from the tagged 2.0 commit, matching `version` output and build timestamp; COM6 tested clean post-tag `dd25d61`, not tag `v2.0.0` | Build record, startup identity, manifest |
+| Remaining Arduino physical HIL | ESP32-S3 targeted/full plans; final-board ESP32-S2 rerun when applicable; populated and expected-absent addresses | Runner summaries plus hashed transcripts |
 | Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
 | Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
 | Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |
@@ -29,7 +32,7 @@ capture time, and a concise result or failure summary.
 | Physical faults and recovery | Missing device, unplug/replug, stuck SDA/SCL, ADS1115 brownout/reset, raw-write dirty state, partial/ambiguous transfer | Exact status/detail/message, dirty/trust state, recovery result |
 | Shared-bus workload | External serialization, contention, bounded callback latency, cancellation/reconciliation, production task cadence | Target integration log and timing/fault summary |
 | Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Build/flash/monitor summaries and manifests |
-| Endurance | Acceptance-duration nominal soak and worst-rate stress, with limits chosen before the run | Duration, cycles/commands, latency, failures, resets, environment |
+| Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run; the COM6 diagnostic one-hour soak is only a baseline | Duration, cycles/commands, latency, failures, resets, environment |
 | Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
 
 ## Record Identity Before Testing

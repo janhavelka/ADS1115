@@ -124,9 +124,10 @@ def main() -> int:
 
     for token in (
         "diagnostic Arduino bring-up CLI",
-        "Current examples are diagnostic",
-        "Production applications should implement",
-        "Raw writes bypass the typed config helpers",
+        "it is not a production bus manager",
+        "does not include a shared-bus mutex",
+        "Raw register writes",
+        "mark cache/hardware state dirty",
     ):
         if token not in readme:
             fail(f"README must document example honesty token: {token!r}")
