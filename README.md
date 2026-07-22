@@ -341,7 +341,6 @@ python tools/check_cli_contract.py
 python tools/check_idf_example_contract.py
 python tools/run_i2c_hil.py --parser-test
 python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targeted
-python tools/hil_ads1115_capture.py --dry-run --suite identity
 python -m platformio run -e esp32s3dev
 python -m platformio run -e esp32s2dev
 python -m platformio run -e owner_safe_s3

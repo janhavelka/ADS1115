@@ -280,6 +280,33 @@ void assertNoIoSince(const FakeBus& bus, uint32_t writesBefore, uint32_t readsBe
   TEST_ASSERT_EQUAL_UINT32(readsBefore, bus.readCalls);
 }
 
+void assertDeviceProfilesEqual(const DeviceProfile& expected,
+                               const DeviceProfile& actual) {
+  TEST_ASSERT_EQUAL_HEX8(expected.i2cAddress, actual.i2cAddress);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.defaultMux),
+                          static_cast<uint8_t>(actual.defaultMux));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.defaultGain),
+                          static_cast<uint8_t>(actual.defaultGain));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.dataRate),
+                          static_cast<uint8_t>(actual.dataRate));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.mode),
+                          static_cast<uint8_t>(actual.mode));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.comparator.use),
+                          static_cast<uint8_t>(actual.comparator.use));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.comparator.mode),
+                          static_cast<uint8_t>(actual.comparator.mode));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.comparator.polarity),
+                          static_cast<uint8_t>(actual.comparator.polarity));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.comparator.latch),
+                          static_cast<uint8_t>(actual.comparator.latch));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected.comparator.queue),
+                          static_cast<uint8_t>(actual.comparator.queue));
+  TEST_ASSERT_EQUAL_INT16(expected.comparator.lowThreshold,
+                          actual.comparator.lowThreshold);
+  TEST_ASSERT_EQUAL_INT16(expected.comparator.highThreshold,
+                          actual.comparator.highThreshold);
+}
+
 }  // namespace
 
 void setUp() {}
@@ -4739,6 +4766,223 @@ void test_owner_safe_profile_cancel_after_each_pending_stage_marks_effects_unkno
   }
 }
 
+void test_owner_safe_apply_profile_success_commits_candidate_snapshot_and_generation() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  const DeviceProfile original = makeDeviceProfile();
+  initializeOwnerSafe(dev, bus, original);
+  resetIoCounters(bus);
+
+  DeviceProfile candidate = original;
+  candidate.defaultMux = Mux::AIN3_GND;
+  candidate.defaultGain = Gain::FSR_0_512V;
+  candidate.dataRate = DataRate::SPS_475;
+  candidate.comparator.use = ComparatorUse::THRESHOLD;
+  candidate.comparator.mode = ComparatorMode::WINDOW;
+  candidate.comparator.polarity = ComparatorPolarity::ACTIVE_HIGH;
+  candidate.comparator.latch = ComparatorLatch::LATCHING;
+  candidate.comparator.queue = ComparatorQueue::ASSERT_4;
+  candidate.comparator.lowThreshold = -1234;
+  candidate.comparator.highThreshold = 2345;
+
+  OperationToken token;
+  const uint32_t writesBeforeStart = bus.writeCalls;
+  const uint32_t readsBeforeStart = bus.readCalls;
+  TEST_ASSERT_TRUE(dev.startApplyProfile(candidate, 200U, 1000U, token).inProgress());
+  TEST_ASSERT_TRUE(token.valid());
+  assertNoIoSince(bus, writesBeforeStart, readsBeforeStart);
+
+  AppliedProfileSnapshot applying;
+  TEST_ASSERT_TRUE(dev.getAppliedProfile(applying).ok());
+  assertDeviceProfilesEqual(original, applying.profile);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ConfigurationState::APPLYING),
+                          static_cast<uint8_t>(applying.state));
+  TEST_ASSERT_EQUAL_UINT32(1U, applying.generation);
+
+  PollResult poll;
+  for (uint8_t step = 0; step < 6U; ++step) {
+    poll = dev.poll(200U, 1U);
+    TEST_ASSERT_EQUAL_UINT8(1U, poll.instructionsUsed);
+    TEST_ASSERT_EQUAL(step == 5U, poll.done);
+  }
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT32(3U, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(3U, bus.readCalls);
+
+  AppliedProfileSnapshot applied;
+  TEST_ASSERT_TRUE(dev.getAppliedProfile(applied).ok());
+  assertDeviceProfilesEqual(candidate, applied.profile);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ConfigurationState::VERIFIED),
+                          static_cast<uint8_t>(applied.state));
+  TEST_ASSERT_EQUAL_UINT32(2U, applied.generation);
+  TEST_ASSERT_EQUAL_UINT32(2U, dev.configurationGeneration());
+  TEST_ASSERT_FALSE(dev.hardwareConfigDirty());
+
+  OperationResult result;
+  TEST_ASSERT_TRUE(dev.takeResult(token, result).ok());
+  TEST_ASSERT_EQUAL_UINT32(token.value, result.token.value);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationKind::APPLY_PROFILE),
+                          static_cast<uint8_t>(result.kind));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationState::SUCCEEDED),
+                          static_cast<uint8_t>(result.state));
+  TEST_ASSERT_TRUE(result.status.ok());
+  TEST_ASSERT_FALSE(result.sampleValid);
+  TEST_ASSERT_FALSE(result.hardwareStateUncertain);
+}
+
+void test_owner_safe_tokened_shutdown_verifies_idle_and_publishes_result() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  DeviceProfile profile = makeDeviceProfile();
+  profile.mode = Mode::CONTINUOUS;
+  initializeOwnerSafe(dev, bus, profile);
+  resetIoCounters(bus);
+
+  OperationToken token;
+  TEST_ASSERT_TRUE(dev.startShutdown(200U, 400U, token).inProgress());
+  TEST_ASSERT_TRUE(token.valid());
+  TEST_ASSERT_EQUAL_UINT32(0U, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0U, bus.readCalls);
+
+  PollResult poll = dev.poll(200U, 1U);
+  TEST_ASSERT_FALSE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(1U, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1U, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0U, bus.readCalls);
+  poll = dev.poll(200U, 1U);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT8(1U, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT32(1U, bus.readCalls);
+
+  AppliedProfileSnapshot applied;
+  TEST_ASSERT_TRUE(dev.getAppliedProfile(applied).ok());
+  profile.mode = Mode::SINGLE_SHOT;
+  assertDeviceProfilesEqual(profile, applied.profile);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ConfigurationState::VERIFIED),
+                          static_cast<uint8_t>(applied.state));
+  TEST_ASSERT_EQUAL_UINT32(2U, applied.generation);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Mode::SINGLE_SHOT),
+                          static_cast<uint8_t>(dev.getConfig().mode));
+  TEST_ASSERT_TRUE(dev.isInitialized());
+
+  OperationResult result;
+  TEST_ASSERT_TRUE(dev.takeResult(token, result).ok());
+  TEST_ASSERT_EQUAL_UINT32(token.value, result.token.value);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationKind::SHUTDOWN),
+                          static_cast<uint8_t>(result.kind));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationState::SUCCEEDED),
+                          static_cast<uint8_t>(result.state));
+  TEST_ASSERT_TRUE(result.status.ok());
+  TEST_ASSERT_FALSE(result.sampleValid);
+  TEST_ASSERT_FALSE(result.hardwareStateUncertain);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::RESULT_NOT_AVAILABLE),
+                          static_cast<uint8_t>(dev.takeResult(token, result).code));
+}
+
+void test_owner_safe_recover_initializes_bound_driver_after_failed_initialize() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  const DeviceProfile profile = makeDeviceProfile();
+  TEST_ASSERT_TRUE(dev.bind(makeDriverConfig(bus), profile).ok());
+
+  bus.failReadOnCall = 1U;
+  bus.failReadStatus =
+      Status::Error(Err::I2C_NACK_ADDR, "initial owner probe failed", -48);
+  OperationToken initializeToken;
+  TEST_ASSERT_TRUE(dev.startInitialize(100U, 1000U, initializeToken).inProgress());
+  PollResult poll = dev.poll(100U, 1U);
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::DEVICE_NOT_FOUND),
+                          static_cast<uint8_t>(poll.status.code));
+  TEST_ASSERT_TRUE(dev.isBound());
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ConfigurationState::UNCONFIGURED),
+                          static_cast<uint8_t>(dev.configurationState()));
+  TEST_ASSERT_EQUAL_UINT32(0U, dev.configurationGeneration());
+  OperationResult initializeResult;
+  TEST_ASSERT_TRUE(dev.takeResult(initializeToken, initializeResult).ok());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationKind::INITIALIZE),
+                          static_cast<uint8_t>(initializeResult.kind));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationState::FAILED),
+                          static_cast<uint8_t>(initializeResult.state));
+
+  resetIoCounters(bus);
+  OperationToken recoverToken;
+  TEST_ASSERT_TRUE(dev.startRecover(200U, 1200U, recoverToken).inProgress());
+  TEST_ASSERT_TRUE(recoverToken.valid());
+  TEST_ASSERT_EQUAL_UINT32(0U, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(0U, bus.readCalls);
+  for (uint8_t step = 0; step < 7U; ++step) {
+    poll = dev.poll(200U, 1U);
+    TEST_ASSERT_EQUAL_UINT8(1U, poll.instructionsUsed);
+    TEST_ASSERT_EQUAL(step == 6U, poll.done);
+  }
+  TEST_ASSERT_TRUE(poll.status.ok());
+  TEST_ASSERT_EQUAL_UINT32(3U, bus.writeCalls);
+  TEST_ASSERT_EQUAL_UINT32(4U, bus.readCalls);
+  TEST_ASSERT_TRUE(dev.isInitialized());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(DriverState::READY),
+                          static_cast<uint8_t>(dev.state()));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ConfigurationState::VERIFIED),
+                          static_cast<uint8_t>(dev.configurationState()));
+  TEST_ASSERT_EQUAL_UINT32(1U, dev.configurationGeneration());
+  AppliedProfileSnapshot applied;
+  TEST_ASSERT_TRUE(dev.getAppliedProfile(applied).ok());
+  assertDeviceProfilesEqual(profile, applied.profile);
+
+  OperationResult recoverResult;
+  TEST_ASSERT_TRUE(dev.takeResult(recoverToken, recoverResult).ok());
+  TEST_ASSERT_EQUAL_UINT32(recoverToken.value, recoverResult.token.value);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationKind::RECOVER),
+                          static_cast<uint8_t>(recoverResult.kind));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(OperationState::SUCCEEDED),
+                          static_cast<uint8_t>(recoverResult.state));
+  TEST_ASSERT_TRUE(recoverResult.status.ok());
+}
+
+void test_owner_safe_sample_result_sets_positive_and_negative_code_limit_flags() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  initializeOwnerSafe(dev, bus, makeDeviceProfile());
+  resetIoCounters(bus);
+  ChannelRequest request;
+
+  const int16_t rawCodes[] = {INT16_MAX, INT16_MIN};
+  const SampleFlag expectedFlags[] = {SampleFlag::AT_POSITIVE_CODE_LIMIT,
+                                      SampleFlag::AT_NEGATIVE_CODE_LIMIT};
+  const SampleFlag absentFlags[] = {SampleFlag::AT_NEGATIVE_CODE_LIMIT,
+                                    SampleFlag::AT_POSITIVE_CODE_LIMIT};
+  const int32_t expectedMicrovolts[] = {2047938, -2048000};
+  for (uint8_t index = 0; index < 2U; ++index) {
+    bus.reg[cmd::REG_CONVERSION] = static_cast<uint16_t>(rawCodes[index]);
+    const uint32_t startMs = 200U + static_cast<uint32_t>(index) * 100U;
+    OperationToken token;
+    TEST_ASSERT_TRUE(
+        dev.startRead(request, startMs, startMs + 200U, token).inProgress());
+    TEST_ASSERT_FALSE(dev.poll(startMs, 1U).done);
+    const uint32_t readyMs = startMs + ownerConversionTimeMs(DataRate::SPS_128);
+    TEST_ASSERT_FALSE(dev.poll(readyMs, 1U).done);
+    const PollResult poll = dev.poll(readyMs, 1U);
+    TEST_ASSERT_TRUE(poll.done);
+    TEST_ASSERT_TRUE(poll.status.ok());
+
+    OperationResult result;
+    TEST_ASSERT_TRUE(dev.takeResult(token, result).ok());
+    TEST_ASSERT_TRUE(result.sampleValid);
+    TEST_ASSERT_EQUAL_INT16(rawCodes[index], result.sample.rawCode);
+    TEST_ASSERT_EQUAL_INT32(expectedMicrovolts[index], result.sample.microvolts);
+    TEST_ASSERT_TRUE(
+        (result.sample.flags & static_cast<uint16_t>(SampleFlag::CONFIG_VERIFIED)) != 0U);
+    TEST_ASSERT_TRUE(
+        (result.sample.flags & static_cast<uint16_t>(expectedFlags[index])) != 0U);
+    TEST_ASSERT_TRUE(
+        (result.sample.flags & static_cast<uint16_t>(absentFlags[index])) == 0U);
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(index) + 1U,
+                             result.sample.sequence);
+  }
+}
+
 void test_owner_safe_dirty_configuration_blocks_typed_read_until_verified_recover() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -5039,6 +5283,10 @@ int main() {
   RUN_TEST(test_owner_safe_ambiguous_delayed_start_uses_post_callback_quiet_interval);
   RUN_TEST(test_owner_safe_cancel_after_ready_verification_discards_sample_without_dirtying);
   RUN_TEST(test_owner_safe_profile_cancel_after_each_pending_stage_marks_effects_unknown);
+  RUN_TEST(test_owner_safe_apply_profile_success_commits_candidate_snapshot_and_generation);
+  RUN_TEST(test_owner_safe_tokened_shutdown_verifies_idle_and_publishes_result);
+  RUN_TEST(test_owner_safe_recover_initializes_bound_driver_after_failed_initialize);
+  RUN_TEST(test_owner_safe_sample_result_sets_positive_and_negative_code_limit_flags);
   RUN_TEST(test_owner_safe_dirty_configuration_blocks_typed_read_until_verified_recover);
   RUN_TEST(test_owner_safe_direct_mutations_are_blocked_during_conversion);
   RUN_TEST(test_owner_safe_health_is_passive_and_recovery_transport_is_not_offline_gated);

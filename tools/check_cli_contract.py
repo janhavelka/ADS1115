@@ -55,13 +55,12 @@ def ensure_missing(path: pathlib.Path, label: str) -> None:
 def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
-    hil_capture = ROOT / "tools" / "hil_ads1115_capture.py"
     hil_runner = ROOT / "tools" / "run_i2c_hil.py"
 
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
-    ensure_exists(hil_capture, "HIL capture helper")
     ensure_exists(hil_runner, "classified HIL runner")
+    ensure_missing(ROOT / "tools" / "hil_ads1115_capture.py", "legacy HIL capture helper")
 
     ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
     ensure_missing(
@@ -75,7 +74,6 @@ def main() -> int:
     ensure_missing(common_dir / "IdfArduinoCompat.h", "Arduino compatibility facade")
 
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
-    hil_text = hil_capture.read_text(encoding="utf-8", errors="replace")
     hil_runner_text = hil_runner.read_text(encoding="utf-8", errors="replace")
     readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
@@ -104,24 +102,10 @@ def main() -> int:
         "device.setMux",
         "printAndAcknowledgePollResult",
         "device.takeResult(result.token",
+        "device.isInitialized() && !device.jobActive()",
     ):
         if token not in text:
             fail(f"bringup CLI must include token: {token!r}")
-
-    for token in (
-        "RESTORE_COMMANDS",
-        "response_is_ready",
-        "command_is_functional",
-        "response_has_prompt",
-        "command_timeout_s",
-        "Command timed out before CLI prompt",
-        "classify_address_response",
-        "Selftest precondition failed for the requested address",
-        "Restore failed; aborting HIL capture before functional commands.",
-        "Address check",
-    ):
-        if token not in hil_text:
-            fail(f"HIL capture helper must include token: {token!r}")
 
     for token in (
         "TGT-{address}-MODE-RAW",

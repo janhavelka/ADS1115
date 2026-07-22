@@ -51,7 +51,17 @@ STRESS_MIX_TOTAL_RE = re.compile(
 )
 RATE_RE = re.compile(r"\bRate:\s*([0-9]+(?:\.[0-9]+)?)\s*(samples/s|ops/s)\b")
 DURATION_RE = re.compile(r"\bDuration:\s*(\d+)\s*ms\b")
+FIRMWARE_COMMIT_RE = re.compile(
+    r"ADS1115 library commit:\s*([0-9a-f]+)\s*\((clean|dirty)\)",
+    re.IGNORECASE,
+)
 FOUND_ADDRESS_RE = re.compile(r"\b(?:0x)?4[89AB]\b", re.IGNORECASE)
+SCAN_40_ROW_RE = re.compile(r"^\s*40:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
+BATCH_THREE_RE = re.compile(r"^\s*3:\s*-?\d+\s+\(", re.MULTILINE)
+REBOOT_MARKERS = (
+    "=== ADS1115 Diagnostic Bring-up CLI ===",
+    "Reset reason:",
+)
 
 STATUS_FAILURES = {
     "DEVICE_NOT_FOUND",
@@ -69,6 +79,11 @@ STATUS_FAILURES = {
     "UNSUPPORTED_OPERATION",
     "HARDWARE_CONFIG_DIRTY",
     "CLOCK_STALLED",
+    "CANCELLED",
+    "CONFIG_UNKNOWN",
+    "RESULT_NOT_AVAILABLE",
+    "TOKEN_MISMATCH",
+    "INDETERMINATE",
 }
 
 GENERIC_FAILURE_RE = (
@@ -114,6 +129,7 @@ class StepResult:
     result: str
     notes: str
     evidence_required: bool = False
+    reset_observed: bool = False
 
 
 @dataclasses.dataclass
@@ -128,6 +144,7 @@ class SoakStats:
     max_consecutive_failures: int = 0
     cycles: int = 0
     stopped_reason: str = ""
+    reset_markers: int = 0
 
 
 def strip_ansi(text: str) -> str:
@@ -179,6 +196,9 @@ def status_token(text: str) -> str | None:
 
 def output_has_failure(spec: CommandSpec, text: str) -> str | None:
     plain = strip_ansi(text)
+    for marker in REBOOT_MARKERS:
+        if marker in plain:
+            return f"unexpected reboot marker {marker}"
     token = status_token(plain)
     if token in STATUS_FAILURES:
         return f"status token {token}"
@@ -237,9 +257,22 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
         elif validator == "status_unsupported":
             if status_token(plain) != "UNSUPPORTED_OPERATION":
                 return "Status: UNSUPPORTED_OPERATION not found"
+        elif validator == "status_cancelled":
+            if status_token(plain) != "CANCELLED":
+                return "Status: CANCELLED not found"
         elif validator == "driver_ready":
             if "State: READY" not in plain and "state=READY" not in plain:
                 return "driver state is not READY"
+        elif validator == "firmware_clean_commit":
+            match = FIRMWARE_COMMIT_RE.search(plain)
+            if match is None:
+                return "firmware commit/clean marker not found"
+            firmware_commit = match.group(1).lower()
+            host_commit = run_git(["rev-parse", "HEAD"]).lower()
+            if match.group(2).lower() != "clean":
+                return "firmware reports a dirty build"
+            if not host_commit.startswith(firmware_commit):
+                return f"firmware commit {firmware_commit} does not match host {host_commit}"
         elif validator == "zero_failures":
             failures = parse_int(TOTAL_FAILURES_RE, plain)
             if failures is None:
@@ -258,6 +291,8 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
                 return "selftest summary not found"
             if int(match.group(2)) != 0:
                 return f"selftest failures={match.group(2)}"
+            if int(match.group(3)) != 0:
+                return f"selftest skipped={match.group(3)}"
         elif validator == "stress_zero_errors":
             errors = parse_int(STRESS_ERRORS_RE, plain)
             if errors is None:
@@ -273,6 +308,9 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
         elif validator == "job_active":
             if "Active: YES" not in plain:
                 return "job is not active"
+        elif validator == "job_inactive":
+            if "Active: NO" not in plain:
+                return "job is still active"
         elif validator == "job_done":
             if "Done: YES" not in plain:
                 return "job did not complete"
@@ -294,9 +332,16 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
             if "Hardware/cache dirty: NO" not in plain:
                 return "dirty diagnostic did not clear"
         elif validator == "scan_ads1115":
-            found = {m.upper() for m in FOUND_ADDRESS_RE.findall(plain)}
+            found = {
+                match.upper()
+                for row in SCAN_40_ROW_RE.findall(plain)
+                for match in FOUND_ADDRESS_RE.findall(row)
+            }
             if not found:
                 return "no ADS1115-range address found in scan"
+        elif validator == "batch_three":
+            if BATCH_THREE_RE.search(plain) is None:
+                return "third batch sample not found"
         elif validator == "rate_report":
             if RATE_RE.search(plain) is None or DURATION_RE.search(plain) is None:
                 return "rate/duration summary not found"
@@ -358,6 +403,7 @@ def base_plan() -> list[CommandSpec]:
             "version",
             "Firmware and library version output",
             ("=== Version Info ===", "ADS1115 library version"),
+            ("firmware_clean_commit",),
             timeout_s=4.0,
         ),
         CommandSpec(
@@ -686,6 +732,34 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
     return [step.formatted(address=address) for step in steps]
 
 
+def exhaustive_diagnostic_plan(address: str) -> list[CommandSpec]:
+    """Cover safe CLI surfaces not exercised by the functional plans."""
+    steps = [
+        CommandSpec("DIAG-{address}-HELP", "CLI", "help", "Render complete command help", ("ADS1115 Diagnostic Bring-up CLI Help",)),
+        CommandSpec("DIAG-{address}-STATE", "Diagnostics", "state", "Render compact READY health", ("state=READY",), ("driver_ready",)),
+        CommandSpec("DIAG-{address}-ADDR", "Address", "addr", "Report selected address", ("Active ADS1115 address:",)),
+        CommandSpec("DIAG-{address}-CH", "Mux", "ch", "Report current mux as channel", ("Mux:",)),
+        CommandSpec("DIAG-{address}-DIFF", "Mux", "diff", "Report current mux", ("Mux:",)),
+        CommandSpec("DIAG-{address}-GAIN", "Gain", "gain", "Report current gain", ("Gain:",)),
+        CommandSpec("DIAG-{address}-RATE", "Data Rate", "rate", "Report current data rate", ("Rate:",)),
+        CommandSpec("DIAG-{address}-MODE", "Mode", "mode", "Report current operating mode", ("Mode:",)),
+        CommandSpec("DIAG-{address}-CONFIG", "Registers", "config", "Read and decode CONFIG", ("Config:", "Fields:")),
+        CommandSpec("DIAG-{address}-READ3", "Conversion", "read 3", "Read a bounded three-sample batch", ("3:",), ("batch_three",), timeout_s=15.0, unknown_on_pass=True),
+        CommandSpec("DIAG-{address}-VERBOSE0", "CLI", "verbose", "Report initial verbose mode", ("Verbose mode:",)),
+        CommandSpec("DIAG-{address}-VERBOSE1", "CLI", "verbose 1", "Enable verbose diagnostics", ("Verbose mode:",)),
+        CommandSpec("DIAG-{address}-VERBOSE-RESTORE", "CLI", "verbose 0", "Restore quiet diagnostics", ("Verbose mode:",)),
+        CommandSpec("DIAG-{address}-JOB0", "Staged Jobs", "job", "Report no active job", ("=== Job Status ===",), ("job_inactive",)),
+        CommandSpec("DIAG-{address}-CANCEL-START", "Cancellation", "job single", "Start cancellable staged job", ("=== Job Status ===",), ("job_active",)),
+        CommandSpec("DIAG-{address}-CANCEL", "Cancellation", "job cancel", "Cancel staged job and acknowledge terminal result", ("=== Job Status ===",), ("status_cancelled", "job_inactive"), expected_failure=True),
+        CommandSpec("DIAG-{address}-COMP-OFF", "Comparator", "comp queue disable", "Disable comparator via queue command", ("Status: OK",), ("status_ok",)),
+        CommandSpec("DIAG-{address}-WREG3", "Registers", "wreg 3 0x7FFF", "Write high threshold diagnostic register and mark dirty", ("Status: OK",), ("status_ok",)),
+        CommandSpec("DIAG-{address}-DIRTY", "Dirty State", "settings", "High-threshold raw write is visibly dirty", ("Hardware/cache dirty:",), ("dirty_yes",)),
+        CommandSpec("DIAG-{address}-RESTORE", "Recovery", "recover", "Restore verified configuration after diagnostics", ("Status: OK",), ("status_ok",), timeout_s=8.0),
+        CommandSpec("DIAG-{address}-FINAL", "Health", "drv", "Finish READY with zero failures", ("=== Driver Health ===",), ("driver_ready", "zero_failures"), timeout_s=5.0),
+    ]
+    return [step.formatted(address=address) for step in steps]
+
+
 def absent_address_plan(address: str) -> list[CommandSpec]:
     return [
         CommandSpec(
@@ -737,6 +811,9 @@ def build_plan(args: argparse.Namespace) -> list[CommandSpec]:
             specs.extend(targeted_address_plan(address))
         else:
             specs.extend(per_address_plan(address, full=args.suite in ("full", "exhaustive"), benchmark=args.benchmark))
+            if args.suite == "exhaustive":
+                specs.extend(targeted_address_plan(address))
+                specs.extend(exhaustive_diagnostic_plan(address))
     if args.absent_address:
         for address in args.absent_address:
             if address not in addresses:
@@ -746,18 +823,26 @@ def build_plan(args: argparse.Namespace) -> list[CommandSpec]:
 
 
 def parser_self_test() -> None:
+    host_short_commit = run_git(["rev-parse", "--short=7", "HEAD"])
     samples = [
         (CommandSpec("T", "Version", "version", "", ("=== Version Info ===",)), "=== Version Info ===\n> ", RESULT_PASS),
         (CommandSpec("T", "Health", "drv", "", ("=== Driver Health ===",), ("driver_ready", "zero_failures")), "=== Driver Health ===\n  State: READY\n  Total failures: 0\n> ", RESULT_PASS),
         (CommandSpec("T", "Read", "read", "", ("Raw:",), ("raw_sample", "voltage"), unknown_on_pass=True), "  Raw: -12\n  Voltage: -0.000750 V\n> ", RESULT_EVIDENCE_REQUIRED),
         (CommandSpec("T", "Probe", "probe", "", ("Status: OK",), ("status_ok", "no_health_changes")), "  Status: OK (code=0, detail=0)\n  Health changes:\n  (no health changes)\n> ", RESULT_PASS),
         (CommandSpec("T", "Scan", "scan", "", ("Scan complete",), ("scan_ads1115",)), "40: -- -- -- -- -- -- -- -- 48 49 -- -- -- -- -- --\nScan complete. Found 2 device(s).\n> ", RESULT_PASS),
+        (CommandSpec("T", "Scan", "scan", "", ("Scan complete",), ("scan_ads1115",)), "30: -- -- -- -- -- -- -- -- -- -- -- -- 3C -- -- --\n40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --\nScan complete. Found 1 device(s).\nCommon addresses: 0x48-0x4B=ADS1115\n> ", RESULT_FAIL),
         (CommandSpec("T", "Failure", "probe", "", ("Status:",), ("status_non_ok",), expected_failure=True), "  Status: I2C_TIMEOUT (code=7, detail=-1)\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job poll 0", "", ("=== Job Poll Result ===",), ("job_zero_budget",)), "=== Job Poll Result ===\n  Status: IN_PROGRESS\n  Instructions used: 0\n  Done: NO\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job single", "", ("Status:",), ("status_busy",)), "Status: BUSY (code=8, detail=0)\nMessage: Poll job active\n> ", RESULT_PASS),
+        (CommandSpec("T", "Job", "job cancel", "", ("=== Job Status ===",), ("status_cancelled", "job_inactive"), expected_failure=True), "=== Job Status ===\n  Active: NO\n  Status: CANCELLED (code=19, detail=0)\n> ", RESULT_PASS),
         (CommandSpec("T", "Mode", "start", "", ("Status:",), ("status_in_progress",)), "Status: IN_PROGRESS (code=9, detail=0)\nMessage: Conversion started\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job poll", "", ("No active pollable job",), ("no_active_job",)), "No active pollable job\n=== Job Status ===\n  Active: NO\n> ", RESULT_PASS),
         (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=0\n> ", RESULT_PASS),
+        (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=1\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Status", "start", "", ("Status:",)), "Status: CONFIG_UNKNOWN (code=20, detail=0)\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Reset", "read", "", ("Raw:",), ("raw_sample",)), "=== ADS1115 Diagnostic Bring-up CLI ===\nReset reason: WDT\nRaw: 1\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Version", "version", "", ("ADS1115 library commit:",), ("firmware_clean_commit",)), f"ADS1115 library commit: {host_short_commit} (clean)\n> ", RESULT_PASS),
+        (CommandSpec("T", "Version", "version", "", ("ADS1115 library commit:",), ("firmware_clean_commit",)), f"ADS1115 library commit: {host_short_commit} (dirty)\n> ", RESULT_FAIL),
         (CommandSpec("T", "Stress", "stress 10", "", ("=== Stress Summary ===",), ("stress_zero_errors", "rate_report")), "=== Stress Summary ===\n  Errors: 0\n  Duration: 123 ms\n  Rate: 81.30 samples/s\n> ", RESULT_PASS),
         (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "op=read ok=1 fail=0\n=== stress_mix summary ===\nTotal: ok=2 fail=1\n> ", RESULT_FAIL),
         (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "=== stress_mix summary ===\nTotal: ok=3 fail=0\n> ", RESULT_PASS),
@@ -791,6 +876,10 @@ def parser_self_test() -> None:
     full_ids = [spec.test_id for spec in full_plan]
     if len(full_ids) != len(set(full_ids)):
         raise AssertionError("full address plan test IDs must be unique")
+    exhaustive_ids = full_ids + targeted_ids
+    exhaustive_ids.extend(spec.test_id for spec in exhaustive_diagnostic_plan("0x48"))
+    if len(exhaustive_ids) != len(set(exhaustive_ids)):
+        raise AssertionError("exhaustive plan test IDs must be unique across full and targeted coverage")
     soak_ids = [spec.test_id for spec in soak_step_plan(["0x48"])]
     if len(soak_ids) != len(set(soak_ids)):
         raise AssertionError("soak plan test IDs must be unique")
@@ -813,6 +902,12 @@ def parser_self_test() -> None:
         raise AssertionError("EVIDENCE_REQUIRED should not fail exploratory runs")
     if process_exit_code(RESULT_EVIDENCE_REQUIRED, fail_on_unknown=True) != 1:
         raise AssertionError("--fail-on-unknown should fail EVIDENCE_REQUIRED final verdicts")
+    soak_start = dt.datetime.now()
+    soak_with_failure = SoakStats(start=soak_start, end=soak_start)
+    soak_with_failure.results.update({RESULT_PASS: 20, RESULT_FAIL: 1})
+    soak_rows = soak_stats_to_rows(soak_with_failure)
+    if soak_rows[0].result != RESULT_FAIL:
+        raise AssertionError("any soak command failure must fail the soak summary")
     print("ADS1115 HIL parser self-test PASSED")
 
 
@@ -934,6 +1029,7 @@ def run_one_step(
         result=result,
         notes=(spec.notes + ("; " if spec.notes and reason else "") + reason).strip(),
         evidence_required=spec.unknown_on_pass,
+        reset_observed=any(marker in strip_ansi(response) for marker in REBOOT_MARKERS),
     )
 
 
@@ -967,6 +1063,10 @@ def write_markdown_summary(
         out.write(f"- Contract verdict: {contract}\n")
         out.write(f"- Evidence verdict: {evidence}\n")
         out.write(f"- Final verdict: {verdict}\n")
+        reset_markers = sum(1 for row in rows if row.reset_observed)
+        if soak is not None:
+            reset_markers += soak.reset_markers
+        out.write(f"- Unexpected reset/reboot markers after initial boot: {reset_markers}\n")
         if soak is not None:
             end = soak.end or dt.datetime.now()
             duration = (end - soak.start).total_seconds()
@@ -1060,9 +1160,24 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
                 break
 
         soak_stats = None
-        if args.soak:
+        plan_failed = any(row.result == RESULT_FAIL for row in rows)
+        if args.soak and not (args.stop_on_fail and plan_failed):
             soak_stats = run_soak(ser, args, write_log)
             rows.extend(soak_stats_to_rows(soak_stats))
+        elif args.soak:
+            write_log("# SOAK NOT RUN because the command plan failed under --stop-on-fail.\n")
+            rows.append(
+                StepResult(
+                    test_id="SOAK-SUMMARY",
+                    feature="Bounded Soak",
+                    command="--soak",
+                    expected="Run only after the prerequisite command plan passes",
+                    observed="not run",
+                    elapsed_s=0.0,
+                    result=RESULT_NOT_RUN,
+                    notes="command plan failed under --stop-on-fail",
+                )
+            )
 
     write_markdown_summary(summary_path, rows, transcript_path=transcript_path, soak=soak_stats)
     return rows, transcript_path, summary_path
@@ -1090,6 +1205,8 @@ def run_soak(ser: object, args: argparse.Namespace, write_log) -> SoakStats:
             )
             stats.commands[spec.command] += 1
             stats.results[row.result] += 1
+            if row.reset_observed:
+                stats.reset_markers += 1
             stats.latencies.append(row.elapsed_s)
             if spec.command in ("read", "readv", "raw", "voltage"):
                 stats.worst_read_latency_s = max(stats.worst_read_latency_s, row.elapsed_s)
@@ -1116,7 +1233,8 @@ def run_soak(ser: object, args: argparse.Namespace, write_log) -> SoakStats:
 def soak_stats_to_rows(stats: SoakStats) -> list[StepResult]:
     end = stats.end or dt.datetime.now()
     duration = (end - stats.start).total_seconds()
-    result = RESULT_FAIL if stats.stopped_reason else RESULT_PASS
+    failed_commands = stats.results[RESULT_FAIL]
+    result = RESULT_FAIL if failed_commands else RESULT_PASS
     mean_latency = (sum(stats.latencies) / len(stats.latencies)) if stats.latencies else 0.0
     observed = (
         f"duration={duration:.1f}s cycles={stats.cycles} commands={sum(stats.commands.values())} "
@@ -1128,11 +1246,15 @@ def soak_stats_to_rows(stats: SoakStats) -> list[StepResult]:
             test_id="SOAK-SUMMARY",
             feature="Bounded Soak",
             command="--soak",
-            expected="Complete requested soak duration without unrecovered failure bursts",
+            expected="Complete requested soak duration without command failures",
             observed=observed,
             elapsed_s=duration,
             result=result,
-            notes=stats.stopped_reason or "completed requested duration",
+            notes=(
+                stats.stopped_reason
+                or (f"completed requested duration with {failed_commands} failure(s)" if failed_commands
+                    else "completed requested duration")
+            ),
         )
     ]
 

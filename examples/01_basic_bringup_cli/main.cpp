@@ -1963,7 +1963,10 @@ void setup() {
 }
 
 void loop() {
-  if (device.isInitialized()) {
+  // Explicit staged jobs are owned by the `job poll` command so its callback
+  // budget remains observable. Background service is only for direct
+  // conversion/readiness paths.
+  if (device.isInitialized() && !device.jobActive()) {
     ADS1115::Status serviceStatus = device.service(millis());
     if (!serviceStatus.ok() && verboseMode) {
       LOGW("service() reported an I2C/status issue");

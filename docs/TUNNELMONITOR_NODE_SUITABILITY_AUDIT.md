@@ -1,6 +1,7 @@
 # TunnelMonitor-node Integration Gates
 
-Last reviewed: 2026-07-22 against ADS1115 v2.0.0 (`785515a`)
+Last reviewed: 2026-07-22 against the ADS1115 v2.0.0 working tree based on
+`db1b43d` and TunnelMonitor-node `prompt-45-platformization` at `0dc40d1`.
 
 ## Status
 
@@ -37,18 +38,35 @@ Begin this work only after the product and board profile above is frozen.
 - [ ] Add the selected device/source/operation/result identities using
   append-only enum changes where compatibility requires them.
 - [ ] Add the smallest adapter around the v2.0 owner-safe lifecycle. Keep the
-  TunnelMonitor I2C task as the sole bus owner and allow one callback per normal
-  poll.
-- [ ] Publish exactly one token-matched terminal result containing raw code,
-  input microvolts, channel, MUX, PGA, data rate, configuration generation, and
-  validity/quality information.
+  TunnelMonitor I2C task as the sole bus owner, bridge ADS callbacks only to the
+  planned one-transfer `transferOnce` seam, and allow one callback per normal
+  owner poll. Do not use the retrying/recovering `transferDevice()` path inside
+  one ADS callback because it hides ambiguous write effects.
+- [ ] Establish address presence in a separate owner probe phase. Until the
+  Tunnel transport distinguishes address and data NACK, map generic NACK from
+  an ADS transfer conservatively to `I2C_NACK_DATA` or `I2C_ERROR`, never to a
+  definite address NACK for a mutating write.
+- [ ] Consume token-matched raw code, input microvolts, channel, MUX, PGA, data
+  rate, configuration generation, and quality provenance inside the ADS
+  module. Publish only the normalized readings and validity/stale/error masks
+  selected by TunnelMonitor's generic `DeviceMeasurementResult`; retain extra
+  ADS provenance in bounded module-local diagnostics unless the product schema
+  explicitly selects it.
 - [ ] Implement checked conversion from ADC-input microvolts to the approved
   product unit. Board-divider, shunt, amplifier, offset, and calibration policy
   remain outside the ADS1115 library.
 - [ ] Define required-versus-optional failure behavior, partial multi-channel
   acquisition, queue expiry, deadline, cancellation, and recovery policy.
+- [ ] Gate availability on successful terminal completion plus verified, clean
+  ADS configuration, not on `DriverState::READY` alone. After cancellation of
+  a started conversion, complete the library's bus-silent quiet-interval
+  reconciliation before releasing the result slot or scheduling new work.
 - [ ] Add capacity and maximum-size tests for every affected fixed-size
   contract, including storage/replay and public output when applicable.
+  Current audit constraints are explicit: the legacy source table is full at
+  4 entries, device-health rows are full at 16, and the selected 37-row sample
+  schema has 11 of 48 numeric slots free. Integration must make a deliberate
+  capacity/cutover choice rather than silently extending these contracts.
 
 ## Open Final-Board Evidence
 
@@ -64,6 +82,12 @@ Begin this work only after the product and board profile above is frozen.
 - [ ] Run the final measurement, storage, display, web, and cloud workload at
   production cadence, followed by a several-hour or overnight soak with
   concise, dated, reviewable evidence.
+
+The 2026-07-22 COM6 ESP32-S2 diagnostic campaign validates the ADS1115 release
+surface only. TunnelMonitor currently has no ADS1115 device kind, operation,
+module, owner adapter, or runtime result routing, so that campaign cannot be
+claimed as ESP32-S3 shared-bus fairness, queue/deadline, timestamp, or product
+measurement validation.
 
 Use [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md)
 for the physical evidence format. Keep raw console transcripts out of this

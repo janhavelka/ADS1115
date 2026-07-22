@@ -80,6 +80,7 @@ REQUIRED_IDF_TOKENS = [
     "Hardware/cache dirty",
     "hardwareConfigDirtyAddress",
     "device.service(nowMs())",
+    "device.isInitialized() && !device.jobActive()",
 ]
 REQUIRED_CORE_DIRTY_ADDRESS_TOKENS = [
     "out.hardwareConfigDirtyAddress = _hardwareConfigDirtyAddress",

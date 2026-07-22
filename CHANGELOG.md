@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Kept explicitly staged diagnostic jobs under `job poll` ownership in both
+  Arduino and ESP-IDF loops so zero and bounded callback budgets remain
+  observable instead of being consumed by background service.
+- Hardened the HIL gate so exhaustive runs include full and targeted boundary
+  coverage, all current error statuses are rejected, self-test skips fail the
+  contract, any soak command failure fails the soak, and a failed prerequisite
+  plan cannot silently continue into a requested soak.
+- Added owner-safe native regressions for profile commit, tokened shutdown,
+  recovery after failed initialization, and signed saturation flags; the suite
+  now contains 178 tests.
+
 ### Changed
 
 - Consolidated unfinished release and integration work in `docs/OPEN_ITEMS.md`
@@ -17,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed the redundant generated datasheet text extraction and aligned
   contributor, security, Doxygen, and engineering-contract documentation with
   the 2.0 owner-safe lifecycle.
+
+### Removed
+
+- Removed the legacy unclassified HIL capture helper; the classified runner is
+  now the single supported serial validation path.
 
 ## [2.0.0] - 2026-07-19
 

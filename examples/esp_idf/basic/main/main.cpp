@@ -1499,10 +1499,15 @@ extern "C" void app_main(void) {
 
   char line[MAX_LINE_LEN] = {};
   while (true) {
-    ADS1115::Status serviceStatus = device.service(nowMs());
-    if (!serviceStatus.ok() && verboseMode) {
-      std::printf("service() reported an I2C/status issue\n");
-      printStatus(serviceStatus);
+    // Explicit staged jobs are owned by the `job poll` command so its callback
+    // budget remains observable. Background service is only for direct
+    // conversion/readiness paths.
+    if (device.isInitialized() && !device.jobActive()) {
+      ADS1115::Status serviceStatus = device.service(nowMs());
+      if (!serviceStatus.ok() && verboseMode) {
+        std::printf("service() reported an I2C/status issue\n");
+        printStatus(serviceStatus);
+      }
     }
     if (std::fgets(line, sizeof(line), stdin) != nullptr) {
       line[sizeof(line) - 1U] = '\0';
