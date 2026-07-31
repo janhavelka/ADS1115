@@ -6,7 +6,7 @@ This is the operator plan for hardware evidence that is still missing after the
 baseline on the prior platform, but it does not qualify pioarduino `55.03.311`
 or establish tagged-release, calibrated, electrical, injected-fault, native
 ESP-IDF, ESP32-S3, or final-product acceptance. See the
-[`HIL evidence index`](evidence/hil/README.md).
+<a href="evidence/hil/README.md">HIL evidence index</a>.
 
 ## Acceptance Rule
 

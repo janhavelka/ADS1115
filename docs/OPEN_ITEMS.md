@@ -13,7 +13,7 @@ integration, not a known core-driver implementation defect.
 ## Physical Release Evidence
 
 A clean, dated v2.0 ESP32-S2 diagnostic run is recorded in
-[`evidence/hil/2026-07-22_COM6/README.md`](evidence/hil/2026-07-22_COM6/README.md).
+<a href="evidence/hil/2026-07-22_COM6/README.md">the COM6 evidence summary</a>.
 Only the following unfinished physical and final-product evidence remains:
 
 - [ ] Requalify the Arduino diagnostic surface on pioarduino `55.03.311` and

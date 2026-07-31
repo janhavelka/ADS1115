@@ -417,7 +417,7 @@ Arduino stack. It covers the diagnostic surface on ESP32-S2 at addresses
 injected-fault, ESP-IDF/ESP32-S3, or final-product behavior. The diagnostic
 `version` output now reports Arduino-ESP32 and ESP-IDF versions, and the HIL
 runner rejects firmware that does not report `3.3.11` / `v5.5.5`. See the compact
-[`COM6 evidence summary`](docs/evidence/hil/2026-07-22_COM6/README.md).
+<a href="docs/evidence/hil/2026-07-22_COM6/README.md">COM6 evidence summary</a>.
 The unfinished gates remain in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md);
 execution details belong in the hardware validation plan.
 
