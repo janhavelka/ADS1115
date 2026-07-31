@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Exact-pinned Arduino example builds to pioarduino `platform-espressif32`
+  `55.03.311` (Arduino-ESP32 `3.3.11`, bundled ESP-IDF `5.5.5`), corrected the
+  ESP32-S2 upload reset token for esptool 5, and made the diagnostic version
+  output and HIL gate verify the exact runtime framework stack. The native
+  ESP-IDF CI baseline remains independently pinned to `v5.3.5`.
 - Updated the README and documentation indexes to distinguish the clean
   post-tag v2 COM6 diagnostic baseline from still-open tagged-release,
   physical, native-target, and final-product evidence.

@@ -15,6 +15,7 @@ repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_
 | Branch, full commit, tag/version | |
 | Worktree and runtime identity clean? | |
 | Firmware build timestamp | |
+| pioarduino / Arduino-ESP32 / ESP-IDF versions | |
 | Host OS and tool versions | |
 | Exact build/flash/HIL commands | |
 | Compact results file / physical-reference location | |

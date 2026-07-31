@@ -2,7 +2,9 @@
 
 Clean post-tag ADS1115 2.0.0 firmware at
 `dd25d616d2efd0ab6ce2aa54bfa56d74cbb4237c` passed the digital contract. The
-run does not validate the earlier `v2.0.0` tag artifact.
+run does not validate the earlier `v2.0.0` tag artifact. It also predates the
+pioarduino `55.03.311` upgrade and is not qualification evidence for the
+current Arduino-ESP32 `3.3.11` / ESP-IDF `5.5.5` stack.
 
 | Item | Result |
 | --- | --- |

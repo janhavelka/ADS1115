@@ -3,8 +3,9 @@
 This is the operator plan for hardware evidence that is still missing after the
 2.0 release. It is not validation evidence. COM19 and COM8 captures predate
 2.0. The clean post-tag COM6 run establishes an ESP32-S2 Arduino diagnostic
-baseline, but not tagged-release, calibrated, electrical, injected-fault,
-native ESP-IDF, ESP32-S3, or final-product acceptance. See the
+baseline on the prior platform, but it does not qualify pioarduino `55.03.311`
+or establish tagged-release, calibrated, electrical, injected-fault, native
+ESP-IDF, ESP32-S3, or final-product acceptance. See the
 [`HIL evidence index`](evidence/hil/README.md).
 
 ## Acceptance Rule
@@ -43,6 +44,8 @@ Use `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`. At minimum record:
   state;
 - host OS and tool versions, firmware build timestamp, and exact build/flash
   commands;
+- pioarduino, Arduino-ESP32, and ESP-IDF versions reported by the running
+  firmware;
 - ESP32 board/revision, ADS1115 module/revision, address strap, VDD, bus speed,
   pull-ups, wiring, ambient conditions, and instrument identifiers;
 - externally serialized bus owner, transfer timeout, locking, recovery policy,

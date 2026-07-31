@@ -18,7 +18,7 @@ evidence, and preserved technical reference material.
 | --- | --- |
 | [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for the still-open v2.0 physical evidence gates. |
 | [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md) | Compact dated-results template. |
-| [`evidence/hil/`](evidence/hil/) | Index of compact dated fixture outcomes and limitations, including the current v2 ESP32-S2 baseline. |
+| [`evidence/hil/`](evidence/hil/) | Index of compact dated fixture outcomes and limitations, including the prior-platform v2 ESP32-S2 baseline. |
 
 Do not retain full serial transcripts or detailed generated runner summaries.
 After verifying the dated fixture identity, concise outcomes, failures, and

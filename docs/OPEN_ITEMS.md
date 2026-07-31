@@ -1,7 +1,7 @@
 # Open Release And Integration Items
 
-Last reviewed: 2026-07-22 against post-v2.0.0 main at `dd25d61`
-(runtime library version 2.0.0)
+Last reviewed: 2026-07-31 for the pioarduino `55.03.311` upgrade
+(runtime library version 2.0.0).
 
 This is the single index of unfinished repository-level work. Dated hardware
 evidence is under [`evidence/hil/`](evidence/hil/).
@@ -16,6 +16,10 @@ A clean, dated v2.0 ESP32-S2 diagnostic run is recorded in
 [`evidence/hil/2026-07-22_COM6/README.md`](evidence/hil/2026-07-22_COM6/README.md).
 Only the following unfinished physical and final-product evidence remains:
 
+- [ ] Requalify the Arduino diagnostic surface on pioarduino `55.03.311` and
+  record exact runtime Arduino-ESP32 `3.3.11` / ESP-IDF `v5.5.5` identity.
+  Include ESP32-S2/S3 CLI framing, repeated-start reads, expected-absent NACKs,
+  bounded timeout/recovery behavior, and a reviewable stress/soak run.
 - [ ] Validate the intended tagged release artifact with matching clean runtime
   identity. The COM6 baseline used clean post-tag commit `dd25d61`, not the
   `v2.0.0` tag at `785515a`.

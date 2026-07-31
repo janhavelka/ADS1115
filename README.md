@@ -376,10 +376,17 @@ configuration-trust behavior changed.
 
 ## Validation And Reproducibility
 
-The repository pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, the
-exact pioarduino espressif32 `54.03.20` release archive, and ESP-IDF `v5.3.5`
-for the native IDF CI build. CI action revisions, runner images, Doxygen, and
-the host compiler still vary over time; builds are not claimed bit-reproducible.
+The repository pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, and
+the exact pioarduino espressif32 `55.03.311` release archive. That Arduino
+platform supplies Arduino-ESP32 `3.3.11` and bundled ESP-IDF `5.5.5`. The
+native ESP-IDF CI build is a separate compatibility baseline pinned to
+ESP-IDF `v5.3.5`. CI action revisions, runner images, Doxygen, and the host
+compiler still vary over time; builds are not claimed bit-reproducible.
+
+On Windows hosts with Win32 long-path support disabled, the Arduino `3.3.11`
+libraries archive can exceed the default extraction path limit. Enable Win32
+long paths or set `PLATFORMIO_CORE_DIR` to a short, application-owned directory
+before the first package installation.
 
 Configured CI runs:
 
@@ -402,11 +409,14 @@ idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
 Do not report an unrun build or hardware case as passed. COM19/COM8 evidence
-predates 2.0. The clean 2026-07-22 COM6 campaign covers the Arduino diagnostic
-surface on ESP32-S2 at addresses `0x48` and `0x49`, absent-address checks at
-`0x4A` and `0x4B`, and a 3,600-second soak; it does not prove calibrated analog,
-ALERT/RDY electrical, injected-fault, ESP-IDF/ESP32-S3, or final-product
-behavior. See the compact
+predates 2.0. The clean 2026-07-22 COM6 campaign is a prior-platform baseline;
+it was recorded before the `55.03.311` upgrade and does not qualify the current
+Arduino stack. It covers the diagnostic surface on ESP32-S2 at addresses
+`0x48` and `0x49`, absent-address checks at `0x4A` and `0x4B`, and a
+3,600-second soak; it does not prove calibrated analog, ALERT/RDY electrical,
+injected-fault, ESP-IDF/ESP32-S3, or final-product behavior. The diagnostic
+`version` output now reports Arduino-ESP32 and ESP-IDF versions, and the HIL
+runner rejects firmware that does not report `3.3.11` / `v5.5.5`. See the compact
 [`COM6 evidence summary`](docs/evidence/hil/2026-07-22_COM6/README.md).
 The unfinished gates remain in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md);
 execution details belong in the hardware validation plan.

@@ -343,6 +343,10 @@ void printHelp() {
 void printVersionInfo() {
   Serial.println("=== Version Info ===");
   Serial.printf("  Example firmware build: %s %s\n", __DATE__, __TIME__);
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("  Arduino-ESP32: %s\n", ESP.getCoreVersion());
+  Serial.printf("  ESP-IDF: %s\n", ESP.getSdkVersion());
+#endif
   Serial.printf("  ADS1115 library version: %s\n", ADS1115::VERSION);
   Serial.printf("  ADS1115 library full: %s\n", ADS1115::VERSION_FULL);
   Serial.printf("  ADS1115 library build: %s\n", ADS1115::BUILD_TIMESTAMP);

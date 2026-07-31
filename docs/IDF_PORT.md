@@ -102,7 +102,10 @@ do not prove precise address-NACK versus data-NACK classification.
 
 ## Reproducible Verification
 
-CI pins ESP-IDF `v5.3.5` by container digest and builds both targets:
+The Arduino PlatformIO examples pin pioarduino `55.03.311`, whose Arduino-ESP32
+`3.3.11` package bundles ESP-IDF `5.5.5`. That framework stack is independent
+of the native ESP-IDF example. Native CI continues to pin ESP-IDF `v5.3.5` by
+container digest and builds both targets:
 
 ```bash
 idf.py -C examples/esp_idf/basic set-target esp32s3 build

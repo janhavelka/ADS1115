@@ -28,6 +28,8 @@ DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_IDLE_S = 0.35
 DEFAULT_BOOT_SETTLE_S = 2.0
 DEFAULT_SOAK_DURATION_S = 8 * 60 * 60
+EXPECTED_ARDUINO_ESP32_VERSION = "3.3.11"
+EXPECTED_ESP_IDF_VERSION = "v5.5.5"
 
 RESULT_PASS = "PASS"
 RESULT_FAIL = "FAIL"
@@ -55,6 +57,8 @@ FIRMWARE_COMMIT_RE = re.compile(
     r"ADS1115 library commit:\s*([0-9a-f]+)\s*\((clean|dirty)\)",
     re.IGNORECASE,
 )
+ARDUINO_ESP32_VERSION_RE = re.compile(r"^\s*Arduino-ESP32:\s*([^\r\n]+)", re.MULTILINE)
+ESP_IDF_VERSION_RE = re.compile(r"^\s*ESP-IDF:\s*([^\r\n]+)", re.MULTILINE)
 FOUND_ADDRESS_RE = re.compile(r"\b(?:0x)?4[89AB]\b", re.IGNORECASE)
 SCAN_40_ROW_RE = re.compile(r"^\s*40:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 BATCH_THREE_RE = re.compile(r"^\s*3:\s*-?\d+\s+\(", re.MULTILINE)
@@ -274,6 +278,22 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
                 return "firmware reports a dirty build"
             if not host_commit.startswith(firmware_commit):
                 return f"firmware commit {firmware_commit} does not match host {host_commit}"
+        elif validator == "runtime_stack":
+            arduino_match = ARDUINO_ESP32_VERSION_RE.search(plain)
+            if arduino_match is None:
+                return "Arduino-ESP32 runtime version not found"
+            arduino_version = arduino_match.group(1).strip()
+            if arduino_version != EXPECTED_ARDUINO_ESP32_VERSION:
+                return (
+                    f"Arduino-ESP32 {arduino_version} does not match "
+                    f"{EXPECTED_ARDUINO_ESP32_VERSION}"
+                )
+            idf_match = ESP_IDF_VERSION_RE.search(plain)
+            if idf_match is None:
+                return "ESP-IDF runtime version not found"
+            idf_version = idf_match.group(1).strip()
+            if idf_version != EXPECTED_ESP_IDF_VERSION:
+                return f"ESP-IDF {idf_version} does not match {EXPECTED_ESP_IDF_VERSION}"
         elif validator == "zero_failures":
             failures = parse_int(TOTAL_FAILURES_RE, plain)
             if failures is None:
@@ -404,7 +424,7 @@ def base_plan() -> list[CommandSpec]:
             "version",
             "Firmware and library version output",
             ("=== Version Info ===", "ADS1115 library version"),
-            ("firmware_clean_commit",),
+            ("firmware_clean_commit", "runtime_stack"),
             timeout_s=4.0,
         ),
         CommandSpec(
@@ -845,6 +865,8 @@ def parser_self_test() -> None:
         (CommandSpec("T", "Reset", "read", "", ("Raw:",), ("raw_sample",)), "=== ADS1115 Diagnostic Bring-up CLI ===\nReset reason: WDT\nRaw: 1\n> ", RESULT_FAIL),
         (CommandSpec("T", "Version", "version", "", ("ADS1115 library commit:",), ("firmware_clean_commit",)), f"ADS1115 library commit: {host_short_commit} (clean)\n> ", RESULT_PASS),
         (CommandSpec("T", "Version", "version", "", ("ADS1115 library commit:",), ("firmware_clean_commit",)), f"ADS1115 library commit: {host_short_commit} (dirty)\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Version", "version", "", ("Arduino-ESP32:",), ("runtime_stack",)), "Arduino-ESP32: 3.3.11\nESP-IDF: v5.5.5\n> ", RESULT_PASS),
+        (CommandSpec("T", "Version", "version", "", ("Arduino-ESP32:",), ("runtime_stack",)), "Arduino-ESP32: 3.2.0\nESP-IDF: v5.4.1\n> ", RESULT_FAIL),
         (CommandSpec("T", "Stress", "stress 10", "", ("=== Stress Summary ===",), ("stress_zero_errors", "rate_report")), "=== Stress Summary ===\n  Errors: 0\n  Duration: 123 ms\n  Rate: 81.30 samples/s\n> ", RESULT_PASS),
         (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "op=read ok=1 fail=0\n=== stress_mix summary ===\nTotal: ok=2 fail=1\n> ", RESULT_FAIL),
         (CommandSpec("T", "Stress", "stress_mix 3", "", ("=== stress_mix summary ===",), ("stress_mix_zero_fail",)), "=== stress_mix summary ===\nTotal: ok=3 fail=0\n> ", RESULT_PASS),
