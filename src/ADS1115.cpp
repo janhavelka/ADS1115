@@ -2502,13 +2502,6 @@ uint16_t ADS1115::_buildConfigRegister() const {
   return config;
 }
 
-uint16_t ADS1115::_buildConfigRegisterForMux(Mux mux) const {
-  uint16_t config = _buildConfigRegister();
-  config &= static_cast<uint16_t>(~cmd::MASK_MUX);
-  config |= (static_cast<uint16_t>(mux) << cmd::BIT_MUX) & cmd::MASK_MUX;
-  return config;
-}
-
 uint32_t ADS1115::_nowMs() const {
   if (_config.nowMs != nullptr) {
     return _config.nowMs(_config.timeUser);

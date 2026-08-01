@@ -13,13 +13,8 @@ REQUIRED_COMMON = [
     "Log.h",
     "I2cTransport.h",
     "I2cScanner.h",
-    "CommandHandler.h",
-    "TransportAdapter.h",
-    "BusDiag.h",
-    "CliShell.h",
     "CliStyle.h",
     "HealthView.h",
-    "HealthDiag.h",
 ]
 
 MANDATORY_COMMANDS = [
@@ -47,11 +42,6 @@ def ensure_exists(path: pathlib.Path, label: str) -> None:
         fail(f"missing {label}: {path.as_posix()}")
 
 
-def ensure_missing(path: pathlib.Path, label: str) -> None:
-    if path.exists():
-        fail(f"forbidden {label} still present: {path.as_posix()}")
-
-
 def main() -> int:
     common_dir = ROOT / "examples" / "common"
     bringup_main = ROOT / "examples" / "01_basic_bringup_cli" / "main.cpp"
@@ -60,18 +50,9 @@ def main() -> int:
     ensure_exists(common_dir, "common example directory")
     ensure_exists(bringup_main, "bringup CLI example")
     ensure_exists(hil_runner, "classified HIL runner")
-    ensure_missing(ROOT / "tools" / "hil_ads1115_capture.py", "legacy HIL capture helper")
-
-    ensure_missing(ROOT / "examples" / "00_smoke_boot", "deprecated example 00_smoke_boot")
-    ensure_missing(
-        ROOT / "examples" / "03_feature_walkthrough",
-        "deprecated example 03_feature_walkthrough",
-    )
 
     for name in REQUIRED_COMMON:
         ensure_exists(common_dir / name, f"common helper {name}")
-
-    ensure_missing(common_dir / "IdfArduinoCompat.h", "Arduino compatibility facade")
 
     text = bringup_main.read_text(encoding="utf-8", errors="replace")
     hil_runner_text = hil_runner.read_text(encoding="utf-8", errors="replace")

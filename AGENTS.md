@@ -62,10 +62,10 @@ include/ADS1115/         - Public API headers only (Doxygen)
   Version.h              - Auto-generated (do not edit)
 src/                     - Implementation (.cpp)
 examples/
-  00_*/
-  01_*/
-  common/                - Example-only helpers (Log.h, BoardConfig.h, I2cTransport.h,
-                           I2cScanner.h, CommandHandler.h)
+  01_basic_bringup_cli/  - Arduino diagnostic CLI
+  02_owner_safe_poll/    - Production owner-loop pattern
+  common/                - Live Arduino example helpers only
+  esp_idf/basic/         - Native ESP-IDF diagnostic example
 platformio.ini
 library.json
 README.md

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added owner-safe native regressions for profile commit, tokened shutdown,
   recovery after failed initialization, and signed saturation flags; the suite
   now contains 178 tests.
+- Propagated Arduino `Wire.begin()` failure from the example transport setup
+  and made disabled native ESP-IDF ALERT/RDY pin handling compile-time safe.
 
 ### Changed
 
@@ -30,23 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ESP32-S2 upload reset token for esptool 5, and made the diagnostic version
   output and HIL gate verify the exact runtime framework stack. The native
   ESP-IDF CI baseline remains independently pinned to `v5.3.5`.
-- Updated the README and documentation indexes to distinguish the clean
-  post-tag v2 COM6 diagnostic baseline from still-open tagged-release,
-  physical, native-target, and final-product evidence.
+- Reduced the active documentation set to current API, portability, and
+  hardware-validation guidance; removed product-specific and superseded HIL
+  material while preserving the datasheet/reference corpus.
+- Upgraded GitHub Actions to the Node 24 generations of checkout, cache, and
+  setup-python and removed the now-completed CI-maintenance backlog.
+- Scoped the version generator to this library by removing a dormant
+  TunnelMonitor dependency-pin parser and generated-header branch.
 - Documented owner-loop terminal handling, transport callback obligations,
   address/profile changes, deadlines, sample validity/timestamps, cancellation,
   and migration constraints in the README and installed public headers.
-- Made Doxygen extract documented public contracts only, include the current
-  HIL summary, fail on undocumented or malformed contracts and unresolved
-  references, and run as an explicit CI job.
-- Recorded clean two-device ESP32-S2 exhaustive HIL at `dd25d61`, including a
-  3,600-second, 87,956-command soak with zero digital-contract failures; the
-  summary keeps unproven analog, electrical, injected-fault, and final-product
-  behavior explicit.
-- Consolidated unfinished release and integration work in `docs/OPEN_ITEMS.md`
-  and removed completed audit, release, prompt, merge, and hardening reports.
-- Replaced long HIL transcripts with concise result tables that preserve
-  identities, outcomes, and limitations.
+- Made Doxygen extract documented public contracts only, fail on undocumented
+  or malformed contracts and unresolved references, and run as an explicit CI
+  job.
 - Preserved the curated datasheet-derived Markdown reference corpus for human
   and AI-assisted contract review while removing only redundant generated
   extraction output.
@@ -55,12 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Deleted all ignored HIL transcripts, detailed runner summaries, and firmware
-  readbacks; dated fixture evidence is now retained only as compact result
-  tables with limitations.
-- Deleted the historical `docs/archive/` report collection and the redundant
-  TunnelMonitor audit page after consolidating every unfinished gate into
-  `docs/OPEN_ITEMS.md`.
+- Removed five unreferenced Arduino example helper headers, unused scanner,
+  styling, logging, and board constants, and one unused private core helper.
+- Removed historical HIL transcripts/summaries, superseded fixture notes,
+  completed audit/release material, and product-specific TunnelMonitor backlog
+  from the active library tree.
 - Removed the legacy unclassified HIL capture helper; the classified runner is
   now the single supported serial validation path.
 
@@ -202,8 +199,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native coverage for invalid config boundaries, tracked I2C status taxonomy, strict read-back recover branches, signed threshold/scaling boundaries, setter rollback variants, and dirty-state preservation.
 - Version metadata checks now verify `library.json`, `idf_component.yml`, `Doxyfile`, and generated `Version.h` agree.
 - Limited COM19 HIL evidence for address handling, restore sequencing,
-  initialized-address selftests, and short stress runs. Only the compact dated
-  outcome remains under `docs/evidence/hil/2026-06-02_COM19/`.
+  initialized-address selftests, and short stress runs. The superseded fixture
+  material was pruned in the later repository cleanup.
 
 ### Changed
 - Driver core timing/yield ownership moved fully behind application callbacks;

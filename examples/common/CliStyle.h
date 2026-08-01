@@ -17,7 +17,6 @@ namespace cli {
 inline constexpr size_t HELP_COMMAND_WIDTH = 32U;
 
 inline const char* resetColor() { return LOG_COLOR_RESET; }
-inline const char* okColor(bool ok) { return LOG_COLOR_RESULT(ok); }
 inline const char* enabledColor(bool enabled) {
   return enabled ? LOG_COLOR_GREEN : LOG_COLOR_RESET;
 }
@@ -58,10 +57,6 @@ inline void printHelpItem(const char* command, const char* description) {
 
 inline void printPrompt() {
   LOG_SERIAL.print("> ");
-}
-
-inline void printUnknownCommand(const char* command) {
-  LOGW("Unknown command: %s", command ? command : "(null)");
 }
 
 }  // namespace cli

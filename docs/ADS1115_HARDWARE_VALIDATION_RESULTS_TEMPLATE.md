@@ -1,8 +1,9 @@
 # ADS1115 Hardware Validation Results Template
 
-Copy this file for each dated physical run. Keep only this concise record;
-delete full serial/build transcripts and detailed runner output after the
-result is extracted. Status values are `Pending`, `Pass`, `Fail`, `Blocked`, and
+Copy this file for each dated physical run. Do not commit full serial/build
+transcripts or generated runner output; store required lab evidence in the
+approved evidence system and link it from this record. Status values are
+`Pending`, `Pass`, `Fail`, `Blocked`, and
 `Not applicable`. The `Pending` rows below are copy-time placeholders, not the
 repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_ITEMS.md).
 
@@ -38,8 +39,8 @@ repository's live backlog; current unfinished work is in [`OPEN_ITEMS.md`](OPEN_
 
 ## Compact Evidence References
 
-Do not attach or retain full serial/build transcripts. Link only the small
-physical references necessary for claims that cannot be represented by the
+Do not attach full serial/build transcripts to the repository. Link only the
+stable external evidence needed for claims that cannot be represented by the
 result matrix.
 
 | Evidence | Reference | Concise result |

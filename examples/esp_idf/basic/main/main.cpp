@@ -59,16 +59,17 @@ bool readAlertRdyPin(int pin, void*) {
 }
 
 void initAlertRdyPin() {
-  if (ALERT_RDY_PIN < 0) {
+  if constexpr (ALERT_RDY_PIN < 0) {
     return;
+  } else {
+    gpio_config_t cfg = {};
+    cfg.pin_bit_mask = 1ULL << static_cast<uint32_t>(ALERT_RDY_PIN);
+    cfg.mode = GPIO_MODE_INPUT;
+    cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+    cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    cfg.intr_type = GPIO_INTR_DISABLE;
+    (void)gpio_config(&cfg);
   }
-  gpio_config_t cfg = {};
-  cfg.pin_bit_mask = 1ULL << static_cast<uint32_t>(ALERT_RDY_PIN);
-  cfg.mode = GPIO_MODE_INPUT;
-  cfg.pull_up_en = GPIO_PULLUP_ENABLE;
-  cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  cfg.intr_type = GPIO_INTR_DISABLE;
-  (void)gpio_config(&cfg);
 }
 
 void trimInPlace(char* text) {
@@ -1256,12 +1257,10 @@ void processCommand(char* cmd) {
     std::printf("Probing device (no health tracking)...\n");
     HealthSnapshot before;
     before.capture();
-    ADS1115::Status st = ADS1115::Status::Ok();
-    if (!device.isInitialized() || requestedI2cAddress != activeI2cAddress) {
-      st = probeAddressRaw(requestedI2cAddress);
-    } else {
-      st = device.probe();
-    }
+    ADS1115::Status st =
+        (!device.isInitialized() || requestedI2cAddress != activeI2cAddress)
+            ? probeAddressRaw(requestedI2cAddress)
+            : device.probe();
     printStatus(st);
     HealthSnapshot after;
     after.capture();

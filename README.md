@@ -8,10 +8,8 @@ timeouts, recovery, retries, and scheduling.
 Version 2.0 introduces a fixed-memory, owner-safe operation engine for
 production shared-bus use. The native suite contains 178 fault-injection and
 contract tests, and CI builds four Arduino environments plus native ESP-IDF for
-ESP32-S2/S3. A clean two-device ESP32-S2 diagnostic campaign and one-hour soak
-recorded zero digital-contract failures. Calibrated analog,
-electrical, injected-fault, native ESP-IDF/ESP32-S3, and product-integration
-work that is still open is tracked in
+ESP32-S2/S3. Current physical, calibrated analog, electrical, injected-fault,
+native ESP-IDF target, and final-board qualification work is tracked in
 [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
 
 ## Production Contract
@@ -408,36 +406,20 @@ idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
-Do not report an unrun build or hardware case as passed. COM19/COM8 evidence
-predates 2.0. The clean 2026-07-22 COM6 campaign is a prior-platform baseline;
-it was recorded before the `55.03.311` upgrade and does not qualify the current
-Arduino stack. It covers the diagnostic surface on ESP32-S2 at addresses
-`0x48` and `0x49`, absent-address checks at `0x4A` and `0x4B`, and a
-3,600-second soak; it does not prove calibrated analog, ALERT/RDY electrical,
-injected-fault, ESP-IDF/ESP32-S3, or final-product behavior. The diagnostic
-`version` output now reports Arduino-ESP32 and ESP-IDF versions, and the HIL
-runner rejects firmware that does not report `3.3.11` / `v5.5.5`. See the compact
-<a href="docs/evidence/hil/2026-07-22_COM6/README.md">COM6 evidence summary</a>.
-The unfinished gates remain in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md);
-execution details belong in the hardware validation plan.
-
-## TunnelMonitor-node Integration Boundary
-
-The 2.0 owner API is ready for an adapter, but no TunnelMonitor firmware
-contract was changed. The unfinished product, board/profile, adapter, capacity,
-and final-board gates are consolidated in
-[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md). The recommended initial scope is a
-fixed compile-time profile, single-shot reads with OS-bit polling,
-comparator/ALERT-RDY disabled, and one I2C callback per owner-task poll.
+Do not report an unrun build or hardware case as passed. No retained HIL record
+qualifies the current pioarduino `55.03.311` stack. The diagnostic `version`
+output reports Arduino-ESP32 and ESP-IDF versions, and the HIL runner rejects
+firmware that does not report `3.3.11` / `v5.5.5`. Outstanding evidence is in
+[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md); execution details belong in the
+hardware validation plan.
 
 ## Documentation
 
 - `CHANGELOG.md` - release history and 2.0 migration notes
-- `docs/OPEN_ITEMS.md` - single index of unfinished release and integration work
+- `docs/OPEN_ITEMS.md` - outstanding hardware and integration evidence
 - `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
-- `docs/evidence/hil/README.md` - compact index of dated fixture evidence
 - `docs/reference/extracted-md/` - retained datasheet-derived transcripts for
   quick human and AI-assisted contract review
 - `docs/README.md` - current documentation index

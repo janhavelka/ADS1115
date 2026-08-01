@@ -17,38 +17,6 @@
 namespace i2c_scanner {
 
 /**
- * @brief Attempt to recover a stuck I2C bus by toggling SCL.
- * @param sda SDA pin number
- * @param scl SCL pin number
- */
-inline void recoverBus(int sda, int scl) {
-  Wire.end();
-
-  pinMode(scl, OUTPUT);
-  pinMode(sda, INPUT_PULLUP);
-
-  for (int i = 0; i < 9; i++) {
-    digitalWrite(scl, LOW);
-    delayMicroseconds(5);
-    digitalWrite(scl, HIGH);
-    delayMicroseconds(5);
-    if (digitalRead(sda)) {
-      break;
-    }
-  }
-
-  pinMode(sda, OUTPUT);
-  digitalWrite(sda, LOW);
-  delayMicroseconds(5);
-  digitalWrite(scl, HIGH);
-  delayMicroseconds(5);
-  digitalWrite(sda, HIGH);
-  delayMicroseconds(5);
-
-  Wire.begin(sda, scl);
-}
-
-/**
  * @brief Scan I2C bus and print found devices.
  * @param wire Reference to Wire object (must be initialized).
  * @param timeoutMs Timeout per address probe in milliseconds (default 50ms).

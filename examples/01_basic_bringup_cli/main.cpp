@@ -11,7 +11,6 @@
 #include <Arduino.h>
 
 #include "examples/common/BoardConfig.h"
-#include "examples/common/BusDiag.h"
 #include "examples/common/CliStyle.h"
 #include "examples/common/HealthView.h"
 #include "examples/common/I2cScanner.h"
@@ -712,8 +711,6 @@ void printTimingInfo() {
   Serial.printf("  LSB voltage: %.9f V\n", device.getLsbVoltage());
 }
 
-bool readConfigFromDevice(uint16_t& config);
-
 bool muxToChannel(ADS1115::Mux mux, int& channel) {
   switch (mux) {
     case ADS1115::Mux::AIN0_GND: channel = 0; return true;
@@ -848,15 +845,6 @@ void printSettingsSnapshot() {
                 snap.conversionReady ? "YES" : "NO",
                 static_cast<unsigned long>(snap.conversionStartMs),
                 static_cast<int>(snap.lastRawValue));
-}
-
-bool readConfigFromDevice(uint16_t& config) {
-  ADS1115::Status st = device.readConfig(config);
-  if (!st.ok()) {
-    printStatus(st);
-    return false;
-  }
-  return true;
 }
 
 bool isSingleShotJobState(ADS1115::JobState st) {
@@ -1458,8 +1446,8 @@ void runSelfTest() {
   if (started) {
     ADS1115::Status rs = waitForConversionReady();
     reportStatusCheck("poll after start(raw)", rs, true);
-    int16_t raw = 0;
     if (rs.ok()) {
+      int16_t raw = 0;
       rs = device.readRaw(raw);
       reportStatusCheck("readRaw(after start)", rs, true);
     } else {
@@ -1543,7 +1531,7 @@ void processCommand(const String& cmdLine) {
   } else if (cmd == "version" || cmd == "ver") {
     printVersionInfo();
   } else if (cmd == "scan") {
-    bus_diag::scan();
+    i2c_scanner::scanDefault();
   } else if (cmd == "state") {
     printActiveAddress();
     printHealthView(device);
@@ -1571,12 +1559,10 @@ void processCommand(const String& cmdLine) {
     LOGI("Probing device (no health tracking)...");
     HealthSnapshot<ADS1115::ADS1115> before;
     before.capture(device);
-    ADS1115::Status st = ADS1115::Status::Ok();
-    if (!device.isInitialized() || requestedI2cAddress != activeI2cAddress) {
-      st = probeAddressRaw(requestedI2cAddress);
-    } else {
-      st = device.probe();
-    }
+    ADS1115::Status st =
+        (!device.isInitialized() || requestedI2cAddress != activeI2cAddress)
+            ? probeAddressRaw(requestedI2cAddress)
+            : device.probe();
     printStatus(st);
     HealthSnapshot<ADS1115::ADS1115> after;
     after.capture(device);
@@ -1970,7 +1956,7 @@ void setup() {
 
   board::initAlertRdyPin();
 
-  bus_diag::scan();
+  i2c_scanner::scanDefault();
 
   ADS1115::Config cfg = makeDriverConfig(activeI2cAddress);
   auto st = device.begin(cfg);

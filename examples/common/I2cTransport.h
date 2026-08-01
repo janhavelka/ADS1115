@@ -174,9 +174,8 @@ inline void arduinoYield(void*) {
  * @param timeoutMs I2C timeout in milliseconds (default 50ms)
  * @return true on success
  */
-inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutMs = 50,
-                     uint8_t address = 0x48) {
-  (void)address;
+inline bool initWire(int sda, int scl, uint32_t freq = 400000,
+                     uint16_t timeoutMs = 50) {
 #if defined(ARDUINO_ARCH_ESP32)
   // Toggle SCL to release any stuck slave
   pinMode(scl, OUTPUT);
@@ -197,7 +196,9 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000, uint16_t timeoutM
   delayMicroseconds(5);
 #endif
 
-  Wire.begin(sda, scl);
+  if (!Wire.begin(sda, scl)) {
+    return false;
+  }
   Wire.setClock(freq);
 #if defined(ARDUINO_ARCH_ESP32)
   Wire.setTimeOut(timeoutMs);

@@ -1,12 +1,8 @@
-# ADS1115 2.0 Open Hardware Validation Plan
+# ADS1115 Hardware Validation Plan
 
-This is the operator plan for hardware evidence that is still missing after the
-2.0 release. It is not validation evidence. COM19 and COM8 captures predate
-2.0. The clean post-tag COM6 run establishes an ESP32-S2 Arduino diagnostic
-baseline on the prior platform, but it does not qualify pioarduino `55.03.311`
-or establish tagged-release, calibrated, electrical, injected-fault, native
-ESP-IDF, ESP32-S3, or final-product acceptance. See the
-<a href="evidence/hil/README.md">HIL evidence index</a>.
+This is the operator procedure for evidence that is still missing. It is not
+validation evidence, and the repository does not retain a current-stack
+physical qualification result.
 
 ## Acceptance Rule
 
@@ -15,17 +11,16 @@ firmware commit, hardware, wiring, instruments, command, observed result, and
 evidence location. ADS1115 has no identity register, so a successful probe and
 configuration readback prove only reachability and plausibility.
 
-Do not retain full serial transcripts, detailed runner summaries, or firmware
-dumps after extracting the result. The repository record is the compact dated
-summary: exact identity and command, result counts, failures, limitations, and
-only the small external instrument references needed for physical claims.
+Do not commit full serial transcripts, generated runner summaries, firmware
+dumps, or superseded fixture notes. Store required lab evidence in the approved
+evidence system and record its stable reference in the dated result.
 
 ## Unfinished Gates
 
 | Gate | Required coverage | Evidence needed |
 | --- | --- | --- |
-| Tagged release identity | Firmware built from the tagged 2.0 commit, matching `version` output and build timestamp; COM6 tested clean post-tag `dd25d61`, not tag `v2.0.0` | Compact build and startup identity summary |
-| Remaining Arduino physical HIL | ESP32-S3 targeted/full plans; final-board ESP32-S2 rerun when applicable; populated and expected-absent addresses | Compact dated result table |
+| Runtime identity | Clean firmware matching the intended commit, pioarduino `55.03.311`, Arduino-ESP32 `3.3.11`, ESP-IDF `v5.5.5`, and build timestamp | Build and startup identity record |
+| Arduino physical HIL | ESP32-S2/S3 targeted and exhaustive plans; populated and expected-absent addresses | Dated result and external evidence reference |
 | Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
 | Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
 | Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |
@@ -33,7 +28,7 @@ only the small external instrument references needed for physical claims.
 | Physical faults and recovery | Missing device, unplug/replug, stuck SDA/SCL, ADS1115 brownout/reset, raw-write dirty state, partial/ambiguous transfer | Exact status/detail/message, dirty/trust state, recovery result |
 | Shared-bus workload | External serialization, contention, bounded callback latency, cancellation/reconciliation, production task cadence | Compact integration timing/fault result |
 | Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Compact build/flash/monitor outcomes |
-| Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run; the COM6 diagnostic one-hour soak is only a baseline | Duration, cycles/commands, latency, failures, resets, environment |
+| Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run | Duration, cycles/commands, latency, failures, resets, environment |
 | Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
 
 ## Record Identity Before Testing
@@ -79,8 +74,8 @@ python tools/run_i2c_hil.py --dry-run --address 0x48 --address 0x49 --suite targ
 ```
 
 Use a temporary output directory for each board/setup. Adjust address arguments
-to the physical setup, list known-absent addresses explicitly, extract the
-compact result, then delete the generated transcript and detailed summary.
+to the physical setup, list known-absent addresses explicitly, transfer any
+required evidence to approved storage, then remove generated local output.
 
 ```text
 python tools/run_i2c_hil.py --port <PORT> --address 0x48 --address 0x49 --absent-address 0x4A --absent-address 0x4B --suite targeted --stop-on-fail --out <EVIDENCE_DIR>
@@ -148,7 +143,7 @@ substitute for these physical native-IDF runs.
 
 ## Closeout
 
-A release-facing summary should contain only the identity, concise result
-matrix, failures, remaining gaps, and necessary physical references. Remove resolved items
-from the active follow-up list; preserve their dated outcome in the results
-matrix. Never claim unrun hardware coverage.
+A release-facing result should contain only identity, a concise result matrix,
+failures, remaining gaps, and stable physical-evidence references. Remove
+resolved items from the active follow-up list. Never claim unrun hardware
+coverage.

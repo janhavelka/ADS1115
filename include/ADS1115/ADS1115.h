@@ -772,7 +772,6 @@ private:
   void _markHardwareConfigDirtyIfClean(const Status& st);
   void _clearHardwareConfigDirty();
   uint16_t _buildConfigRegister() const;
-  uint16_t _buildConfigRegisterForMux(Mux mux) const;
   uint32_t _nowMs() const;
   void _cooperativeYield() const;
   Status _jobBusyStatus() const;
