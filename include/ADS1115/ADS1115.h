@@ -473,9 +473,6 @@ public:
   /// In continuous mode this is the latest register contents and does not wait
   /// for a fresh sample interval. In single-shot mode this bypasses readiness
   /// checks and should be used only when the caller has established readiness.
-  /// Read the conversion register immediately as a signed two's-complement sample.
-  /// This API does not check OS-bit readiness and does not wait for a fresh
-  /// continuous-mode data-rate interval.
   /// @param[out] out Signed conversion code.
   /// @return Status::Ok() on a successful register read.
   Status readLatestRaw(int16_t& out);
@@ -833,7 +830,6 @@ private:
   OperationState _operationState = OperationState::IDLE;
   OperationToken _operationToken{};
   uint32_t _nextOperationToken = 1;
-  uint32_t _operationStartMs = 0;
   uint32_t _operationDeadlineMs = 0;
   uint32_t _pollNowMs = 0;
   uint32_t _activeTransferTimeoutMs = 0;

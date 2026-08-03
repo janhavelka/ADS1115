@@ -17,8 +17,9 @@ comparator/ready behavior, and ADS1113/ADS1114/ADS1115 differences.
 | `07_initialization_reset_and_operational_notes.md` | Startup, reset, sampling sequence, scaling, and operational cautions. |
 | `08_variant_differences_and_source_caveats.md` | ADS1113/ADS1114/ADS1115 differences plus facts not documented or ambiguous in the checked-in PDF. |
 
-## Source documents
+## Source material
 
-| Source PDF | Pages used | Notes |
+| Source | Coverage | Notes |
 | --- | --- | --- |
 | `docs/reference/ADS111x_datasheet_revE.pdf` | 1, 3-6, 12-28, 37 | Primary source for compact notes. |
+| `docs/reference/pdf-extracted-md/ADS111x_datasheet_revE.md` | Full document | PDF-derived Markdown transcript retained for text search; resolve discrepancies against the PDF. |

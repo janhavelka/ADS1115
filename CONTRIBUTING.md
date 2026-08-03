@@ -35,6 +35,10 @@ Read [`AGENTS.md`](AGENTS.md) before changing implementation or public APIs.
 
 ## Verification
 
+On Windows, run PlatformIO commands through `.\scripts\pio.cmd`; it uses the
+existing VS Code-managed executable and the repository's isolated package
+state. The portable commands below match CI and Unix-like hosts.
+
 Run the complete host/guard set for core changes:
 
 ```bash

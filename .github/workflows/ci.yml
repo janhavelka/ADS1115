@@ -87,9 +87,6 @@ jobs:
       - name: Enforce core timing guard
         run: python tools/check_core_timing_guard.py
 
-      - name: Check version metadata
-        run: python scripts/generate_version.py check
-
       - name: Run native tests
         run: pio test -e native
 
@@ -142,5 +139,14 @@ jobs:
         run: python scripts/generate_version.py check
 
       - name: Validate library package
-        run: pio pkg pack
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/ADS1115-2.0.0.tar.gz"
+          unpacked="$RUNNER_TEMP/ads1115-package"
+          pio pkg pack --output "$archive"
+          mkdir -p "$unpacked"
+          tar -xzf "$archive" -C "$unpacked"
+          test -f "$unpacked/include/ADS1115/Version.h"
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I"$unpacked/include" -fsyntax-only "$unpacked/src/ADS1115.cpp"
 

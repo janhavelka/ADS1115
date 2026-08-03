@@ -38,6 +38,19 @@
   "headers": [
     "ADS1115/ADS1115.h"
   ],
+  "export": {
+    "include": [
+      "CHANGELOG.md",
+      "CMakeLists.txt",
+      "LICENSE",
+      "README.md",
+      "examples/*",
+      "idf_component.yml",
+      "include/*",
+      "library.json",
+      "src/*"
+    ]
+  },
   "build": {
     "includeDir": "include",
     "srcDir": "src"

@@ -10,7 +10,10 @@
 
 #include <Arduino.h>
 
-#include "examples/common/BuildConfig.h"
+// Override with a PlatformIO build flag when quieter example output is needed.
+#ifndef LOG_LEVEL
+#define LOG_LEVEL 2
+#endif
 
 // Compile-time validation
 #if LOG_LEVEL < 0 || LOG_LEVEL > 2
@@ -30,8 +33,6 @@
 #define LOG_COLOR_RESULT(ok) ((ok) ? LOG_COLOR_GREEN : LOG_COLOR_RED)
 #define LOG_COLOR_STATE(online, failures) \
   ((online) ? (((failures) > 0U) ? LOG_COLOR_YELLOW : LOG_COLOR_GREEN) : LOG_COLOR_RED)
-
-inline const char* log_bool_str(bool value) { return value ? "yes" : "no"; }
 
 // Colorize only the severity tag; keep message text in terminal default color.
 #define LOG_PRINT_WITH_TAG(tagColor, tag, fmt, ...) \

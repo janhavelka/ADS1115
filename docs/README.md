@@ -30,6 +30,7 @@ and current Markdown files.
 ## Protected reference material
 
 [`reference/`](reference/) is deliberately retained. It contains the TI
-ADS111x Rev. E datasheet, curated datasheet-derived Markdown transcripts in
-`extracted-md/`, and an upstream TI reference-driver snapshot. These files are
-technical source material, not validation evidence or library implementation.
+ADS111x Rev. E datasheet, its full PDF-derived Markdown transcript, and curated
+topic transcripts in `extracted-md/`. These files are technical source
+material, not validation evidence or library implementation. Historical HIL
+transcripts remain excluded as superseded fixture output.

@@ -4,12 +4,6 @@
 #include <unity.h>
 #include <type_traits>
 
-#include "Arduino.h"
-#include "Wire.h"
-
-SerialClass Serial;
-TwoWire Wire;
-
 #define private public
 #include "ADS1115/ADS1115.h"
 #undef private

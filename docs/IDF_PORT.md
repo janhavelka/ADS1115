@@ -35,44 +35,14 @@ The application must provide:
 Do not call driver methods from ISR context. An ALERT/RDY ISR may record a
 bounded edge/timestamp only; I2C stays in the owner task.
 
-## Minimal Owner Pattern
+## Owner Integration
 
-```cpp
-ADS1115::DriverConfig transport{};
-transport.i2cWrite = idfI2cWrite;
-transport.i2cWriteRead = idfI2cWriteRead;
-transport.i2cUser = &applicationBusContext;
-transport.transferTimeoutMs = 20;
-
-ADS1115::DeviceProfile profile{};
-profile.i2cAddress = 0x48;
-profile.defaultMux = ADS1115::Mux::AIN0_GND;
-profile.defaultGain = ADS1115::Gain::FSR_2_048V;
-profile.dataRate = ADS1115::DataRate::SPS_128;
-profile.mode = ADS1115::Mode::SINGLE_SHOT;
-profile.comparator.use = ADS1115::ComparatorUse::OFF;
-
-ADS1115::ADS1115 adc;
-ADS1115::OperationToken token;
-ADS1115::Status status = adc.bind(transport, profile); // zero I2C
-
-const uint32_t nowMs = static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
-if (status.ok()) {
-  status = adc.startInitialize(nowMs, nowMs + 200U, token); // zero I2C
-}
-
-// Serialized I2C owner loop: at most one callback this pass.
-ADS1115::PollResult progress = adc.poll(ownerNowMs, 1);
-if (progress.done) {
-  ADS1115::OperationResult result;
-  status = adc.takeResult(token, result); // zero I2C
-}
-```
-
-The adapter should range-check and pass the callback timeout to the IDF transfer,
-serialize the complete write/repeated-start/read sequence, and preserve the raw
-`esp_err_t` in `Status::detail`. The driver already clamps the callback cap to
-the remaining whole-operation time.
+Use the framework-neutral owner lifecycle and deadline sizing in the
+[`README`](../README.md#owner-safe-quick-start). An ESP-IDF adapter should
+range-check and pass the callback timeout to the IDF transfer, serialize the
+complete write/repeated-start/read sequence, and preserve the raw `esp_err_t`
+in `Status::detail`. The driver already clamps the callback cap to the remaining
+whole-operation time.
 
 ## Verification And Identity Limits
 
@@ -100,28 +70,12 @@ do not prove precise address-NACK versus data-NACK classification.
 | Proven data NACK | `Err::I2C_NACK_DATA` | Use only when the payload phase is distinguishable. |
 | Other `esp_err_t` | `Err::I2C_ERROR`, raw code in `detail` | Conservative fallback. |
 
-## Reproducible Verification
+## Verification Scope
 
-The Arduino PlatformIO examples pin pioarduino `55.03.311`, whose Arduino-ESP32
-`3.3.11` package bundles ESP-IDF `5.5.5`. That framework stack is independent
-of the native ESP-IDF example. Native CI continues to pin ESP-IDF `v5.3.5` by
-container digest and builds both targets:
-
-```bash
-idf.py -C examples/esp_idf/basic set-target esp32s3 build
-idf.py -C examples/esp_idf/basic set-target esp32s2 build
-```
-
-Also run:
-
-```bash
-python tools/check_core_timing_guard.py
-python tools/check_idf_example_contract.py
-python scripts/generate_version.py check
-python -m platformio test -e native
-```
-
-Local claims require actual command output; configured CI is not evidence that
-an unobserved local command passed. Native ESP-IDF target HIL and final-board
-electrical, fault, cancellation, shared-bus, and workload validation remain in
+The Arduino PlatformIO stack and independently pinned native ESP-IDF CI
+baseline are documented with the complete command set in the
+[`README`](../README.md#validation-and-reproducibility). Local claims require
+actual command output; configured CI is not evidence that an unobserved local
+command passed. Native ESP-IDF target HIL and final-board electrical, fault,
+cancellation, shared-bus, and workload validation remain in
 [`OPEN_ITEMS.md`](OPEN_ITEMS.md).

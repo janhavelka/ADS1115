@@ -412,6 +412,11 @@ idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
+Package validation uses an explicit release allow-list, verifies that the
+tracked generated `Version.h` is present, unpacks the archive, and compiles the
+packed core with host C++17. Repository-only CI, test, tool, and reference files
+remain outside the consumer archive.
+
 Do not report an unrun build or hardware case as passed. No retained HIL record
 qualifies the current pioarduino `55.03.311` stack. The diagnostic `version`
 output reports Arduino-ESP32 and ESP-IDF versions, and the HIL runner rejects
@@ -426,6 +431,9 @@ hardware validation plan.
 - `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
 - `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
 - `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
+- `docs/reference/ADS111x_datasheet_revE.pdf` - authoritative TI Rev. E datasheet
+- `docs/reference/pdf-extracted-md/ADS111x_datasheet_revE.md` - retained full
+  PDF-derived transcript
 - `docs/reference/extracted-md/` - retained datasheet-derived transcripts for
   quick human and AI-assisted contract review
 - `docs/README.md` - current documentation index

@@ -39,5 +39,4 @@ wifi_credentials.h
 hil_logs/
 
 # Auto-generated files
-include/ADS1115/Version.h
 docs/doxygen/

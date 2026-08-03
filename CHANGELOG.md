@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Isolated the Windows wrapper's PlatformIO package/cache state by default so
   projects pinned to older pioarduino releases cannot replace the 55.03.311
   framework and toolchain packages during a build.
+- Fixed the PlatformIO release archive so it includes the required generated
+  `Version.h`, and made CI unpack and compile the actual packed core.
+- Extended the native ESP-IDF contract guard to retain its required `vfs`
+  component.
 
 ### Changed
 
@@ -52,11 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made Doxygen extract documented public contracts only, fail on undocumented
   or malformed contracts and unresolved references, and run as an explicit CI
   job.
-- Preserved the curated datasheet-derived Markdown reference corpus for human
-  and AI-assisted contract review while removing only redundant generated
-  extraction output.
+- Preserved both the full and curated datasheet-derived Markdown transcript
+  corpus for human and AI-assisted contract review.
 - Aligned contributor, security, Doxygen, and engineering-contract
   documentation with the 2.0 owner-safe lifecycle.
+- Simplified mandatory configuration verification, framework-neutral native
+  tests, example transport helpers, source filters, and core guard logic
+  without changing the public compatibility surface.
 
 ### Removed
 
@@ -67,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the active library tree.
 - Removed the legacy unclassified HIL capture helper; the classified runner is
   now the single supported serial validation path.
+- Removed a dead operation timestamp, unused Arduino/Wire native-test stubs,
+  one-file logging configuration shim, redundant CMake version-header
+  generation, and the unbuilt TI registry example snapshot.
 
 ## [2.0.0] - 2026-07-19
 

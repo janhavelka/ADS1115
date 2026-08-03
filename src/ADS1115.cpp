@@ -311,7 +311,6 @@ void ADS1115::unbind() {
   _operationKind = OperationKind::NONE;
   _operationState = OperationState::IDLE;
   _operationToken = OperationToken{};
-  _operationStartMs = 0;
   _operationDeadlineMs = 0;
   _pollNowMs = 0;
   _activeTransferTimeoutMs = 0;
@@ -337,7 +336,6 @@ Status ADS1115::_beginOperation(OperationKind kind, uint32_t nowMs,
   _resetOperationScratch();
   _operationKind = kind;
   _operationState = OperationState::ACTIVE;
-  _operationStartMs = nowMs;
   _operationDeadlineMs = deadlineMs;
   _activeTransferTimeoutMs = _driverConfig.transferTimeoutMs;
   _operationToken.value = _nextOperationToken++;
@@ -2357,27 +2355,19 @@ Status ADS1115::_applyConfig() {
     return st;
   }
 
-  const bool requireReadback = _config.strictInitVerify || _hardwareConfigDirty;
-  if (requireReadback) {
-    st = _verifyConfigReadback();
-    if (!st.ok()) {
-      _markHardwareConfigDirty(st);
-      return st;
-    }
+  st = _verifyConfigReadback();
+  if (!st.ok()) {
+    _markHardwareConfigDirty(st);
+    return st;
   }
 
   _clearHardwareConfigDirty();
-
-  if (requireReadback) {
-    _configurationState = ConfigurationState::VERIFIED;
-    _appliedProfile = _profileFromConfig();
-    _desiredProfile = _appliedProfile;
-    _configGeneration++;
-    if (_configGeneration == 0) {
-      _configGeneration = 1;
-    }
-  } else {
-    _configurationState = ConfigurationState::UNKNOWN;
+  _configurationState = ConfigurationState::VERIFIED;
+  _appliedProfile = _profileFromConfig();
+  _desiredProfile = _appliedProfile;
+  _configGeneration++;
+  if (_configGeneration == 0) {
+    _configGeneration = 1;
   }
 
   if (_config.mode == Mode::CONTINUOUS) {

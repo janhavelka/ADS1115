@@ -4,7 +4,6 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
-from typing import Dict
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCAN_DIRS = ("src", "include")
@@ -57,11 +56,6 @@ BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 
-ALLOWED_CALL_COUNTS: Dict[str, Dict[str, int]] = {}
-ALLOWED_SYMBOL_COUNTS: Dict[str, Dict[str, int]] = {}
-ALLOWED_INCLUDE_COUNTS: Dict[str, Dict[str, int]] = {}
-
-
 def strip_comments(text: str) -> str:
     text = BLOCK_COMMENT_RE.sub("", text)
     return LINE_COMMENT_RE.sub("", text)
@@ -84,9 +78,7 @@ def collect_sources() -> list[pathlib.Path]:
 
 
 def main() -> int:
-    observed_calls: Dict[str, Dict[str, int]] = {}
-    observed_symbols: Dict[str, Dict[str, int]] = {}
-    observed_includes: Dict[str, Dict[str, int]] = {}
+    errors: list[str] = []
 
     for path in collect_sources():
         rel = path.relative_to(ROOT).as_posix()
@@ -94,107 +86,26 @@ def main() -> int:
         code = strip_non_code(raw)
         include_text = strip_comments(raw)
 
-        call_counts: Dict[str, int] = {}
         for call_name, pattern in FORBIDDEN_CALLS.items():
             count = len(pattern.findall(code))
             if count > 0:
-                call_counts[call_name] = count
-        if call_counts:
-            observed_calls[rel] = call_counts
+                errors.append(f"forbidden call in {rel}: {call_name} count={count}")
 
-        symbol_counts: Dict[str, int] = {}
         for symbol_name, pattern in FORBIDDEN_SYMBOLS.items():
             count = len(pattern.findall(code))
             if count > 0:
-                symbol_counts[symbol_name] = count
-        if symbol_counts:
-            observed_symbols[rel] = symbol_counts
+                errors.append(
+                    f"forbidden framework/allocation symbol in {rel}: "
+                    f"{symbol_name} count={count}"
+                )
 
-        include_counts: Dict[str, int] = {}
         for include_name, pattern in FORBIDDEN_INCLUDES.items():
             count = len(pattern.findall(include_text))
             if count > 0:
-                include_counts[include_name] = count
-        if include_counts:
-            observed_includes[rel] = include_counts
-
-    errors: list[str] = []
-
-    for rel, counts in observed_calls.items():
-        if rel not in ALLOWED_CALL_COUNTS:
-            errors.append(f"forbidden timing calls in unexpected file: {rel} -> {counts}")
-            continue
-        expected = ALLOWED_CALL_COUNTS[rel]
-        for call_name, count in counts.items():
-            exp = expected.get(call_name, 0)
-            if count != exp:
                 errors.append(
-                    f"timing call count mismatch in {rel}: {call_name} observed={count}, expected={exp}"
+                    f"forbidden framework include in {rel}: "
+                    f"{include_name} count={count}"
                 )
-
-    for rel, expected in ALLOWED_CALL_COUNTS.items():
-        observed = observed_calls.get(rel, {})
-        for call_name, exp in expected.items():
-            obs = observed.get(call_name, 0)
-            if obs != exp:
-                errors.append(
-                    f"timing call count mismatch in {rel}: {call_name} observed={obs}, expected={exp}"
-                )
-        unexpected_calls = set(observed.keys()) - set(expected.keys())
-        if unexpected_calls:
-            errors.append(f"unexpected timing call types in {rel}: {sorted(unexpected_calls)}")
-
-    for rel, counts in observed_symbols.items():
-        if rel not in ALLOWED_SYMBOL_COUNTS:
-            errors.append(f"forbidden framework/allocation symbols in unexpected file: {rel} -> {counts}")
-            continue
-        expected = ALLOWED_SYMBOL_COUNTS[rel]
-        for symbol_name, count in counts.items():
-            exp = expected.get(symbol_name, 0)
-            if count != exp:
-                errors.append(
-                    f"framework/allocation symbol count mismatch in {rel}: {symbol_name} "
-                    f"observed={count}, expected={exp}"
-                )
-
-    for rel, expected in ALLOWED_SYMBOL_COUNTS.items():
-        observed = observed_symbols.get(rel, {})
-        for symbol_name, exp in expected.items():
-            obs = observed.get(symbol_name, 0)
-            if obs != exp:
-                errors.append(
-                    f"framework/allocation symbol count mismatch in {rel}: {symbol_name} "
-                    f"observed={obs}, expected={exp}"
-                )
-        unexpected_symbols = set(observed.keys()) - set(expected.keys())
-        if unexpected_symbols:
-            errors.append(f"unexpected framework/allocation symbol types in {rel}: {sorted(unexpected_symbols)}")
-
-    for rel, counts in observed_includes.items():
-        if rel not in ALLOWED_INCLUDE_COUNTS:
-            errors.append(f"forbidden framework includes in unexpected file: {rel} -> {counts}")
-            continue
-        expected = ALLOWED_INCLUDE_COUNTS[rel]
-        for include_name, count in counts.items():
-            exp = expected.get(include_name, 0)
-            if count != exp:
-                errors.append(
-                    f"framework include count mismatch in {rel}: {include_name} "
-                    f"observed={count}, expected={exp}"
-                )
-
-    for rel, expected in ALLOWED_INCLUDE_COUNTS.items():
-        observed = observed_includes.get(rel, {})
-        for include_name, exp in expected.items():
-            obs = observed.get(include_name, 0)
-            if obs != exp:
-                errors.append(
-                    f"framework include count mismatch in {rel}: {include_name} "
-                    f"observed={obs}, expected={exp}"
-                )
-        unexpected_includes = set(observed.keys()) - set(expected.keys())
-        if unexpected_includes:
-            errors.append(f"unexpected framework include types in {rel}: {sorted(unexpected_includes)}")
 
     if errors:
         print("Core timing/framework guard FAILED:")

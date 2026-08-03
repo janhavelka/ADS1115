@@ -73,7 +73,7 @@ include/ADS1115/         - Public API headers only (Doxygen)
   Status.h
   Config.h
   ADS1115.h
-  Version.h              - Auto-generated (do not edit)
+  Version.h              - Tracked, auto-generated release header (do not edit)
 src/                     - Implementation (.cpp)
 examples/
   01_basic_bringup_cli/  - Arduino diagnostic CLI
@@ -304,6 +304,8 @@ When using subagents for hardening work, split responsibilities as follows:
 ## Versioning and Releases
 
 Single source of truth: `library.json`. `Version.h` is auto-generated and must never be edited.
+The generated header is tracked because VCS and packed-library consumers need
+it without running repository build scripts.
 
 SemVer:
 - MAJOR: breaking API/Config/enum changes.

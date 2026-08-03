@@ -9,7 +9,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 REQUIRED_COMMON = [
     "BoardConfig.h",
-    "BuildConfig.h",
     "Log.h",
     "I2cTransport.h",
     "I2cScanner.h",
