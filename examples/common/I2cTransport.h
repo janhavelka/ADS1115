@@ -199,7 +199,9 @@ inline bool initWire(int sda, int scl, uint32_t freq = 400000,
   if (!Wire.begin(sda, scl)) {
     return false;
   }
-  Wire.setClock(freq);
+  if (!Wire.setClock(freq)) {
+    return false;
+  }
 #if defined(ARDUINO_ARCH_ESP32)
   Wire.setTimeOut(timeoutMs);
 #else

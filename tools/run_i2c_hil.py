@@ -30,6 +30,10 @@ DEFAULT_BOOT_SETTLE_S = 2.0
 DEFAULT_SOAK_DURATION_S = 8 * 60 * 60
 EXPECTED_ARDUINO_ESP32_VERSION = "3.3.11"
 EXPECTED_ESP_IDF_VERSION = "v5.5.5"
+CLI_SYNC_COMMAND = "version"
+CLI_CANCEL_BYTE = b"\x18"  # ASCII CAN: firmware discards its partial input buffer.
+CLI_SYNC_BYTES = CLI_CANCEL_BYTE + f"{CLI_SYNC_COMMAND}\r\n".encode("ascii")
+CLI_SYNC_MARKER = "=== Version Info ==="
 
 RESULT_PASS = "PASS"
 RESULT_FAIL = "FAIL"
@@ -165,6 +169,13 @@ def summarize_observed(text: str, limit: int = 180) -> str:
 
 def has_prompt(text: str) -> bool:
     return bool(PROMPT_RE.search(strip_ansi(text)))
+
+
+def has_completed_cli_sync(text: str) -> bool:
+    """Return true only for a version response followed by its own prompt."""
+    plain = strip_ansi(text)
+    marker_index = plain.rfind(CLI_SYNC_MARKER)
+    return marker_index >= 0 and bool(PROMPT_RE.search(plain[marker_index:]))
 
 
 def run_git(args: list[str]) -> str:
@@ -932,6 +943,14 @@ def parser_self_test() -> None:
     soak_rows = soak_stats_to_rows(soak_with_failure)
     if soak_rows[0].result != RESULT_FAIL:
         raise AssertionError("any soak command failure must fail the soak summary")
+    if not CLI_SYNC_BYTES.startswith(CLI_CANCEL_BYTE) or CLI_SYNC_BYTES.startswith(b"\n"):
+        raise AssertionError("CLI synchronization must cancel, not dispatch, stale partial input")
+    stale_prompt = "> \n=== Version Info ===\nArduino-ESP32: 3.3.11\n"
+    if has_completed_cli_sync(stale_prompt):
+        raise AssertionError("a stale prompt before the sync marker must not complete synchronization")
+    completed_sync = "> \n=== Version Info ===\nArduino-ESP32: 3.3.11\n> "
+    if not has_completed_cli_sync(completed_sync):
+        raise AssertionError("the version marker and its following prompt must complete synchronization")
     print("ADS1115 HIL parser self-test PASSED")
 
 
@@ -976,12 +995,43 @@ def read_command_response(ser: object, idle_s: float, timeout_s: float) -> tuple
     return b"".join(chunks).decode("utf-8", errors="replace"), True
 
 
+def synchronize_cli(ser: object, timeout_s: float) -> tuple[str, bool]:
+    """Cancel stale partial input and establish framing bus-silently."""
+    chunks: list[bytes] = []
+    ser.write(CLI_SYNC_BYTES)
+    flush = getattr(ser, "flush", None)
+    if callable(flush):
+        flush()
+
+    started_at = time.monotonic()
+    while (time.monotonic() - started_at) < timeout_s:
+        waiting = int(getattr(ser, "in_waiting", 0))
+        if waiting > 0:
+            chunks.append(ser.read(waiting))
+            text = b"".join(chunks).decode("utf-8", errors="replace")
+            if has_completed_cli_sync(text):
+                return text, False
+        time.sleep(0.03)
+    return b"".join(chunks).decode("utf-8", errors="replace"), True
+
+
 def open_serial(port: str, baud: int) -> object:
     try:
         import serial  # type: ignore
     except ImportError as exc:
         raise SystemExit("pyserial is required for live HIL; run dry-run or install pyserial") from exc
-    return serial.Serial(port=port, baudrate=baud, timeout=0.1)
+    ser = serial.Serial()
+    try:
+        ser.dtr = False
+        ser.rts = False
+    except (AttributeError, OSError):
+        pass
+    ser.port = port
+    ser.baudrate = baud
+    ser.timeout = 0.1
+    ser.write_timeout = 2.0
+    ser.open()
+    return ser
 
 
 def reset_serial_target(ser: object) -> None:
@@ -1168,6 +1218,15 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
         initial = read_available(ser, args.idle_s, args.timeout_s)
         if initial:
             write_log(initial)
+        write_log(
+            f"\n# Cancelling stale partial input and synchronizing CLI framing "
+            f"with bus-silent `{CLI_SYNC_COMMAND}`.\n"
+        )
+        sync_output, sync_timed_out = synchronize_cli(ser, args.timeout_s)
+        if sync_output:
+            write_log(sync_output)
+        if sync_timed_out:
+            raise RuntimeError("serial CLI synchronization timed out")
 
         for spec in specs:
             row = run_one_step(

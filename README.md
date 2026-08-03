@@ -374,17 +374,23 @@ configuration-trust behavior changed.
 
 ## Validation And Reproducibility
 
-The repository pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, and
-the exact pioarduino espressif32 `55.03.311` release archive. That Arduino
-platform supplies Arduino-ESP32 `3.3.11` and bundled ESP-IDF `5.5.5`. The
-native ESP-IDF CI build is a separate compatibility baseline pinned to
-ESP-IDF `v5.3.5`. CI action revisions, runner images, Doxygen, and the host
-compiler still vary over time; builds are not claimed bit-reproducible.
+CI pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, and the exact
+pioarduino espressif32 `55.03.311` release archive. That Arduino platform
+supplies Arduino-ESP32 `3.3.11` and bundled ESP-IDF `5.5.5`. The Windows
+`scripts/pio.cmd` wrapper uses the existing VS Code-managed PlatformIO
+executable and installs no second Core. It defaults package/cache state to
+`%USERPROFILE%\.pio-ads1115` so another project pinned to an older pioarduino
+release cannot replace this project's framework or toolchain packages. Callers
+may explicitly override `PLATFORMIO_CORE_DIR`; pioarduino `55.03.311` requires
+PlatformIO Core 6.1.19 or newer. The native ESP-IDF CI build is a separate
+compatibility baseline pinned to ESP-IDF `v5.3.5`. CI action revisions, runner
+images, Doxygen, and the host compiler still vary over time; builds are not
+claimed bit-reproducible.
 
 On Windows hosts with Win32 long-path support disabled, the Arduino `3.3.11`
 libraries archive can exceed the default extraction path limit. Enable Win32
-long paths or set `PLATFORMIO_CORE_DIR` to a short, application-owned directory
-before the first package installation.
+long paths or explicitly set `PLATFORMIO_CORE_DIR` to a shorter,
+application-owned directory before the first package installation.
 
 Configured CI runs:
 

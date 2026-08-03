@@ -1988,9 +1988,12 @@ void loop() {
 
   static String inputBuffer;
   static constexpr size_t kMaxInputLen = 128;
+  static constexpr char kCliCancelInput = '\x18';  // ASCII CAN
   while (Serial.available()) {
     char c = static_cast<char>(Serial.read());
-    if (c == '\n' || c == '\r') {
+    if (c == kCliCancelInput) {
+      inputBuffer = "";
+    } else if (c == '\n' || c == '\r') {
       if (inputBuffer.length() > 0) {
         processCommand(inputBuffer);
         inputBuffer = "";

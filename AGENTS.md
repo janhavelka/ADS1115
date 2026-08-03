@@ -7,8 +7,12 @@ branch to its upstream. Stop and report dirty, divergent, or conflicted state;
 never overwrite work to force a sync.
 
 On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
-VS Code-managed installation. Never install another PlatformIO Core; if the
-wrapper cannot find it, stop and report the missing installation.
+VS Code-managed executable and defaults package/cache state to the isolated
+`%USERPROFILE%\.pio-ads1115` core directory. This prevents projects pinned to
+different pioarduino releases from replacing one another's framework and
+toolchain packages; callers may override `PLATFORMIO_CORE_DIR` explicitly.
+Never install another PlatformIO Core; if the wrapper cannot find the managed
+executable, stop and report the missing installation.
 
 ## Role and Target
 You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.

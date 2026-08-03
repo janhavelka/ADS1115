@@ -87,9 +87,15 @@ def main() -> int:
         "DIAGNOSTIC_JOB_TIMEOUT_MS",
         "startDiagnosticSingleShotJob",
         "startDiagnosticApplyJob",
+        "kCliCancelInput",
     ):
         if token not in text:
             fail(f"bringup CLI must include token: {token!r}")
+
+    cancel_branch = text.find("if (c == kCliCancelInput)")
+    line_branch = text.find("else if (c == '\\n' || c == '\\r')")
+    if cancel_branch < 0 or line_branch < 0 or cancel_branch >= line_branch:
+        fail("CLI cancel byte must discard partial input before line dispatch")
 
     for token in (
         "TGT-{address}-MODE-RAW",
@@ -97,6 +103,8 @@ def main() -> int:
         "Read latest raw code in continuous mode",
         "Reject scaled read in continuous mode",
         '"raw", "Continuous latest-raw read"',
+        'CLI_CANCEL_BYTE = b"\\x18"',
+        "CLI_SYNC_BYTES = CLI_CANCEL_BYTE",
     ):
         if token not in hil_runner_text:
             fail(f"classified HIL runner must include token: {token!r}")

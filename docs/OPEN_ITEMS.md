@@ -1,6 +1,6 @@
 # Open Validation Items
 
-Last reviewed: 2026-08-01 against ADS1115 2.0.0 and pioarduino
+Last reviewed: 2026-08-03 against ADS1115 2.0.0 and pioarduino
 `55.03.311`.
 
 There is no known unresolved high- or medium-severity core-driver defect. This

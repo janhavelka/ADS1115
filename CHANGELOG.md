@@ -22,8 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added owner-safe native regressions for profile commit, tokened shutdown,
   recovery after failed initialization, and signed saturation flags; the suite
   now contains 178 tests.
-- Propagated Arduino `Wire.begin()` failure from the example transport setup
-  and made disabled native ESP-IDF ALERT/RDY pin handling compile-time safe.
+- Propagated fallible Arduino `Wire.begin()` and `Wire.setClock()` setup results
+  in both examples and made disabled native ESP-IDF ALERT/RDY pin handling
+  compile-time safe.
+- Made the Windows PlatformIO wrapper UTF-8-safe and made HIL serial
+  reattachment discard stale partial input through an explicit firmware-side
+  ASCII CAN handler before accepting a fresh bus-silent version response.
+- Isolated the Windows wrapper's PlatformIO package/cache state by default so
+  projects pinned to older pioarduino releases cannot replace the 55.03.311
+  framework and toolchain packages during a build.
 
 ### Changed
 

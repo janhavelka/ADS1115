@@ -249,8 +249,16 @@ void consumeTerminalResult(uint32_t nowMs) {
 
 void setup() {
   Serial.begin(115200);
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(I2C_CLOCK_HZ);
+  if (!Wire.begin(I2C_SDA, I2C_SCL)) {
+    fail(ADS1115::Status::Error(ADS1115::Err::I2C_BUS,
+                                "Wire initialization failed"));
+    return;
+  }
+  if (!Wire.setClock(I2C_CLOCK_HZ)) {
+    fail(ADS1115::Status::Error(ADS1115::Err::INVALID_CONFIG,
+                                "Wire clock configuration failed"));
+    return;
+  }
 
   busOwner.mutex = xSemaphoreCreateMutexStatic(&busMutexStorage);
 
