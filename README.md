@@ -417,10 +417,23 @@ tracked generated `Version.h` is present, unpacks the archive, and compiles the
 packed core with host C++17. Repository-only CI, test, tool, and reference files
 remain outside the consumer archive.
 
-Do not report an unrun build or hardware case as passed. No retained HIL record
-qualifies the current pioarduino `55.03.311` stack. The diagnostic `version`
-output reports Arduino-ESP32 and ESP-IDF versions, and the HIL runner rejects
-firmware that does not report `3.3.11` / `v5.5.5`. Outstanding evidence is in
+Do not report an unrun build or hardware case as passed. The externally retained
+record `ads1115_559933a_20260804` covers clean ESP32-S2 diagnostic firmware at
+commit `559933a` on pioarduino `55.03.311` (Arduino-ESP32 `3.3.11`, ESP-IDF
+`v5.5.5`). Two responding devices at `0x48`/`0x49` completed the preflight and
+expanded exhaustive digital contract with no device-command failures or resets.
+Its one-hour workload completed 2,101 full cycles plus one partial cycle: 88,258
+workload commands, zero workload failures, no resets, and 0.188 s worst command
+latency. The run exposed a host-runner cleanup sequencing defect at the final
+partial-cycle cancellation; the corrected two-poll reconciliation path then
+passed on both devices and restored clean `READY` state.
+
+This evidence does not turn analog samples into accuracy claims. It also does
+not qualify ESP32-S3, native ESP-IDF hardware, all four physical address straps,
+ALERT/RDY or comparator electrical behavior, controlled physical faults,
+production shared-bus scheduling, or final-board/product endurance. `0x4A` and
+`0x4B` produced visible generic read errors while preserving the active driver;
+that is not proof of precise address-NACK mapping. Outstanding evidence is in
 [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md); execution details belong in the
 hardware validation plan.
 

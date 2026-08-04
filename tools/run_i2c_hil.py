@@ -30,6 +30,11 @@ DEFAULT_IDLE_S = 0.35
 DEFAULT_BOOT_SETTLE_S = 2.0
 DEFAULT_SOAK_DURATION_S = 8 * 60 * 60
 MAX_SOAK_DIAGNOSTIC_ROWS = 100
+# The ADS1115 slowest 8-SPS conversion has a library worst-case bound of
+# 139,889 us. Cancellation reconciliation starts its quiet interval on the
+# first owner poll after cancellation, so cleanup waits beyond that bound.
+MAX_ADS1115_CONVERSION_S = 0.140
+CLEANUP_RECONCILIATION_DELAY_S = 0.200
 EXPECTED_ARDUINO_ESP32_VERSION = "3.3.11"
 EXPECTED_ESP_IDF_VERSION = "v5.5.5"
 CLI_SYNC_COMMAND = "version"
@@ -398,11 +403,48 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
         elif validator == "job_inactive":
             if "Active: NO" not in plain:
                 return "job is still active"
+        elif validator == "job_cancel_requested_or_inactive":
+            inactive = "Active: NO" in plain
+            reconciling = (
+                "Active: YES" in plain
+                and "State: WAIT_IDLE_AFTER_ABANDON" in plain
+            )
+            if not (inactive or reconciling):
+                return "cancellation neither made the job inactive nor entered reconciliation"
+        elif validator == "job_reconciliation_active":
+            if not (
+                "Active: YES" in plain
+                and "State: WAIT_IDLE_AFTER_ABANDON" in plain
+            ):
+                return "job did not enter active cancellation reconciliation"
         elif validator == "job_cleanup_terminal":
             no_active = "No active pollable job" in plain and "Active: NO" in plain
-            terminal = "Done: YES" in plain and status_token(plain) in ("OK", "CANCELLED")
+            terminal_status = status_token(plain)
+            terminal = (
+                "Done: YES" in plain
+                and terminal_status is not None
+                and terminal_status != "IN_PROGRESS"
+            )
             if not (no_active or terminal):
                 return "cancelled job did not reach a terminal/inactive state"
+        elif validator == "job_cleanup_armed_or_inactive":
+            no_active = "No active pollable job" in plain and "Active: NO" in plain
+            reconciling = (
+                "Done: NO" in plain
+                and "Instructions used: 0" in plain
+                and "State: WAIT_IDLE_AFTER_ABANDON" in plain
+                and status_token(plain) is not None
+            )
+            if not (no_active or reconciling):
+                return "cancelled job neither armed reconciliation nor became inactive"
+        elif validator == "job_reconciliation_armed":
+            if not (
+                "Done: NO" in plain
+                and "Instructions used: 0" in plain
+                and "State: WAIT_IDLE_AFTER_ABANDON" in plain
+                and status_token(plain) is not None
+            ):
+                return "first cancellation poll did not arm bus-silent reconciliation"
         elif validator == "job_done":
             if "Done: YES" not in plain:
                 return "job did not complete"
@@ -843,6 +885,14 @@ def exhaustive_diagnostic_plan(address: str) -> list[CommandSpec]:
         CommandSpec("DIAG-{address}-JOB0", "Staged Jobs", "job", "Report no active job", ("=== Job Status ===",), ("job_inactive",)),
         CommandSpec("DIAG-{address}-CANCEL-START", "Cancellation", "job single", "Start cancellable staged job", ("=== Job Status ===",), ("job_active",)),
         CommandSpec("DIAG-{address}-CANCEL", "Cancellation", "job cancel", "Cancel staged job and acknowledge terminal result", ("=== Job Status ===",), ("status_cancelled", "job_inactive"), expected_failure=True),
+        CommandSpec("DIAG-{address}-RECON-START", "Cancellation", "job single", "Start staged job for post-write cancellation", ("=== Job Status ===",), ("job_active",)),
+        CommandSpec("DIAG-{address}-RECON-WRITE", "Cancellation", "job poll 1", "Confirm the conversion-start write", ("State: SINGLE_SHOT_WAIT_CONVERSION",), timeout_s=5.0),
+        CommandSpec("DIAG-{address}-RECON-CANCEL", "Cancellation", "job cancel", "Enter bus-silent wait-idle reconciliation", ("=== Job Status ===",), ("job_reconciliation_active",), expected_failure=True),
+        CommandSpec("DIAG-{address}-RECON-ARM", "Cancellation", "job poll 0", "Arm the trusted post-callback quiet interval without I2C", ("=== Job Poll Result ===",), ("job_reconciliation_armed",), expected_failure=True, post_delay_s=CLEANUP_RECONCILIATION_DELAY_S),
+        CommandSpec("DIAG-{address}-RECON-SETTLE", "Cancellation", "job poll 3", "Finish bounded cancellation reconciliation", ("=== Job Poll Result ===",), ("job_cleanup_terminal",), expected_failure=True),
+        CommandSpec("DIAG-{address}-RECON-DIRTY", "Cancellation", "settings", "Post-write cancellation leaves configuration trust dirty", ("Hardware/cache dirty:",), ("dirty_yes",)),
+        CommandSpec("DIAG-{address}-RECON-RECOVER", "Cancellation", "recover", "Reapply and verify the cached profile after cancellation", ("Status: OK",), ("status_ok",), timeout_s=8.0),
+        CommandSpec("DIAG-{address}-RECON-CLEAN", "Cancellation", "settings", "Recovery clears cancellation dirty state", ("Hardware/cache dirty:",), ("driver_ready", "dirty_no")),
         CommandSpec("DIAG-{address}-COMP-OFF", "Comparator", "comp queue disable", "Disable comparator via queue command", ("Status: OK",), ("status_ok",)),
         CommandSpec("DIAG-{address}-WREG3", "Registers", "wreg 3 0x7FFF", "Write high threshold diagnostic register and mark dirty", ("Status: OK",), ("status_ok",)),
         CommandSpec("DIAG-{address}-DIRTY", "Dirty State", "settings", "High-threshold raw write is visibly dirty", ("Hardware/cache dirty:",), ("dirty_yes",)),
@@ -927,6 +977,11 @@ def parser_self_test() -> None:
         (CommandSpec("T", "Job", "job poll 0", "", ("=== Job Poll Result ===",), ("job_zero_budget",)), "=== Job Poll Result ===\n  Status: IN_PROGRESS\n  Instructions used: 0\n  Done: NO\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job single", "", ("Status:",), ("status_busy",)), "Status: BUSY (code=8, detail=0)\nMessage: Poll job active\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job cancel", "", ("=== Job Status ===",), ("status_cancelled", "job_inactive"), expected_failure=True), "=== Job Status ===\n  Active: NO\n  Status: CANCELLED (code=19, detail=0)\n> ", RESULT_PASS),
+        (CommandSpec("T", "Cleanup", "job cancel", "", ("=== Job Status ===",), ("job_cancel_requested_or_inactive",), expected_failure=True), "=== Job Status ===\n  Active: YES\n  State: WAIT_IDLE_AFTER_ABANDON\n  Status: IN_PROGRESS\n> ", RESULT_PASS),
+        (CommandSpec("T", "Cleanup", "job cancel", "", ("=== Job Status ===",), ("job_reconciliation_active",), expected_failure=True), "=== Job Status ===\n  Active: YES\n  State: WAIT_IDLE_AFTER_ABANDON\n  Status: IN_PROGRESS\n> ", RESULT_PASS),
+        (CommandSpec("T", "Cleanup", "job poll 0", "", ("=== Job Poll Result ===",), ("job_cleanup_armed_or_inactive",), expected_failure=True), "=== Job Poll Result ===\n  Status: CANCELLED\n  Instructions used: 0\n  Done: NO\n  State: WAIT_IDLE_AFTER_ABANDON\n> ", RESULT_PASS),
+        (CommandSpec("T", "Cleanup", "job poll 0", "", ("=== Job Poll Result ===",), ("job_reconciliation_armed",), expected_failure=True), "=== Job Poll Result ===\n  Status: CANCELLED\n  Instructions used: 0\n  Done: NO\n  State: WAIT_IDLE_AFTER_ABANDON\n> ", RESULT_PASS),
+        (CommandSpec("T", "Cleanup", "job poll 3", "", ("=== Job Poll Result ===",), ("job_cleanup_terminal",), expected_failure=True), "=== Job Poll Result ===\n  Status: I2C_TIMEOUT\n  Instructions used: 0\n  Done: YES\n  State: FAILED\n> ", RESULT_PASS),
         (CommandSpec("T", "Mode", "start", "", ("Status:",), ("status_in_progress",)), "Status: IN_PROGRESS (code=9, detail=0)\nMessage: Conversion started\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job poll", "", ("No active pollable job",), ("no_active_job",)), "No active pollable job\n=== Job Status ===\n  Active: NO\n> ", RESULT_PASS),
         (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=0\n> ", RESULT_PASS),
@@ -980,8 +1035,11 @@ def parser_self_test() -> None:
         raise AssertionError("soak plan test IDs must be unique")
     epilogue = soak_epilogue_plan(["0x48", "0x49"])
     epilogue_commands = [spec.command for spec in epilogue]
-    if epilogue_commands[:2] != ["job cancel", "job poll 3"] or epilogue_commands[-2:] != ["settings", "drv"]:
+    if epilogue_commands[:3] != ["job cancel", "job poll 0", "job poll 3"] or epilogue_commands[-2:] != ["settings", "drv"]:
         raise AssertionError("soak epilogue must cancel first and finish with final diagnostics")
+    arm_step = epilogue[1]
+    if arm_step.post_delay_s < MAX_ADS1115_CONVERSION_S:
+        raise AssertionError("cleanup reconciliation delay must cover the 8-SPS bound")
     if epilogue_commands[-10:] != [
         "settings", "drv", "addr 0x48", "job cancel", "recover", "mode single",
         "gain 2", "rate 4", "settings", "drv",
@@ -1072,6 +1130,9 @@ def parser_self_test() -> None:
                 "job poll 1": (
                     "=== Job Poll Result ===\nStatus: IN_PROGRESS\nDone: NO\n> "
                 ),
+                "job poll 0": (
+                    "No active pollable job\n=== Job Status ===\nActive: NO\n> "
+                ),
                 "job poll 3": "=== Job Poll Result ===\nStatus: OK\nDone: YES\n> ",
                 "job cancel": (
                     "=== Job Status ===\nActive: NO\nStatus: CANCELLED\n> "
@@ -1107,6 +1168,65 @@ def parser_self_test() -> None:
         raise AssertionError("the bounded soak epilogue must restore successfully in self-test")
     if soak_stats_to_rows(short_soak)[0].result != RESULT_FAIL:
         raise AssertionError("a too-short soak with no completed cycle must not pass")
+
+    class ReconcilingSelfTestSerial(SelfTestSerial):
+        def __init__(self, *, settle: bool) -> None:
+            super().__init__()
+            self.commands: list[str] = []
+            self.cancel_count = 0
+            self.settle = settle
+
+        def write(self, data: bytes) -> int:
+            command = data.replace(CLI_CANCEL_BYTE, b"").decode("ascii").strip()
+            self.commands.append(command)
+            if command == "job cancel":
+                self.cancel_count += 1
+                if self.cancel_count == 1:
+                    self.buffer += (
+                        "=== Job Status ===\nActive: YES\n"
+                        "State: WAIT_IDLE_AFTER_ABANDON\nStatus: IN_PROGRESS\n> "
+                    ).encode("ascii")
+                    return len(data)
+            elif command == "job poll 0":
+                self.buffer += (
+                    "=== Job Poll Result ===\nStatus: CANCELLED\n"
+                    "Instructions used: 0\nDone: NO\n"
+                    "State: WAIT_IDLE_AFTER_ABANDON\n> "
+                ).encode("ascii")
+                return len(data)
+            elif command == "job poll 3":
+                done = "YES" if self.settle else "NO"
+                state = "CANCELLED" if self.settle else "WAIT_IDLE_AFTER_ABANDON"
+                self.buffer += (
+                    "=== Job Poll Result ===\nStatus: CANCELLED\n"
+                    f"Instructions used: 0\nDone: {done}\nState: {state}\n> "
+                ).encode("ascii")
+                return len(data)
+            return super().write(data)
+
+    reconciling_serial = ReconcilingSelfTestSerial(settle=True)
+    reconciliation_rows = run_soak_epilogue(
+        reconciling_serial, short_soak_args, lambda _: None, stats=None
+    )
+    if any(row.result != RESULT_PASS for row in reconciliation_rows):
+        raise AssertionError("two-poll cancellation reconciliation must restore successfully")
+    if reconciling_serial.commands[:4] != [
+        "version", "job cancel", "job poll 0", "job poll 3"
+    ]:
+        raise AssertionError("cleanup must arm the quiet interval before terminal polling")
+
+    stuck_serial = ReconcilingSelfTestSerial(settle=False)
+    stuck_rows = run_soak_epilogue(stuck_serial, short_soak_args, lambda _: None, stats=None)
+    settle_row = next(
+        row for row in stuck_rows if row.test_id == "SOAK-EPILOGUE-SETTLE-CURRENT"
+    )
+    if settle_row.result != RESULT_FAIL:
+        raise AssertionError("nonterminal cancellation reconciliation must fail cleanup")
+    if any(command.startswith("addr ") for command in stuck_serial.commands):
+        raise AssertionError("cleanup must not switch devices while reconciliation is active")
+    if not any(row.result == RESULT_NOT_RUN for row in stuck_rows):
+        raise AssertionError("unsafe cleanup remainder must be reported as NOT_RUN")
+
     if not CLI_SYNC_BYTES.startswith(CLI_CANCEL_BYTE) or CLI_SYNC_BYTES.startswith(b"\n"):
         raise AssertionError("CLI synchronization must cancel, not dispatch, stale partial input")
     stale_prompt = "> \n=== Version Info ===\nArduino-ESP32: 3.3.11\n"
@@ -1308,8 +1428,18 @@ def soak_epilogue_plan(addresses: list[str]) -> list[CommandSpec]:
             "job cancel",
             "Request cancellation of any partially active staged job",
             ("=== Job Status ===",),
+            ("job_cancel_requested_or_inactive",),
             expected_failure=True,
-            post_delay_s=0.2,
+        ),
+        CommandSpec(
+            "SOAK-EPILOGUE-ARM-CURRENT",
+            "Soak Cleanup",
+            "job poll 0",
+            "Arm the bus-silent post-callback quiet interval or confirm no active job",
+            ("=== Job Poll Result ===", "No active pollable job"),
+            ("job_cleanup_armed_or_inactive",),
+            expected_failure=True,
+            post_delay_s=CLEANUP_RECONCILIATION_DELAY_S,
         ),
         CommandSpec(
             "SOAK-EPILOGUE-SETTLE-CURRENT",
@@ -1587,7 +1717,13 @@ def run_soak_epilogue(
         write_log(f"# SOAK EPILOGUE STOP: {sync_row.notes}; no unframed commands were sent.\n")
         return rows
 
-    for spec in soak_epilogue_plan(args.address or ["0x48"]):
+    plan = soak_epilogue_plan(args.address or ["0x48"])
+    reconciliation_steps = {
+        "SOAK-EPILOGUE-CANCEL-CURRENT",
+        "SOAK-EPILOGUE-ARM-CURRENT",
+        "SOAK-EPILOGUE-SETTLE-CURRENT",
+    }
+    for index, spec in enumerate(plan):
         try:
             row = run_one_step(
                 ser,
@@ -1607,6 +1743,14 @@ def run_soak_epilogue(
         if stats is not None:
             row = record_soak_row(stats, row, cycle=None)
         rows.append(row)
+        if spec.test_id in reconciliation_steps and row.result == RESULT_FAIL:
+            reason = (
+                f"cleanup stopped after {spec.test_id}; active conversion reuse "
+                "is unsafe until cancellation reconciliation completes"
+            )
+            write_log(f"# SOAK EPILOGUE STOP: {reason}.\n")
+            rows.extend(not_run_result(item, reason) for item in plan[index + 1:])
+            break
     return rows
 
 

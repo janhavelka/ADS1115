@@ -1,8 +1,9 @@
 # ADS1115 Hardware Validation Plan
 
-This is the operator procedure for evidence that is still missing. It is not
-validation evidence, and the repository does not retain a current-stack
-physical qualification result.
+This is the operator procedure for evidence that is still missing. The external
+record `ads1115_559933a_20260804` contains a current-stack ESP32-S2 Arduino
+diagnostic result, but it qualifies only CLI-observable digital behavior; the
+repository still has no broad physical qualification result.
 
 ## Acceptance Rule
 
@@ -20,7 +21,7 @@ evidence system and record its stable reference in the dated result.
 | Gate | Required coverage | Evidence needed |
 | --- | --- | --- |
 | Runtime identity | Clean firmware matching the intended commit, pioarduino `55.03.311`, Arduino-ESP32 `3.3.11`, ESP-IDF `v5.5.5`, and build timestamp | Build and startup identity record |
-| Arduino physical HIL | ESP32-S2/S3 targeted and exhaustive plans; populated and expected-absent addresses | Dated result and external evidence reference |
+| Arduino diagnostic HIL (remaining) | ESP32-S3 targeted and exhaustive plans; populated and expected-absent addresses | Dated result and external evidence reference |
 | Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
 | Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
 | Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |
@@ -30,6 +31,11 @@ evidence system and record its stable reference in the dated result.
 | Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Compact build/flash/monitor outcomes |
 | Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run | Duration, cycles/commands, latency, failures, resets, environment |
 | Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
+
+The 2026-08-04 ESP32-S2 record exercised responding `0x48`/`0x49` devices and
+expected-absent `0x4A`/`0x4B` addresses. The absent addresses produced a generic
+read error, not a transport-proven NACK classification; two populated addresses
+also do not prove all four physical ADDR strap configurations.
 
 ## Record Identity Before Testing
 
@@ -136,11 +142,15 @@ device.
 
 At every normal, timeout, failure-threshold, or handled-interrupt exit, the
 runner performs a bounded epilogue: re-synchronize framing, cancel staged work,
-recover every populated address, restore single-shot mode, gain 2 and rate 4,
-then capture final settings and driver health. Any failed epilogue step fails
-the soak. The summary distinguishes completed and partial cycles, lists
+use a zero-budget poll to anchor any required post-callback quiet interval,
+wait beyond the worst-case 8-SPS conversion bound, and require a terminal or
+inactive result. Only then may it recover each populated address, restore
+single-shot mode, gain 2 and rate 4, and capture final settings and health. If
+reconciliation cannot be proven terminal, the runner stops before unsafe device
+reuse and records the remaining cleanup as `NOT_RUN`. Any failed epilogue step
+fails the soak. The summary distinguishes completed and partial cycles, lists
 per-command counts and worst latency, and retains bounded individual failure
-rows; commands skipped by `--stop-on-fail` are recorded as `NOT_RUN`.
+rows; commands skipped by `--stop-on-fail` are also recorded as `NOT_RUN`.
 
 ## Native ESP-IDF Runs
 

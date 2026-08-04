@@ -1,6 +1,6 @@
 # Open Validation Items
 
-Last reviewed: 2026-08-03 against ADS1115 2.0.0 and pioarduino
+Last reviewed: 2026-08-04 against ADS1115 2.0.0 and pioarduino
 `55.03.311`.
 
 There is no known unresolved high- or medium-severity core-driver defect. This
@@ -9,10 +9,10 @@ product claims.
 
 ## Hardware and integration evidence
 
-- [ ] Requalify the Arduino diagnostic surface on ESP32-S2 and ESP32-S3 using
-  pioarduino `55.03.311`, with runtime Arduino-ESP32 `3.3.11` / ESP-IDF
-  `v5.5.5` identity, CLI framing, repeated-start reads, expected-absent NACKs,
-  bounded timeout/recovery behavior, and a reviewable stress/soak run.
+- [ ] Requalify the Arduino diagnostic surface on ESP32-S3 using pioarduino
+  `55.03.311`, with runtime Arduino-ESP32 `3.3.11` / ESP-IDF `v5.5.5`
+  identity, CLI framing, repeated-start reads, expected-absent address error
+  handling, bounded diagnostic recovery, and a reviewable stress/soak run.
 - [ ] Validate final-board address straps, supply, pull-ups, bus speed, analog
   source impedance, protection, input limits, accuracy, saturation,
   disconnection, and calibration for every supported production profile.

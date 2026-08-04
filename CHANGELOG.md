@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   partial work, enforce an optional command-latency limit, retain failure
   diagnostics, and always attempt bounded cancellation, recovery, nominal
   profile restoration, and final health capture before exit.
+- Fixed the HIL cleanup sequence for a duration cutoff after a confirmed
+  conversion start: it now performs the required zero-budget poll to anchor the
+  post-callback quiet interval before its bounded delay and terminal poll. If
+  reconciliation cannot be proven terminal, cleanup records the remaining work
+  as `NOT_RUN` instead of unsafely switching devices or replaying configuration.
+- Added exhaustive real-hardware coverage for post-write cancellation,
+  bus-silent reconciliation, dirty-state visibility, and verified profile
+  recovery; both populated devices passed the expanded contract.
 - Asserted DTR for ESP32-S2/S3 native USB CDC monitoring and HIL sessions;
   leaving DTR deasserted allowed COM enumeration but silently blocked the
   diagnostic CLI on pioarduino 55.03.311.
@@ -71,6 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Simplified mandatory configuration verification, framework-neutral native
   tests, example transport helpers, source filters, and core guard logic
   without changing the public compatibility surface.
+- Recorded external ESP32-S2 diagnostic evidence for clean firmware commit
+  `559933a` on the pioarduino `55.03.311` runtime stack. The two-device preflight
+  had 15 contract passes, the corrected expanded exhaustive run had 407 contract
+  passes, and a 3,600-second workload completed 2,101 full cycles plus one
+  partial cycle (88,258 workload commands) with zero workload failures, no
+  resets, and 0.188 s worst latency. The hour exposed the runner-only cleanup
+  defect fixed above; its exact cancellation path subsequently passed on both
+  devices. Analog/electrical observations remain `EVIDENCE_REQUIRED`, and this
+  is not ESP32-S3, native-IDF, controlled-fault, shared-bus product, or
+  final-board qualification.
 
 ### Removed
 
