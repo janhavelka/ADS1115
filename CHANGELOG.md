@@ -30,7 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ASCII CAN handler before accepting a fresh bus-silent version response.
 - Isolated the Windows wrapper's PlatformIO package/cache state by default so
   projects pinned to older pioarduino releases cannot replace the 55.03.311
-  framework and toolchain packages during a build.
+  framework and toolchain packages during a build, and shortened its default
+  path to avoid pioarduino archive extraction failures on legacy Win32 paths.
+- Made long HIL runs reject invalid acceptance arguments, record skipped and
+  partial work, enforce an optional command-latency limit, retain failure
+  diagnostics, and always attempt bounded cancellation, recovery, nominal
+  profile restoration, and final health capture before exit.
+- Asserted DTR for ESP32-S2/S3 native USB CDC monitoring and HIL sessions;
+  leaving DTR deasserted allowed COM enumeration but silently blocked the
+  diagnostic CLI on pioarduino 55.03.311.
 - Fixed the PlatformIO release archive so it includes the required generated
   `Version.h`, and made CI unpack and compile the actual packed core.
 - Extended the native ESP-IDF contract guard to retain its required `vfs`

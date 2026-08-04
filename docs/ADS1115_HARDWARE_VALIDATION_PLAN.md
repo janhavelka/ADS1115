@@ -111,17 +111,36 @@ fault, record the physical action, transaction stage when known, exact returned
 recovery/resync path. Do not call an ambiguous partial write clean merely
 because a later probe succeeds.
 
-Choose soak duration, error limit, latency limit, supply range, and thermal
-range before running. A typical automated command is:
+Choose positive soak duration, consecutive-failure limit, maximum command
+latency, supply range, and thermal range before running. The runner rejects
+duplicate or overlapping present/absent addresses and benchmark requests on a
+suite that does not execute benchmarks. A typical automated command is:
 
 ```text
-python tools/run_i2c_hil.py --port <PORT> --address <ADDR> --suite exhaustive --benchmark --soak --soak-duration-s <SECONDS> --soak-max-consecutive-failures <LIMIT> --out <EVIDENCE_DIR>
+python tools/run_i2c_hil.py --port <PORT> --address <ADDR> --suite exhaustive --benchmark --soak --soak-duration-s <SECONDS> --soak-max-consecutive-failures <LIMIT> --soak-max-latency-s <SECONDS> --out <EVIDENCE_DIR>
 ```
 
 Record start/end time, duration, cycles and commands, classified results,
 maximum and mean latency, reset reason, final health/trust state, supply, and
 ambient temperature. Serial disconnects and host exceptions are failures or
 invalidated runs, not implicit passes.
+
+The repeated soak workload is an endurance subset: blocking and continuous
+reads, boundary gain/rate changes, scalar stress, a staged single-shot job,
+health/probe, and recovery. The exhaustive prerequisite covers the other CLI
+contracts once; neither phase replaces calibrated analog, ALERT/RDY,
+comparator-crossing, physical-fault, shared-bus, supply, or thermal evidence.
+For multiple populated addresses, one invocation shares the requested duration
+across them; run a separate soak per address when the duration applies to each
+device.
+
+At every normal, timeout, failure-threshold, or handled-interrupt exit, the
+runner performs a bounded epilogue: re-synchronize framing, cancel staged work,
+recover every populated address, restore single-shot mode, gain 2 and rate 4,
+then capture final settings and driver health. Any failed epilogue step fails
+the soak. The summary distinguishes completed and partial cycles, lists
+per-command counts and worst latency, and retains bounded individual failure
+rows; commands skipped by `--stop-on-fail` are recorded as `NOT_RUN`.
 
 ## Native ESP-IDF Runs
 

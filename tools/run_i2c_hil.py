@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+import math
 import pathlib
 import re
 import subprocess
@@ -28,6 +29,7 @@ DEFAULT_TIMEOUT_S = 8.0
 DEFAULT_IDLE_S = 0.35
 DEFAULT_BOOT_SETTLE_S = 2.0
 DEFAULT_SOAK_DURATION_S = 8 * 60 * 60
+MAX_SOAK_DIAGNOSTIC_ROWS = 100
 EXPECTED_ARDUINO_ESP32_VERSION = "3.3.11"
 EXPECTED_ESP_IDF_VERSION = "v5.5.5"
 CLI_SYNC_COMMAND = "version"
@@ -152,8 +154,15 @@ class SoakStats:
     consecutive_failures: int = 0
     max_consecutive_failures: int = 0
     cycles: int = 0
+    partial_cycles: int = 0
     stopped_reason: str = ""
     reset_markers: int = 0
+    max_latency_s: float | None = None
+    command_results: Counter[tuple[str, str]] = dataclasses.field(default_factory=Counter)
+    command_worst_latency_s: dict[str, float] = dataclasses.field(default_factory=dict)
+    diagnostic_rows: list[StepResult] = dataclasses.field(default_factory=list)
+    diagnostic_rows_dropped: int = 0
+    epilogue_rows: list[StepResult] = dataclasses.field(default_factory=list)
 
 
 def strip_ansi(text: str) -> str:
@@ -203,6 +212,52 @@ def parse_address(value: str) -> str:
     if parsed < 0x48 or parsed > 0x4B:
         raise argparse.ArgumentTypeError("address must be 0x48, 0x49, 0x4A, or 0x4B")
     return f"0x{parsed:02X}"
+
+
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
+def positive_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be greater than zero") from exc
+    if not math.isfinite(parsed) or not (parsed > 0.0):
+        raise argparse.ArgumentTypeError("value must be greater than zero")
+    return parsed
+
+
+def non_negative_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("value must be zero or greater") from exc
+    if not math.isfinite(parsed) or parsed < 0.0:
+        raise argparse.ArgumentTypeError("value must be zero or greater")
+    return parsed
+
+
+def argument_validation_error(args: argparse.Namespace) -> str | None:
+    addresses = args.address or ["0x48"]
+    if len(addresses) != len(set(addresses)):
+        return "--address values must be unique"
+    if len(args.absent_address) != len(set(args.absent_address)):
+        return "--absent-address values must be unique"
+    overlap = sorted(set(addresses) & set(args.absent_address))
+    if overlap:
+        return "addresses cannot be both present and absent: " + ", ".join(overlap)
+    if args.benchmark and args.suite not in ("full", "exhaustive"):
+        return "--benchmark requires --suite full or --suite exhaustive"
+    if args.soak_max_latency_s is not None and not args.soak:
+        return "--soak-max-latency-s requires --soak"
+    return None
 
 
 def status_token(text: str) -> str | None:
@@ -343,6 +398,11 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
         elif validator == "job_inactive":
             if "Active: NO" not in plain:
                 return "job is still active"
+        elif validator == "job_cleanup_terminal":
+            no_active = "No active pollable job" in plain and "Active: NO" in plain
+            terminal = "Done: YES" in plain and status_token(plain) in ("OK", "CANCELLED")
+            if not (no_active or terminal):
+                return "cancelled job did not reach a terminal/inactive state"
         elif validator == "job_done":
             if "Done: YES" not in plain:
                 return "job did not complete"
@@ -918,6 +978,38 @@ def parser_self_test() -> None:
     soak_ids = [spec.test_id for spec in soak_step_plan(["0x48"])]
     if len(soak_ids) != len(set(soak_ids)):
         raise AssertionError("soak plan test IDs must be unique")
+    epilogue = soak_epilogue_plan(["0x48", "0x49"])
+    epilogue_commands = [spec.command for spec in epilogue]
+    if epilogue_commands[:2] != ["job cancel", "job poll 3"] or epilogue_commands[-2:] != ["settings", "drv"]:
+        raise AssertionError("soak epilogue must cancel first and finish with final diagnostics")
+    if epilogue_commands[-10:] != [
+        "settings", "drv", "addr 0x48", "job cancel", "recover", "mode single",
+        "gain 2", "rate 4", "settings", "drv",
+    ]:
+        raise AssertionError("soak epilogue must restore all addresses and leave the first active")
+    latency_row = StepResult("L", "Soak", "read", "", "", 1.5, RESULT_PASS, "")
+    if apply_soak_latency_limit(latency_row, 1.0).result != RESULT_FAIL:
+        raise AssertionError("soak maximum latency must turn an otherwise passing row into FAIL")
+    if apply_soak_latency_limit(latency_row, 2.0).result != RESULT_PASS:
+        raise AssertionError("soak maximum latency must preserve an in-limit result")
+    base_args = parse_args([])
+    duplicate_present = argparse.Namespace(**{**vars(base_args), "address": ["0x48", "0x48"]})
+    if argument_validation_error(duplicate_present) != "--address values must be unique":
+        raise AssertionError("duplicate present addresses must be rejected")
+    overlap = argparse.Namespace(
+        **{**vars(base_args), "address": ["0x48"], "absent_address": ["0x48"]}
+    )
+    if not (argument_validation_error(overlap) or "").startswith("addresses cannot be both"):
+        raise AssertionError("present/absent address overlap must be rejected")
+    ignored_benchmark = argparse.Namespace(**{**vars(base_args), "benchmark": True})
+    if argument_validation_error(ignored_benchmark) != "--benchmark requires --suite full or --suite exhaustive":
+        raise AssertionError("silently ignored benchmark combinations must be rejected")
+    try:
+        positive_float("0")
+    except argparse.ArgumentTypeError:
+        pass
+    else:
+        raise AssertionError("zero soak duration/timeout values must be rejected")
     verdict_rows = [
         StepResult("V1", "Digital", "version", "", "", 0.0, RESULT_PASS, ""),
         StepResult("V2", "Analog", "read", "", "", 0.0, RESULT_EVIDENCE_REQUIRED, "",
@@ -943,6 +1035,78 @@ def parser_self_test() -> None:
     soak_rows = soak_stats_to_rows(soak_with_failure)
     if soak_rows[0].result != RESULT_FAIL:
         raise AssertionError("any soak command failure must fail the soak summary")
+    empty_soak = SoakStats(start=soak_start, end=soak_start)
+    if soak_stats_to_rows(empty_soak)[0].result != RESULT_FAIL:
+        raise AssertionError("a soak with no completed cycle must fail")
+    if not_run_result(CommandSpec("N", "Test", "noop", "never run"), "stopped").result != RESULT_NOT_RUN:
+        raise AssertionError("skipped plan commands must have an explicit NOT_RUN result")
+
+    class SelfTestSerial:
+        def __init__(self) -> None:
+            self.buffer = b""
+
+        @property
+        def in_waiting(self) -> int:
+            return len(self.buffer)
+
+        def read(self, size: int) -> bytes:
+            data = self.buffer[:size]
+            self.buffer = self.buffer[size:]
+            return data
+
+        def flush(self) -> None:
+            pass
+
+        def write(self, data: bytes) -> int:
+            command = data.replace(CLI_CANCEL_BYTE, b"").decode("ascii").strip()
+            responses = {
+                "version": "=== Version Info ===\n> ",
+                "read": "Raw: 1\nVoltage: 0.0001 V\n> ",
+                "readv": "Blocking voltage:\nVoltage: 0.0001 V\n> ",
+                "raw": "Raw: 1\n> ",
+                "stress 20": (
+                    "=== Stress Summary ===\nErrors: 0\nDuration: 1 ms\n"
+                    "Rate: 20.0 samples/s\n> "
+                ),
+                "job single": "=== Job Status ===\nActive: YES\n> ",
+                "job poll 1": (
+                    "=== Job Poll Result ===\nStatus: IN_PROGRESS\nDone: NO\n> "
+                ),
+                "job poll 3": "=== Job Poll Result ===\nStatus: OK\nDone: YES\n> ",
+                "job cancel": (
+                    "=== Job Status ===\nActive: NO\nStatus: CANCELLED\n> "
+                ),
+                "settings": (
+                    "=== Cached Settings ===\nState: READY\n"
+                    "Hardware/cache dirty: NO\n> "
+                ),
+                "drv": (
+                    "=== Driver Health ===\nState: READY\nTotal failures: 0\n> "
+                ),
+                "probe": "Status: OK\n(no health changes)\n> ",
+            }
+            if command.startswith("addr "):
+                response = "Status: OK\nState: READY\n> "
+            else:
+                response = responses.get(command, "Status: OK\n> ")
+            self.buffer += response.encode("ascii")
+            return len(data)
+
+    short_soak_args = parse_args(
+        [
+            "--port", "SELFTEST", "--address", "0x48", "--soak",
+            "--soak-duration-s", "0.001", "--soak-max-consecutive-failures", "1",
+        ]
+    )
+    short_soak = run_soak(SelfTestSerial(), short_soak_args, lambda _: None)
+    if short_soak.cycles != 0 or short_soak.partial_cycles != 1:
+        raise AssertionError("a deadline-cut cycle must be partial, not completed")
+    if not short_soak.epilogue_rows or any(
+        row.result != RESULT_PASS for row in short_soak.epilogue_rows
+    ):
+        raise AssertionError("the bounded soak epilogue must restore successfully in self-test")
+    if soak_stats_to_rows(short_soak)[0].result != RESULT_FAIL:
+        raise AssertionError("a too-short soak with no completed cycle must not pass")
     if not CLI_SYNC_BYTES.startswith(CLI_CANCEL_BYTE) or CLI_SYNC_BYTES.startswith(b"\n"):
         raise AssertionError("CLI synchronization must cancel, not dispatch, stale partial input")
     stale_prompt = "> \n=== Version Info ===\nArduino-ESP32: 3.3.11\n"
@@ -1022,7 +1186,9 @@ def open_serial(port: str, baud: int) -> object:
         raise SystemExit("pyserial is required for live HIL; run dry-run or install pyserial") from exc
     ser = serial.Serial()
     try:
-        ser.dtr = False
+        # Arduino's ESP32-S2/S3 native USB CDC endpoints gate both connection
+        # state and traffic on DTR. RTS remains deasserted to avoid reset.
+        ser.dtr = True
         ser.rts = False
     except (AttributeError, OSError):
         pass
@@ -1107,6 +1273,169 @@ def run_one_step(
     )
 
 
+def not_run_result(spec: CommandSpec, reason: str) -> StepResult:
+    return StepResult(
+        test_id=spec.test_id,
+        feature=spec.feature,
+        command=spec.command,
+        expected=spec.expected,
+        observed="not run",
+        elapsed_s=0.0,
+        result=RESULT_NOT_RUN,
+        notes=reason,
+        evidence_required=spec.unknown_on_pass,
+    )
+
+
+def runtime_failure_result(test_id: str, command: str, reason: str) -> StepResult:
+    return StepResult(
+        test_id=test_id,
+        feature="Runner",
+        command=command,
+        expected="Complete without a host/runtime failure",
+        observed=reason,
+        elapsed_s=0.0,
+        result=RESULT_FAIL,
+        notes=reason,
+    )
+
+
+def soak_epilogue_plan(addresses: list[str]) -> list[CommandSpec]:
+    steps = [
+        CommandSpec(
+            "SOAK-EPILOGUE-CANCEL-CURRENT",
+            "Soak Cleanup",
+            "job cancel",
+            "Request cancellation of any partially active staged job",
+            ("=== Job Status ===",),
+            expected_failure=True,
+            post_delay_s=0.2,
+        ),
+        CommandSpec(
+            "SOAK-EPILOGUE-SETTLE-CURRENT",
+            "Soak Cleanup",
+            "job poll 3",
+            "Finish bounded cancellation reconciliation or confirm no active job",
+            ("=== Job Poll Result ===", "No active pollable job"),
+            ("job_cleanup_terminal",),
+            expected_failure=True,
+        )
+    ]
+    # Restore every populated device, then leave the first configured address
+    # active just as the command plan does after absent-address checks.
+    for address in reversed(addresses):
+        tag = address.replace("0x", "")
+        steps.extend(
+            [
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-ADDR",
+                    "Soak Cleanup",
+                    f"addr {address}",
+                    f"Select populated address {address}",
+                    ("Status: OK",),
+                    ("status_ok", "driver_ready"),
+                    timeout_s=8.0,
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-CANCEL",
+                    "Soak Cleanup",
+                    "job cancel",
+                    "Ensure staged work is inactive",
+                    ("=== Job Status ===",),
+                    ("job_inactive",),
+                    expected_failure=True,
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-RECOVER",
+                    "Soak Cleanup",
+                    "recover",
+                    "Reconcile cached and hardware state",
+                    ("Status: OK",),
+                    ("status_ok",),
+                    timeout_s=8.0,
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-SINGLE",
+                    "Soak Cleanup",
+                    "mode single",
+                    "Restore nominal single-shot mode",
+                    ("Status: OK",),
+                    ("status_ok",),
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-GAIN",
+                    "Soak Cleanup",
+                    "gain 2",
+                    "Restore nominal +/-2.048 V PGA",
+                    ("Status: OK",),
+                    ("status_ok",),
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-RATE",
+                    "Soak Cleanup",
+                    "rate 4",
+                    "Restore nominal 128 SPS data rate",
+                    ("Status: OK",),
+                    ("status_ok",),
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-SETTINGS",
+                    "Soak Cleanup",
+                    "settings",
+                    "Verify final READY and clean configuration state",
+                    ("=== Cached Settings ===",),
+                    ("driver_ready", "dirty_no"),
+                ),
+                CommandSpec(
+                    f"SOAK-EPILOGUE-{tag}-DRV",
+                    "Soak Cleanup",
+                    "drv",
+                    "Capture final driver health",
+                    ("=== Driver Health ===",),
+                    ("driver_ready",),
+                ),
+            ]
+        )
+    return steps
+
+
+def apply_soak_latency_limit(row: StepResult, max_latency_s: float | None) -> StepResult:
+    if max_latency_s is None or row.elapsed_s <= max_latency_s:
+        return row
+    reason = f"elapsed {row.elapsed_s:.3f}s exceeds soak limit {max_latency_s:.3f}s"
+    return dataclasses.replace(
+        row,
+        result=RESULT_FAIL,
+        notes=(row.notes + ("; " if row.notes else "") + reason),
+    )
+
+
+def retain_soak_diagnostic(stats: SoakStats, row: StepResult) -> None:
+    if len(stats.diagnostic_rows) < MAX_SOAK_DIAGNOSTIC_ROWS:
+        stats.diagnostic_rows.append(row)
+    else:
+        stats.diagnostic_rows_dropped += 1
+
+
+def record_soak_row(stats: SoakStats, row: StepResult, *, cycle: int | None) -> StepResult:
+    row = apply_soak_latency_limit(row, stats.max_latency_s)
+    stats.commands[row.command] += 1
+    stats.results[row.result] += 1
+    stats.command_results[(row.command, row.result)] += 1
+    stats.command_worst_latency_s[row.command] = max(
+        stats.command_worst_latency_s.get(row.command, 0.0), row.elapsed_s
+    )
+    stats.latencies.append(row.elapsed_s)
+    if row.reset_observed:
+        stats.reset_markers += 1
+    if row.command in ("read", "readv", "raw", "voltage"):
+        stats.worst_read_latency_s = max(stats.worst_read_latency_s, row.elapsed_s)
+    if row.result == RESULT_FAIL:
+        suffix = f"-C{cycle:06d}" if cycle is not None else ""
+        retain_soak_diagnostic(stats, dataclasses.replace(row, test_id=row.test_id + suffix))
+    return row
+
+
 def markdown_escape(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
@@ -1144,14 +1473,31 @@ def write_markdown_summary(
         if soak is not None:
             end = soak.end or dt.datetime.now()
             duration = (end - soak.start).total_seconds()
+            latency_limit = (
+                f"{soak.max_latency_s:.3f} s" if soak.max_latency_s is not None else "not configured"
+            )
             out.write(f"- Soak duration: {duration:.1f} s\n")
-            out.write(f"- Soak cycles: {soak.cycles}\n")
+            out.write(f"- Soak completed cycles: {soak.cycles}\n")
+            out.write(f"- Soak partial cycles: {soak.partial_cycles}\n")
             out.write(f"- Soak stop reason: {soak.stopped_reason or 'completed requested duration'}\n")
+            out.write(f"- Soak maximum command latency limit: {latency_limit}\n")
             if soak.latencies:
                 out.write(f"- Soak worst latency: {max(soak.latencies):.3f} s\n")
                 out.write(f"- Soak mean latency: {sum(soak.latencies) / len(soak.latencies):.3f} s\n")
             out.write(f"- Soak worst read latency: {soak.worst_read_latency_s:.3f} s\n")
             out.write(f"- Soak max consecutive failures: {soak.max_consecutive_failures}\n")
+            out.write(f"- Soak diagnostic rows dropped: {soak.diagnostic_rows_dropped}\n")
+            out.write("\n### Soak Command Diagnostics\n\n")
+            out.write("| Command | Runs | PASS | FAIL | EVIDENCE_REQUIRED | Worst s |\n")
+            out.write("| --- | ---: | ---: | ---: | ---: | ---: |\n")
+            for command in sorted(soak.commands):
+                out.write(
+                    f"| `{markdown_escape(command)}` | {soak.commands[command]} | "
+                    f"{soak.command_results[(command, RESULT_PASS)]} | "
+                    f"{soak.command_results[(command, RESULT_FAIL)]} | "
+                    f"{soak.command_results[(command, RESULT_EVIDENCE_REQUIRED)]} | "
+                    f"{soak.command_worst_latency_s.get(command, 0.0):.3f} |\n"
+                )
         out.write("\n")
         out.write("| Test ID | Feature | Command | Expected | Observed | Elapsed s | Result | Evidence | Notes |\n")
         out.write("| --- | --- | --- | --- | --- | ---: | --- | --- | --- |\n")
@@ -1188,16 +1534,92 @@ def dry_run_rows(specs: Iterable[CommandSpec]) -> list[StepResult]:
     ]
 
 
+def soak_not_run_result(reason: str) -> StepResult:
+    return StepResult(
+        test_id="SOAK-SUMMARY",
+        feature="Bounded Soak",
+        command="--soak",
+        expected="Run only after the prerequisite command plan passes",
+        observed="not run",
+        elapsed_s=0.0,
+        result=RESULT_NOT_RUN,
+        notes=reason,
+    )
+
+
+def run_soak_epilogue(
+    ser: object,
+    args: argparse.Namespace,
+    write_log,
+    stats: SoakStats | None,
+) -> list[StepResult]:
+    rows: list[StepResult] = []
+    write_log("\n# SOAK EPILOGUE: synchronizing and restoring safe nominal state.\n")
+    sync_start = time.monotonic()
+    try:
+        sync_output, sync_timed_out = synchronize_cli(ser, args.timeout_s)
+    except KeyboardInterrupt:
+        sync_output = ""
+        sync_timed_out = True
+        sync_reason = "operator interrupted cleanup synchronization"
+    except Exception as exc:
+        sync_output = ""
+        sync_timed_out = True
+        sync_reason = f"serial exception during cleanup sync: {type(exc).__name__}: {exc}"
+    else:
+        sync_reason = "cleanup synchronization timed out" if sync_timed_out else "cleanup framing synchronized"
+    if sync_output:
+        write_log(sync_output)
+    sync_row = StepResult(
+        test_id="SOAK-EPILOGUE-SYNC",
+        feature="Soak Cleanup",
+        command="CAN + version",
+        expected="Re-establish CLI framing before cleanup commands",
+        observed=summarize_observed(sync_output),
+        elapsed_s=time.monotonic() - sync_start,
+        result=RESULT_FAIL if sync_timed_out else RESULT_PASS,
+        notes=sync_reason,
+    )
+    if stats is not None:
+        sync_row = record_soak_row(stats, sync_row, cycle=None)
+    rows.append(sync_row)
+    if sync_timed_out:
+        write_log(f"# SOAK EPILOGUE STOP: {sync_row.notes}; no unframed commands were sent.\n")
+        return rows
+
+    for spec in soak_epilogue_plan(args.address or ["0x48"]):
+        try:
+            row = run_one_step(
+                ser,
+                spec,
+                idle_s=args.idle_s,
+                default_timeout_s=args.timeout_s,
+                command_delay_s=args.command_delay_s,
+                write_log=write_log,
+            )
+        except KeyboardInterrupt:
+            row = runtime_failure_result(
+                spec.test_id,
+                spec.command,
+                "operator interrupted the bounded soak epilogue",
+            )
+            write_log(f"# RESULT {spec.test_id}: {RESULT_FAIL} - {row.notes}\n")
+        if stats is not None:
+            row = record_soak_row(stats, row, cycle=None)
+        rows.append(row)
+    return rows
+
+
 def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[StepResult], pathlib.Path, pathlib.Path]:
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     transcript_path = out_dir / f"ads1115_hil_{timestamp()}.log"
     summary_path = out_dir / f"ads1115_hil_{timestamp()}_summary.md"
     rows: list[StepResult] = []
+    soak_stats: SoakStats | None = None
+    next_spec_index = 0
 
-    with open_serial(args.port, args.baud) as ser, transcript_path.open(
-        "w", encoding="utf-8", newline="\n"
-    ) as transcript:
+    with transcript_path.open("w", encoding="utf-8", newline="\n") as transcript:
         def write_log(text: str) -> None:
             transcript.write(text)
             transcript.flush()
@@ -1211,56 +1633,100 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
         write_log(f"# Port: {args.port}, baud: {args.baud}, addresses: {', '.join(args.address or ['0x48'])}\n")
         write_log("# ADS1115 has no chip-ID register; probes are CONFIG-register reachability checks.\n\n")
 
-        if args.reset_before:
-            write_log("# Reset/reconnect requested before command plan.\n")
-            reset_serial_target(ser)
-        time.sleep(args.boot_settle_s)
-        initial = read_available(ser, args.idle_s, args.timeout_s)
-        if initial:
-            write_log(initial)
-        write_log(
-            f"\n# Cancelling stale partial input and synchronizing CLI framing "
-            f"with bus-silent `{CLI_SYNC_COMMAND}`.\n"
-        )
-        sync_output, sync_timed_out = synchronize_cli(ser, args.timeout_s)
-        if sync_output:
-            write_log(sync_output)
-        if sync_timed_out:
-            raise RuntimeError("serial CLI synchronization timed out")
+        try:
+            ser = open_serial(args.port, args.baud)
+        except KeyboardInterrupt:
+            reason = "operator interrupted serial-port opening"
+            write_log(f"# RUNNER FAILURE: {reason}\n")
+            rows.append(runtime_failure_result("RUNNER-OPEN", "open serial", reason))
+            rows.extend(not_run_result(spec, reason) for spec in specs)
+            if args.soak:
+                rows.append(soak_not_run_result(reason))
+        except SystemExit as exc:
+            reason = f"serial-port opening failed: {exc}"
+            write_log(f"# RUNNER FAILURE: {reason}\n")
+            rows.append(runtime_failure_result("RUNNER-OPEN", "open serial", reason))
+            rows.extend(not_run_result(spec, reason) for spec in specs)
+            if args.soak:
+                rows.append(soak_not_run_result(reason))
+        except Exception as exc:
+            reason = f"serial-port opening failed: {type(exc).__name__}: {exc}"
+            write_log(f"# RUNNER FAILURE: {reason}\n")
+            rows.append(runtime_failure_result("RUNNER-OPEN", "open serial", reason))
+            rows.extend(not_run_result(spec, reason) for spec in specs)
+            if args.soak:
+                rows.append(soak_not_run_result(reason))
+        else:
+            with ser:
+                cli_synchronized = False
+                try:
+                    if args.reset_before:
+                        write_log("# Reset/reconnect requested before command plan.\n")
+                        reset_serial_target(ser)
+                    time.sleep(args.boot_settle_s)
+                    initial = read_available(ser, args.idle_s, args.timeout_s)
+                    if initial:
+                        write_log(initial)
+                    write_log(
+                        f"\n# Cancelling stale partial input and synchronizing CLI framing "
+                        f"with bus-silent `{CLI_SYNC_COMMAND}`.\n"
+                    )
+                    sync_output, sync_timed_out = synchronize_cli(ser, args.timeout_s)
+                    if sync_output:
+                        write_log(sync_output)
+                    if sync_timed_out:
+                        raise RuntimeError("serial CLI synchronization timed out")
+                    cli_synchronized = True
 
-        for spec in specs:
-            row = run_one_step(
-                ser,
-                spec,
-                idle_s=args.idle_s,
-                default_timeout_s=args.timeout_s,
-                command_delay_s=args.command_delay_s,
-                write_log=write_log,
-            )
-            rows.append(row)
-            if row.result == RESULT_FAIL and args.stop_on_fail:
-                write_log("# Aborting after failed command because --stop-on-fail is set.\n")
-                break
+                    for index, spec in enumerate(specs):
+                        next_spec_index = index
+                        row = run_one_step(
+                            ser,
+                            spec,
+                            idle_s=args.idle_s,
+                            default_timeout_s=args.timeout_s,
+                            command_delay_s=args.command_delay_s,
+                            write_log=write_log,
+                        )
+                        rows.append(row)
+                        next_spec_index = index + 1
+                        if row.result == RESULT_FAIL and args.stop_on_fail:
+                            reason = f"not run after {spec.test_id} failed with --stop-on-fail"
+                            write_log("# Aborting after failed command because --stop-on-fail is set.\n")
+                            rows.extend(not_run_result(item, reason) for item in specs[next_spec_index:])
+                            next_spec_index = len(specs)
+                            break
 
-        soak_stats = None
-        plan_failed = any(row.result == RESULT_FAIL for row in rows)
-        if args.soak and not plan_failed:
-            soak_stats = run_soak(ser, args, write_log)
-            rows.extend(soak_stats_to_rows(soak_stats))
-        elif args.soak:
-            write_log("# SOAK NOT RUN because the prerequisite command plan failed.\n")
-            rows.append(
-                StepResult(
-                    test_id="SOAK-SUMMARY",
-                    feature="Bounded Soak",
-                    command="--soak",
-                    expected="Run only after the prerequisite command plan passes",
-                    observed="not run",
-                    elapsed_s=0.0,
-                    result=RESULT_NOT_RUN,
-                    notes="prerequisite command plan failed",
-                )
-            )
+                    plan_failed = any(row.result == RESULT_FAIL for row in rows)
+                    if args.soak and not plan_failed:
+                        soak_stats = run_soak(ser, args, write_log)
+                        rows.extend(soak_stats_to_rows(soak_stats))
+                    elif args.soak:
+                        reason = "prerequisite command plan failed"
+                        write_log("# SOAK NOT RUN because the prerequisite command plan failed.\n")
+                        rows.append(soak_not_run_result(reason))
+                        rows.extend(run_soak_epilogue(ser, args, write_log, stats=None))
+                except KeyboardInterrupt:
+                    reason = "operator interrupted the command plan"
+                    write_log(f"# RUNNER FAILURE: {reason}\n")
+                    if next_spec_index < len(specs):
+                        current = specs[next_spec_index]
+                        rows.append(runtime_failure_result(current.test_id, current.command, reason))
+                        next_spec_index += 1
+                    rows.extend(not_run_result(spec, reason) for spec in specs[next_spec_index:])
+                    if args.soak:
+                        rows.append(soak_not_run_result(reason))
+                    if cli_synchronized:
+                        rows.extend(run_soak_epilogue(ser, args, write_log, stats=None))
+                except Exception as exc:
+                    reason = f"runner failure: {type(exc).__name__}: {exc}"
+                    write_log(f"# RUNNER FAILURE: {reason}\n")
+                    rows.append(runtime_failure_result("RUNNER-RUNTIME", "command session", reason))
+                    rows.extend(not_run_result(spec, reason) for spec in specs[next_spec_index:])
+                    if args.soak:
+                        rows.append(soak_not_run_result(reason))
+                    if cli_synchronized:
+                        rows.extend(run_soak_epilogue(ser, args, write_log, stats=None))
 
     write_markdown_summary(summary_path, rows, transcript_path=transcript_path, soak=soak_stats)
     return rows, transcript_path, summary_path
@@ -1270,46 +1736,71 @@ def run_soak(ser: object, args: argparse.Namespace, write_log) -> SoakStats:
     addresses = args.address or ["0x48"]
     specs = soak_step_plan(addresses)
     duration_s = args.soak_duration_s
-    stats = SoakStats(start=dt.datetime.now())
+    stats = SoakStats(start=dt.datetime.now(), max_latency_s=args.soak_max_latency_s)
     deadline = time.monotonic() + duration_s
     write_log(f"\n# SOAK START {stats.start.isoformat(timespec='seconds')} duration_s={duration_s}\n")
-    while time.monotonic() < deadline:
-        stats.cycles += 1
-        for spec in specs:
-            if time.monotonic() >= deadline:
-                break
-            row = run_one_step(
-                ser,
-                spec,
-                idle_s=args.idle_s,
-                default_timeout_s=args.timeout_s,
-                command_delay_s=args.command_delay_s,
-                write_log=write_log,
-            )
-            stats.commands[spec.command] += 1
-            stats.results[row.result] += 1
-            if row.reset_observed:
-                stats.reset_markers += 1
-            stats.latencies.append(row.elapsed_s)
-            if spec.command in ("read", "readv", "raw", "voltage"):
-                stats.worst_read_latency_s = max(stats.worst_read_latency_s, row.elapsed_s)
-            if row.result == RESULT_FAIL:
-                stats.consecutive_failures += 1
-                stats.max_consecutive_failures = max(
-                    stats.max_consecutive_failures,
-                    stats.consecutive_failures,
+    stop_requested = False
+    cycle_in_progress = False
+    try:
+        while time.monotonic() < deadline and not stop_requested:
+            cycle = stats.cycles + 1
+            completed_cycle = True
+            attempted_steps = 0
+            cycle_in_progress = True
+            for index, spec in enumerate(specs):
+                if time.monotonic() >= deadline:
+                    completed_cycle = False
+                    break
+                attempted_steps += 1
+                row = run_one_step(
+                    ser,
+                    spec,
+                    idle_s=args.idle_s,
+                    default_timeout_s=args.timeout_s,
+                    command_delay_s=args.command_delay_s,
+                    write_log=write_log,
                 )
-                if stats.consecutive_failures >= args.soak_max_consecutive_failures:
-                    stats.stopped_reason = (
-                        f"stopped after {stats.consecutive_failures} consecutive failures"
+                row = record_soak_row(stats, row, cycle=cycle)
+                if row.result == RESULT_FAIL:
+                    stats.consecutive_failures += 1
+                    stats.max_consecutive_failures = max(
+                        stats.max_consecutive_failures,
+                        stats.consecutive_failures,
                     )
-                    stats.end = dt.datetime.now()
-                    write_log(f"# SOAK STOP {stats.stopped_reason}\n")
-                    return stats
-            else:
-                stats.consecutive_failures = 0
-    stats.end = dt.datetime.now()
-    write_log(f"# SOAK END {stats.end.isoformat(timespec='seconds')}\n")
+                    if stats.consecutive_failures >= args.soak_max_consecutive_failures:
+                        stats.stopped_reason = (
+                            f"stopped after {stats.consecutive_failures} consecutive failures"
+                        )
+                        completed_cycle = index == (len(specs) - 1)
+                        stop_requested = True
+                        break
+                else:
+                    stats.consecutive_failures = 0
+            if completed_cycle:
+                stats.cycles += 1
+            elif attempted_steps > 0:
+                stats.partial_cycles += 1
+            cycle_in_progress = False
+            if stop_requested:
+                write_log(f"# SOAK STOP {stats.stopped_reason}\n")
+    except KeyboardInterrupt:
+        if cycle_in_progress:
+            stats.partial_cycles += 1
+        stats.stopped_reason = "operator interrupted soak workload"
+        interrupted = runtime_failure_result("SOAK-INTERRUPTED", "--soak", stats.stopped_reason)
+        record_soak_row(stats, interrupted, cycle=None)
+        write_log(f"# SOAK STOP {stats.stopped_reason}\n")
+    except Exception as exc:
+        if cycle_in_progress:
+            stats.partial_cycles += 1
+        stats.stopped_reason = f"soak runtime failure: {type(exc).__name__}: {exc}"
+        failed = runtime_failure_result("SOAK-RUNTIME", "--soak", stats.stopped_reason)
+        record_soak_row(stats, failed, cycle=None)
+        write_log(f"# SOAK STOP {stats.stopped_reason}\n")
+    finally:
+        stats.end = dt.datetime.now()
+        write_log(f"# SOAK WORKLOAD END {stats.end.isoformat(timespec='seconds')}\n")
+        stats.epilogue_rows = run_soak_epilogue(ser, args, write_log, stats)
     return stats
 
 
@@ -1317,29 +1808,33 @@ def soak_stats_to_rows(stats: SoakStats) -> list[StepResult]:
     end = stats.end or dt.datetime.now()
     duration = (end - stats.start).total_seconds()
     failed_commands = stats.results[RESULT_FAIL]
-    result = RESULT_FAIL if failed_commands else RESULT_PASS
+    no_complete_cycle = stats.cycles == 0
+    result = RESULT_FAIL if failed_commands or no_complete_cycle else RESULT_PASS
     mean_latency = (sum(stats.latencies) / len(stats.latencies)) if stats.latencies else 0.0
     observed = (
-        f"duration={duration:.1f}s cycles={stats.cycles} commands={sum(stats.commands.values())} "
+        f"duration={duration:.1f}s completed_cycles={stats.cycles} "
+        f"partial_cycles={stats.partial_cycles} commands={sum(stats.commands.values())} "
         f"results={dict(stats.results)} worst={max(stats.latencies) if stats.latencies else 0.0:.3f}s "
         f"mean={mean_latency:.3f}s"
     )
-    return [
-        StepResult(
-            test_id="SOAK-SUMMARY",
-            feature="Bounded Soak",
-            command="--soak",
-            expected="Complete requested soak duration without command failures",
-            observed=observed,
-            elapsed_s=duration,
-            result=result,
-            notes=(
-                stats.stopped_reason
-                or (f"completed requested duration with {failed_commands} failure(s)" if failed_commands
-                    else "completed requested duration")
-            ),
-        )
-    ]
+    summary = StepResult(
+        test_id="SOAK-SUMMARY",
+        feature="Bounded Soak",
+        command="--soak",
+        expected="Complete requested soak duration without command failures",
+        observed=observed,
+        elapsed_s=duration,
+        result=result,
+        notes=(
+            stats.stopped_reason
+            or ("no complete soak cycle executed" if no_complete_cycle else "")
+            or (f"completed requested duration with {failed_commands} failure(s)" if failed_commands
+                else "completed requested duration")
+        ),
+    )
+    diagnostic_ids = {row.test_id for row in stats.diagnostic_rows}
+    epilogue_rows = [row for row in stats.epilogue_rows if row.test_id not in diagnostic_ids]
+    return [summary, *stats.diagnostic_rows, *epilogue_rows]
 
 
 def final_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
@@ -1392,15 +1887,15 @@ def process_exit_code(verdict: str, *, fail_on_unknown: bool) -> int:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="Serial port, for example COM8 or /dev/ttyUSB0")
-    parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
+    parser.add_argument("--baud", type=positive_int, default=DEFAULT_BAUD)
     parser.add_argument("--address", action="append", type=parse_address, help="ADS1115 address under test; repeat for multiple devices")
     parser.add_argument("--absent-address", action="append", type=parse_address, default=[], help="ADS1115 address expected to be absent for negative checks")
     parser.add_argument("--suite", choices=("smoke", "targeted", "full", "exhaustive"), default="smoke")
     parser.add_argument("--benchmark", action="store_true", help="Append bounded sampling benchmark steps")
-    parser.add_argument("--timeout-s", "--timeout", dest="timeout_s", type=float, default=DEFAULT_TIMEOUT_S)
-    parser.add_argument("--idle-s", "--idle", dest="idle_s", type=float, default=DEFAULT_IDLE_S)
-    parser.add_argument("--boot-settle-s", type=float, default=DEFAULT_BOOT_SETTLE_S)
-    parser.add_argument("--command-delay-s", type=float, default=0.0)
+    parser.add_argument("--timeout-s", "--timeout", dest="timeout_s", type=positive_float, default=DEFAULT_TIMEOUT_S)
+    parser.add_argument("--idle-s", "--idle", dest="idle_s", type=non_negative_float, default=DEFAULT_IDLE_S)
+    parser.add_argument("--boot-settle-s", type=non_negative_float, default=DEFAULT_BOOT_SETTLE_S)
+    parser.add_argument("--command-delay-s", type=non_negative_float, default=0.0)
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--verbose", action="store_true", help="Echo transcript while running")
     parser.add_argument("--stop-on-fail", action="store_true")
@@ -1409,11 +1904,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         help="Return nonzero when final verdict is UNKNOWN or EVIDENCE_REQUIRED")
     parser.add_argument("--reset-before", action="store_true", help="Toggle serial reset lines before reading boot transcript")
     parser.add_argument("--soak", action="store_true", help="Run bounded soak loop after the command plan")
-    parser.add_argument("--soak-duration-s", type=float, default=DEFAULT_SOAK_DURATION_S)
-    parser.add_argument("--soak-max-consecutive-failures", type=int, default=3)
+    parser.add_argument("--soak-duration-s", type=positive_float, default=DEFAULT_SOAK_DURATION_S)
+    parser.add_argument("--soak-max-consecutive-failures", type=positive_int, default=3)
+    parser.add_argument(
+        "--soak-max-latency-s",
+        type=positive_float,
+        help="Fail a soak command whose observed host/serial latency exceeds this limit",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the plan and run parser self-test")
     parser.add_argument("--parser-test", "--parser-self-test", action="store_true", help="Run parser/classifier tests only")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    error = argument_validation_error(args)
+    if error is not None:
+        parser.error(error)
+    return args
 
 
 def main(argv: list[str]) -> int:
