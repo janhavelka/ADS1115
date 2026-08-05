@@ -1979,20 +1979,7 @@ Status ADS1115::disableComparator() {
 // ============================================================================
 
 float ADS1115::rawToVoltage(int16_t raw) const {
-  static constexpr float lsbTable[] = {
-    187.5e-6f,   // FSR_6_144V
-    125.0e-6f,   // FSR_4_096V
-    62.5e-6f,    // FSR_2_048V
-    31.25e-6f,   // FSR_1_024V
-    15.625e-6f,  // FSR_0_512V
-    7.8125e-6f   // FSR_0_256V
-  };
-
-  uint8_t index = static_cast<uint8_t>(_config.gain);
-  if (index >= (sizeof(lsbTable) / sizeof(lsbTable[0]))) {
-    index = static_cast<uint8_t>(Gain::FSR_2_048V);
-  }
-  return raw * lsbTable[index];
+  return raw * getLsbVoltage();
 }
 
 float ADS1115::getLsbVoltage() const {

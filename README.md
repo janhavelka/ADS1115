@@ -69,11 +69,11 @@ is:
 
 ```ini
 lib_deps =
-  https://github.com/janhavelka/ADS1115.git#v2.0.0
+  https://github.com/janhavelka/ADS1115.git#v2.0.1
 ```
 
 For ESP-IDF, place the repository under the application's `components/`
-directory and pin it, for example with a submodule checked out at `v2.0.0`.
+directory and pin it, for example with a submodule checked out at `v2.0.1`.
 The native component example is under `examples/esp_idf/basic`. A source-vendored
 installation must preserve both `include/ADS1115/` and `src/`.
 

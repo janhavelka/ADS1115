@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-05
+
 ### Fixed
 
 - Kept explicitly staged diagnostic jobs under `job poll` ownership in both
@@ -49,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostic CLI on pioarduino 55.03.311.
 - Fixed the PlatformIO release archive so it includes the required generated
   `Version.h`, and made CI unpack and compile the actual packed core.
+- Made the CI package filename derive from `library.json` so release version
+  bumps cannot leave stale artifact names in the workflow.
 - Extended the native ESP-IDF contract guard to retain its required `vfs`
   component.
 
@@ -79,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Simplified mandatory configuration verification, framework-neutral native
   tests, example transport helpers, source filters, and core guard logic
   without changing the public compatibility surface.
+- Reused the compatibility voltage helper's single PGA/LSB lookup instead of
+  maintaining a duplicate internal table, without changing API behavior.
 - Recorded external ESP32-S2 diagnostic evidence for clean firmware commit
   `559933a` on the pioarduino `55.03.311` runtime stack. The two-device preflight
   had 15 contract passes, the corrected expanded exhaustive run had 407 contract
@@ -374,7 +380,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/janhavelka/ADS1115/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/janhavelka/ADS1115/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...v1.1.0

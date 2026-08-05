@@ -141,7 +141,8 @@ jobs:
       - name: Validate library package
         shell: bash
         run: |
-          archive="$RUNNER_TEMP/ADS1115-2.0.0.tar.gz"
+          version="$(python -c 'import json; print(json.load(open("library.json", encoding="utf-8"))["version"])')"
+          archive="$RUNNER_TEMP/ADS1115-${version}.tar.gz"
           unpacked="$RUNNER_TEMP/ads1115-package"
           pio pkg pack --output "$archive"
           mkdir -p "$unpacked"
