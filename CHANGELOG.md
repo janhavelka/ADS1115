@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+
+- A failed or mismatched CONFIG readiness poll no longer latches
+  `_conversionStarted`. It previously left every entry point --
+  `startRead()`, `startRecover()`, `startInitialize()`, `startApplyProfile()`,
+  `startShutdown()`, `recover()`, the direct setters and `writeConfig()` --
+  returning `Err::BUSY` "Conversion may still be active" for the lifetime of the
+  binding after a single transient transport failure. Both branches now enter the
+  existing bus-silent wait-idle reconciliation, which clears the conversion state
+  and publishes the original transport error as the terminal result.
+- An abandoned single-shot conversion is no longer publishable. `_conversionReady`
+  is cleared on every non-success exit from the conversion read and on
+  cancellation after a verified readiness check.
+- Reconciliation now carries its intended terminal state instead of deriving it
+  from the error code, so a transport-level `Err::TIMEOUT` inside one callback is
+  no longer reported as whole-operation `TIMED_OUT`.
+- Conversion-ready ALERT/RDY no longer disables readiness in continuous mode. The
+  pin is an early-accept signal; when it is not asserted the timing and OS-bit
+  paths still apply. Previously, binding the GPIO made `readConversionReady()`
+  incapable of ever returning true, because the datasheet conversion-ready pulse
+  is about 8 us.
+- `writeConfig()` normalizes the reserved PGA aliases `110b` and `111b` to the
+  canonical `101b` encoding, so the typed cache matches hardware bit for bit.
+  Previously the next masked CONFIG comparison raised a spurious
+  `Err::READBACK_MISMATCH` and set `hardwareConfigDirty()`.
+- Successful direct setters and `setThresholds()` commit their change as the new
+  desired profile, so `recover()` and `startRecover()` replay what the operator
+  set instead of silently reverting to the profile captured at `bind()`/`begin()`
+  while reporting success.
+- Readiness polling no longer promotes configuration trust to `VERIFIED` or
+  increments the configuration generation from a CONFIG-only readback that never
+  read the threshold registers. It still detects CONFIG drift.
+- Continuous-mode settle windows are honored in three cases that skipped them:
+  initialization no longer exempts itself from the two-period settle,
+  `readLatestRaw()` no longer resets the settle counter, and a compatibility
+  facade driving `poll()` without a monotonic hook now arms the sentinel that
+  `tick()`/`service(nowMs)` resolves instead of measuring the interval from zero.
+
+### Changed
+
+- `enableConversionReadyPin()` applies through the shared operation engine, and
+  the duplicate synchronous apply/verify implementation (`_applyConfig()`,
+  `_verifyConfigReadback()`) is removed. The five hand-rolled copies of the
+  conversion-abandon sequence are folded into one helper, and
+  `_buildConfigRegister()` delegates to `_buildConfigRegisterFor()`. The core is
+  about 75 lines smaller with no public API change.
+- Corrected Doxygen contracts that did not match the implementation: transaction
+  counts for `readRaw()` and `readBlocking()`, the readiness time-source
+  requirement, `pollApplyConfig()`'s `nowMs`, `setThresholds()` ordering versus
+  the conversion-ready pattern, the dirty-state effect of
+  `cancelActiveOperation()`, `disableComparator()`'s threshold behavior,
+  `getConfig()`'s exposure of the live transport callbacks, and the `Mux`
+  "default" marker.
+- Reduced the documentation set to current contracts: removed prompt-era and
+  subagent-role material from `AGENTS.md`, the embedded HIL run report from
+  `README.md`, and duplicated evidence-retention policy across `docs/`. Recorded
+  the remaining driver findings and their proposed fixes in
+  `docs/CODE_AUDIT.md`.
+
+### Removed
+
+- Dead `Err::OFFLINE` guard in `writeRegister16()`; the library never produces
+  that status.
+- `_jobMux` / `_jobGain`, a second authoritative copy of the MUX and gain already
+  held in `_channelRequest` and kept in lockstep by hand across seven use sites.
+- Unused `<climits>` include in `src/ADS1115.cpp`.
+- The repository root from the ESP-IDF example's `INCLUDE_DIRS`, left behind when
+  the example stopped sharing the Arduino CLI sources; nothing resolves through
+  it. Doxygen `EXCLUDE_PATTERNS` entries that the explicit `INPUT` list can never
+  reach, three of which would have excluded every input under a checkout path
+  containing a `test`, `.git` or `.pio` segment.
 
 ## [2.0.1] - 2026-08-05
 
@@ -85,16 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without changing the public compatibility surface.
 - Reused the compatibility voltage helper's single PGA/LSB lookup instead of
   maintaining a duplicate internal table, without changing API behavior.
-- Recorded external ESP32-S2 diagnostic evidence for clean firmware commit
-  `559933a` on the pioarduino `55.03.311` runtime stack. The two-device preflight
-  had 15 contract passes, the corrected expanded exhaustive run had 407 contract
-  passes, and a 3,600-second workload completed 2,101 full cycles plus one
-  partial cycle (88,258 workload commands) with zero workload failures, no
-  resets, and 0.188 s worst latency. The hour exposed the runner-only cleanup
-  defect fixed above; its exact cancellation path subsequently passed on both
-  devices. Analog/electrical observations remain `EVIDENCE_REQUIRED`, and this
-  is not ESP32-S3, native-IDF, controlled-fault, shared-bus product, or
-  final-board qualification.
+- Recorded external ESP32-S2 Arduino diagnostic HIL evidence for clean firmware
+  commit `559933a` on pioarduino `55.03.311` as record
+  `ads1115_559933a_20260804`. It covers CLI-observable digital behavior only.
 
 ### Removed
 
@@ -182,12 +247,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Validation limits
 
-- Existing COM19/COM8 captures predate 2.0. Clean current hardware evidence is
-  still required for final boards, analog accuracy, shared-bus contention,
-  cancellation/timeout, electrical faults, and production workload.
-- TunnelMonitor-node was re-audited but not changed: product role, board/profile,
-  channel meanings, analog front end, units, calibration, capacity, and product
-  acceptance remain external integration gates.
+- No 2.0 hardware evidence at release. Final boards, analog accuracy, shared-bus
+  contention, cancellation/timeout, electrical faults, and production workload
+  all still require current evidence.
 
 ## [1.2.0] - 2026-06-25
 

@@ -40,7 +40,13 @@ INPUT                  = README.md \
                          docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = */.pio/* */.git/* */test/* */docs/doxygen/* */docs/reference/*
+# Guards only: INPUT above names explicit files, so these match nothing today.
+# They exist so re-widening INPUT to the docs/ directory cannot sweep in the
+# generated HTML or the TI datasheet transcripts. Single-segment patterns are
+# deliberately avoided: doxygen matches these against the absolute path, so a
+# pattern like */test/* would exclude every input under a checkout whose path
+# happens to contain a "test" segment.
+EXCLUDE_PATTERNS       = */docs/doxygen/* */docs/reference/*
 EXCLUDE_SYMBOLS        = ADS1115_VERSION_STRING ADS1115_BUILD_DATE \
                          ADS1115_BUILD_TIME ADS1115_BUILD_TIMESTAMP \
                          ADS1115_GIT_COMMIT ADS1115_GIT_STATUS \

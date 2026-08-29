@@ -1,23 +1,19 @@
 # ADS1115 Documentation
 
-Only current contracts, open validation work, and preserved technical source
-material belong here.
+Only current contracts, open work, and the datasheet reference corpus belong
+here.
 
 ## Current documents
 
 | Document | Purpose |
 | --- | --- |
 | [`../README.md`](../README.md) | User guide, owner-safe API contract, examples, and reproducible checks. |
+| [`CODE_AUDIT.md`](CODE_AUDIT.md) | Open driver defects and their proposed fixes. Delete when empty. |
 | [`OPEN_ITEMS.md`](OPEN_ITEMS.md) | Outstanding hardware and integration evidence only. |
 | [`IDF_PORT.md`](IDF_PORT.md) | ESP-IDF adapter ownership, timeout, and error-mapping contract. |
-| [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for current physical validation. |
+| [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for physical validation, including the evidence-retention rule. |
 | [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md) | Dated hardware-result template. |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Release history and migration notes. |
-
-Historical HIL transcripts, generated summaries, completed audit reports, and
-prompt-era hardening documents are not retained in the active tree. Required
-lab evidence belongs in the approved evidence store and is referenced from a
-dated result.
 
 ## API reference
 
@@ -29,8 +25,7 @@ and current Markdown files.
 
 ## Protected reference material
 
-[`reference/`](reference/) is deliberately retained. It contains the TI
-ADS111x Rev. E datasheet, its full PDF-derived Markdown transcript, and curated
-topic transcripts in `extracted-md/`. These files are technical source
-material, not validation evidence or library implementation. Historical HIL
-transcripts remain excluded as superseded fixture output.
+[`reference/`](reference/) contains the TI ADS111x Rev. E datasheet, its full
+PDF-derived Markdown transcript, and curated topic transcripts in
+`extracted-md/`. The PDF is authoritative for every hardware behavior claim in
+this repository.

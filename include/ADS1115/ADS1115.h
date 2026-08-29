@@ -101,6 +101,9 @@ struct SampleResult {
 /// Treat profile as verified hardware configuration only when state is VERIFIED.
 /// UNCONFIGURED means no profile has committed; UNKNOWN means the retained last
 /// committed record may no longer match hardware.
+/// A typed read updates profile.defaultMux/defaultGain to the channel it verified,
+/// so those two fields track what is latched in the device CONFIG register.
+/// startRecover() and startApplyProfile() replay the owner's desired profile.
 struct AppliedProfileSnapshot {
   DeviceProfile profile{}; ///< Last committed record; validity is qualified by state
   ConfigurationState state = ConfigurationState::UNBOUND; ///< Current trust state
@@ -122,7 +125,7 @@ struct OperationResult {
 enum class JobState : uint8_t {
   IDLE,                         ///< No job has been scheduled.
   SINGLE_SHOT_WRITE_CONFIG,     ///< Next instruction writes config with OS/start bit.
-  SINGLE_SHOT_WAIT_CONVERSION,  ///< Waiting for conversion time or ALERT/RDY.
+  SINGLE_SHOT_WAIT_CONVERSION,  ///< Bus-silent wait before the next OS readiness read.
   SINGLE_SHOT_POLL_READY,       ///< Next instruction reads CONFIG OS/ready bit.
   SINGLE_SHOT_READ_CONVERSION,  ///< Next instruction reads the conversion register.
   APPLY_WRITE_LOW_THRESHOLD,    ///< Next instruction writes the low threshold.
@@ -280,6 +283,9 @@ public:
   /// Request cancellation without I2C.
   /// A confirmed or ambiguous conversion start enters bus-silent wait-idle
   /// reconciliation; the abandoned sample is never published or reused.
+  /// Cancelling after any possible hardware effect sets hardwareConfigDirty() and
+  /// moves configuration trust to UNKNOWN, so a verified replay through
+  /// startRecover() or startApplyProfile() is required before the next typed read.
   /// @return Immediate disposition and whether reconciliation remains active.
   CancelDisposition cancelActiveOperation();
   /// Consume the pending terminal result exactly once by token without I2C.
@@ -347,6 +353,9 @@ public:
   Status getAppliedProfile(AppliedProfileSnapshot& out) const;
 
   /// Get the cached configuration snapshot currently owned by the driver.
+  /// The returned reference exposes the live transport callbacks and context;
+  /// treat it as read-only diagnostics and never invoke them directly, or the
+  /// driver's view of the device stops matching hardware.
   /// @return Cached driver configuration.
   const Config& getConfig() const { return _config; }
 
@@ -444,11 +453,15 @@ public:
   Status conversionReady(bool& ready);
 
   /// Check conversion readiness with explicit error reporting.
-  /// Uses ALERT/RDY when configured for conversion-ready mode. Otherwise,
-  /// single-shot mode polls the OS bit after the conversion time and continuous
-  /// mode tracks the configured data-rate interval between fresh samples.
-  /// Transaction count: zero when cached/timing/ALERT path is enough; otherwise
-  /// one CONFIG read in single-shot OS-bit polling.
+  /// An asserted ALERT/RDY pin is accepted as an early readiness signal when the
+  /// pin and conversion-ready thresholds are configured. Otherwise single-shot
+  /// mode polls the OS bit after the conversion time and continuous mode tracks
+  /// the configured data-rate interval between fresh samples.
+  /// Requires a time source: either Config::nowMs, or an external
+  /// tick(nowMs)/service(nowMs) timebase. Without one the elapsed interval stays
+  /// zero and readiness never becomes true.
+  /// Transaction count: zero when the cached, timing, or ALERT path is enough;
+  /// otherwise one CONFIG read in single-shot OS-bit polling.
   /// @param[out] ready true when conversion data can be read
   /// @return Status from the readiness path
   Status readConversionReady(bool& ready);
@@ -457,7 +470,8 @@ public:
   /// In continuous mode this returns the latest register value immediately and
   /// does not wait for a fresh data-rate interval. Use readConversionReady()
   /// first when the caller requires a fresh continuous sample indication.
-  /// Transaction count: one conversion-register read after readiness checks.
+  /// Transaction count: one conversion-register read, plus the CONFIG read that
+  /// readConversionReady() may perform first in single-shot mode.
   /// @param[out] out Signed conversion code.
   /// @return Status::Ok() on a successful register read.
   Status readRaw(int16_t& out);
@@ -484,12 +498,15 @@ public:
   /// when no monotonic clock hook is configured.
   /// Use readLatestRaw() when the caller intentionally wants the current
   /// continuous-mode register value immediately.
-  /// Transaction count: one CONFIG write to start plus one CONFIG readback and
-  /// one conversion-register read. Worst-case wall time is bounded by timeoutMs
-  /// plus bus-silent post-callback reconciliation after an ambiguous start.
-  /// Polling
-  /// occurs at most once per observed millisecond tick when I2C is needed; a
-  /// stalled clock returns Err::CLOCK_STALLED after a finite same-tick guard.
+  /// Transaction count: one CONFIG write to start, one conversion-register read,
+  /// and one CONFIG readback per readiness poll. A device still reporting OS busy
+  /// after the worst-case conversion interval is re-polled about once per
+  /// millisecond until the deadline, so the readback count is bounded by
+  /// timeoutMs, not by one. Worst-case wall time is bounded by timeoutMs plus
+  /// bus-silent post-callback reconciliation after an ambiguous start.
+  /// A stalled clock returns Err::CLOCK_STALLED after a finite same-tick guard
+  /// and leaves reconciliation active; drive it with poll() and consume the
+  /// terminal result through activeOperationToken().
   /// @param[out] out Signed conversion code.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
@@ -543,7 +560,8 @@ public:
 
   /// Advance a config-apply job by at most maxInstructions transport callbacks.
   /// maxInstructions is clamped to 3; passing 0 performs no transport work.
-  /// @param nowMs Current monotonic time in milliseconds; reserved for symmetry.
+  /// @param nowMs Current monotonic time in milliseconds. It drives the operation
+  ///        deadline, the per-callback timeout partition, and health timestamps.
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
   /// @return Job progress, terminal status, and callbacks consumed.
   PollResult pollApplyConfig(uint32_t nowMs, uint8_t maxInstructions = 1);
@@ -657,8 +675,10 @@ public:
 
   /// Set signed comparator thresholds. Cache changes commit after both writes succeed.
   /// Thresholds are signed raw conversion codes and must be recalculated if the
-  /// gain/full-scale range changes. If the second write fails after the first
-  /// reached hardware, hardwareConfigDirty() is set with the original error.
+  /// gain/full-scale range changes. high must exceed low, so this cannot program
+  /// the datasheet conversion-ready pattern; use enableConversionReadyPin() for
+  /// that. If the second write fails after the first reached hardware,
+  /// hardwareConfigDirty() is set with the original error.
   /// Transaction count: two threshold writes.
   /// @param low Low threshold raw code.
   /// @param high High threshold raw code.
@@ -723,6 +743,8 @@ public:
   Status enableConversionReadyPin();
 
   /// Disable comparator output by setting queue to DISABLE.
+  /// Threshold registers are left as programmed, so set them explicitly before
+  /// re-enabling the comparator.
   /// Transaction count: one CONFIG write.
   /// @return Status::Ok() when CONFIG was written.
   Status disableComparator();
@@ -762,9 +784,8 @@ private:
   // === Internal ===
   Status _readConversionReadyAt(uint32_t nowMs, bool& ready);
   Status _probeRaw();
-  Status _applyConfig();
+  Status _applyCachedConfigSynchronously();
   Status _writeConfigOnly();
-  Status _verifyConfigReadback();
   void _markHardwareConfigDirty(const Status& st);
   void _markHardwareConfigDirtyIfClean(const Status& st);
   void _clearHardwareConfigDirty();
@@ -776,6 +797,8 @@ private:
   PollResult _pollResult(Status status, uint8_t instructionsUsed, bool done) const;
   PollResult _finishOperation(const Status& status, OperationState state,
                               uint8_t transactionsUsed, bool sampleValid = false);
+  PollResult _abandonConversion(const Status& reason, OperationState terminalState,
+                                uint8_t transactionsUsed);
   Status _beginOperation(OperationKind kind, uint32_t nowMs, uint32_t deadlineMs,
                          OperationToken& token);
   bool _deadlineReached(uint32_t nowMs) const;
@@ -789,7 +812,7 @@ private:
   Status _verifyJobReadback(uint8_t reg, uint16_t expected, const char* message);
 
   // === State ===
-  static constexpr uint8_t MAX_JOB_INSTRUCTIONS = 3;
+  static constexpr uint8_t kMaxJobInstructions = 3;
   static constexpr uint16_t kMaxSameTickPolls = 1024U;
   static constexpr uint8_t kInvalidDirtyAddress = 0x00;
 
@@ -815,13 +838,12 @@ private:
   uint16_t _jobConfigRegister = 0;
   int16_t _jobThresholdLow = 0;
   int16_t _jobThresholdHigh = 0;
-  Mux _jobMux = Mux::AIN0_GND;
-  Gain _jobGain = Gain::FSR_2_048V;
   ChannelRequest _channelRequest{};
   bool _jobStartWriteAttempted = false;
   bool _jobAnyWriteConfirmed = false;
   uint32_t _jobNextReadyPollMs = 0;
   Status _abandonStatus = Status::Ok();
+  OperationState _abandonTerminalState = OperationState::FAILED;
   bool _abandonWaitStartPending = false;
   uint32_t _abandonWaitStartMs = 0;
 

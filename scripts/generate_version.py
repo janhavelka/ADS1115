@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Synchronize Version.h from library.json and expose build metadata via macros.
 
 Default behavior:

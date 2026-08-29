@@ -57,8 +57,9 @@ using NowMsFn = uint32_t (*)(void* user);
 using YieldFn = void (*)(void* user);
 
 /// @brief Input multiplexer configuration.
+/// The library defaults to AIN0_GND; AIN0_AIN1 is the device reset value.
 enum class Mux : uint8_t {
-  AIN0_AIN1 = 0,  ///< Differential: AIN0 - AIN1 (default)
+  AIN0_AIN1 = 0,  ///< Differential: AIN0 - AIN1 (device reset value)
   AIN0_AIN3 = 1,  ///< Differential: AIN0 - AIN3
   AIN1_AIN3 = 2,  ///< Differential: AIN1 - AIN3
   AIN2_AIN3 = 3,  ///< Differential: AIN2 - AIN3
@@ -185,6 +186,11 @@ Status validateDeviceProfile(const DeviceProfile& profile);
 /// @param request Candidate typed channel request.
 /// @return OK when the MUX and PGA values are valid.
 Status validateChannelRequest(const ChannelRequest& request);
+/// Validate a comparator profile without I2C.
+/// OFF requires queue == DISABLE. THRESHOLD requires an enabled queue and
+/// highThreshold > lowThreshold. CONVERSION_READY requires the exact datasheet
+/// pattern the driver programs: TRADITIONAL, NON_LATCHING, ASSERT_1,
+/// lowThreshold == 0, and highThreshold == 0x8000.
 /// @param profile Candidate comparator profile.
 /// @return OK when use, queue, and threshold fields form a valid profile.
 Status validateComparatorProfile(const ComparatorProfile& profile);

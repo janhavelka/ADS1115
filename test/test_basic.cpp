@@ -1687,6 +1687,11 @@ void test_continuous_readiness_waits_for_data_rate_interval() {
   bus.nowMs += dev.getConversionTimeMs();
   st = dev.readConversionReady(ready);
   TEST_ASSERT_TRUE(st.ok());
+  TEST_ASSERT_FALSE(ready);
+
+  bus.nowMs += dev.getConversionTimeMs();
+  st = dev.readConversionReady(ready);
+  TEST_ASSERT_TRUE(st.ok());
   TEST_ASSERT_TRUE(ready);
 }
 
@@ -1699,7 +1704,7 @@ void test_tick_marks_continuous_ready_without_config_poll_after_interval() {
   TEST_ASSERT_TRUE(dev.begin(cfg).ok());
   resetIoCounters(bus);
 
-  bus.nowMs += dev.getConversionTimeMs();
+  bus.nowMs += 2U * dev.getConversionTimeMs();
   dev.tick(bus.nowMs);
 
   TEST_ASSERT_TRUE(dev._conversionReady);
@@ -1987,14 +1992,37 @@ void test_poll_single_shot_ready_transport_failure_propagates() {
   bus.failReadStatus = Status::Error(Err::I2C_BUS, "chunk ready bus error", -81);
   poll = dev.pollSingleShot(bus.nowMs, 1);
 
-  TEST_ASSERT_TRUE(poll.done);
+  // The readiness read failed while the conversion may still be running, so the
+  // operation reconciles bus-silently before publishing the preserved error.
+  TEST_ASSERT_FALSE(poll.done);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
                           static_cast<uint8_t>(poll.status.code));
   TEST_ASSERT_EQUAL_INT32(-81, poll.status.detail);
   TEST_ASSERT_EQUAL_UINT8(1u, poll.instructionsUsed);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::WAIT_IDLE_AFTER_ABANDON),
+                          static_cast<uint8_t>(poll.state));
+
+  bus.failReadOnCall = 0;
+  const uint32_t readsBeforeQuietWait = bus.readCalls;
+  poll = dev.pollSingleShot(bus.nowMs, 1);
+  TEST_ASSERT_FALSE(poll.done);
+  bus.nowMs += dev.getConversionTimeMs();
+  poll = dev.pollSingleShot(bus.nowMs, 1);
+
+  TEST_ASSERT_TRUE(poll.done);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::I2C_BUS),
+                          static_cast<uint8_t>(poll.status.code));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(JobState::FAILED),
                           static_cast<uint8_t>(poll.state));
   TEST_ASSERT_FALSE(dev.jobActive());
+  TEST_ASSERT_EQUAL_UINT32(readsBeforeQuietWait, bus.readCalls);
+  TEST_ASSERT_FALSE(dev._conversionStarted);
+
+  // The driver is usable again: recovery is no longer blocked by a conversion
+  // the driver could never observe completing.
+  OperationResult terminal;
+  TEST_ASSERT_TRUE(dev.takeResult(dev.activeOperationToken(), terminal).ok());
+  TEST_ASSERT_TRUE(dev.recover().ok());
 }
 
 void test_start_apply_config_job_in_continuous_mode_is_supported() {
@@ -2758,9 +2786,12 @@ void test_public_setters_reject_invalid_enum_values_without_bus_access() {
                           static_cast<uint8_t>(dev.getConfig().compQueue));
 }
 
-void test_write_config_accepts_datasheet_pga_aliases_for_0_256v() {
+void test_write_config_normalizes_datasheet_pga_aliases_for_0_256v() {
   const uint16_t aliases[] = {cmd::PGA_0_256V_ALT1, cmd::PGA_0_256V_ALT2};
-  const uint16_t encodedValues[] = {6u, 7u};
+  // Both aliases are written as the canonical 101b encoding so the typed cache
+  // matches hardware bit for bit and masked readbacks cannot report a mismatch
+  // the driver produced itself.
+  const uint16_t encodedValues[] = {5u, 5u};
   for (size_t i = 0; i < 2; ++i) {
     FakeBus bus;
     ADS1115::ADS1115 dev;
@@ -5200,7 +5231,7 @@ int main() {
   RUN_TEST(test_poll_apply_config_first_write_failure_marks_dirty);
   RUN_TEST(test_config_setters_write_expected_config_bits);
   RUN_TEST(test_public_setters_reject_invalid_enum_values_without_bus_access);
-  RUN_TEST(test_write_config_accepts_datasheet_pga_aliases_for_0_256v);
+  RUN_TEST(test_write_config_normalizes_datasheet_pga_aliases_for_0_256v);
   RUN_TEST(test_threshold_writes_commit_cache_after_both_registers_succeed);
   RUN_TEST(test_thresholds_accept_and_reconstruct_int16_boundaries);
   RUN_TEST(test_threshold_diagnostic_read_invalidates_full_profile_trust);

@@ -1,9 +1,9 @@
 # ADS1115 Hardware Validation Plan
 
-This is the operator procedure for evidence that is still missing. The external
-record `ads1115_559933a_20260804` contains a current-stack ESP32-S2 Arduino
-diagnostic result, but it qualifies only CLI-observable digital behavior; the
-repository still has no broad physical qualification result.
+This is the operator procedure for the hardware evidence listed in
+[`OPEN_ITEMS.md`](OPEN_ITEMS.md). Digital CLI runs qualify only CLI-observable
+behavior; analog, electrical, timing, fault, and endurance claims need the
+physical procedures below.
 
 ## Acceptance Rule
 
@@ -31,11 +31,6 @@ evidence system and record its stable reference in the dated result.
 | Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Compact build/flash/monitor outcomes |
 | Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run | Duration, cycles/commands, latency, failures, resets, environment |
 | Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
-
-The 2026-08-04 ESP32-S2 record exercised responding `0x48`/`0x49` devices and
-expected-absent `0x4A`/`0x4B` addresses. The absent addresses produced a generic
-read error, not a transport-proven NACK classification; two populated addresses
-also do not prove all four physical ADDR strap configurations.
 
 ## Record Identity Before Testing
 

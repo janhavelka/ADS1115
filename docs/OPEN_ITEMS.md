@@ -1,11 +1,7 @@
 # Open Validation Items
 
-Last reviewed: 2026-08-05 against ADS1115 2.0.1 and pioarduino
-`55.03.311`.
-
-There is no known unresolved high- or medium-severity core-driver defect. This
-page contains only evidence still needed before making broader hardware or
-product claims.
+This page lists evidence that is still needed before making broader hardware or
+product claims. Open core-driver defects belong in `CODE_AUDIT.md`, not here.
 
 ## Hardware and integration evidence
 
@@ -28,11 +24,8 @@ product claims.
   feature disabled.
 
 Use [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md)
-and [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md).
-Historical HIL transcripts, generated summaries, and superseded fixture notes
-are intentionally not retained in this repository. Store required lab evidence
-in the approved evidence system and record only its stable reference in a
-dated result.
+and [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md);
+the plan owns the evidence-retention rule.
 
 When an item is completed, remove it from this page. Record durable behavior or
 compatibility changes in `CHANGELOG.md`; do not accumulate completed work here.

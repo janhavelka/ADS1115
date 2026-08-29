@@ -1,7 +1,7 @@
 # ADS1115 Reference Material
 
-This directory contains supporting source material used for driver contract
-checks and documentation review. It is not the release-readiness statement.
+This directory contains the TI source material used for driver register,
+timing, and electrical contract checks.
 
 | Path | Contents |
 | --- | --- |

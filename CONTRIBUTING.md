@@ -58,9 +58,8 @@ python -m platformio run -e owner_safe_s3 -e owner_safe_s2
 
 Native ESP-IDF changes also require both configured IDF target builds. Hardware
 claims require dated evidence from the current commit and exact fixture; parser
-tests and dry-runs are not HIL evidence. Keep review documents concise: record
-outcomes, failures, fixture identity, and artifact hashes instead of pasting
-long serial transcripts.
+tests and dry-runs are not HIL evidence. Evidence retention is defined in
+[`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`](docs/ADS1115_HARDWARE_VALIDATION_PLAN.md).
 
 ## Commits And Pull Requests
 

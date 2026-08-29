@@ -92,7 +92,9 @@ const char* jobStateToStr(ADS1115::JobState st) {
     case JobState::APPLY_VERIFY_LOW_THRESHOLD: return "APPLY_VERIFY_LOW_THRESHOLD";
     case JobState::APPLY_VERIFY_HIGH_THRESHOLD: return "APPLY_VERIFY_HIGH_THRESHOLD";
     case JobState::APPLY_VERIFY_CONFIG: return "APPLY_VERIFY_CONFIG";
+    case JobState::PROBE_CONFIG: return "PROBE_CONFIG";
     case JobState::WAIT_IDLE_AFTER_ABANDON: return "WAIT_IDLE_AFTER_ABANDON";
+    case JobState::SHUTDOWN_WRITE_CONFIG: return "SHUTDOWN_WRITE_CONFIG";
     case JobState::COMPLETE: return "COMPLETE";
     case JobState::FAILED: return "FAILED";
     case JobState::CANCELLED: return "CANCELLED";

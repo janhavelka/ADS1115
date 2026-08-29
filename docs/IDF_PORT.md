@@ -1,7 +1,5 @@
 # ADS1115 ESP-IDF Portability Status
 
-Applies to ADS1115 v2.0.
-
 ## Current Contract
 
 The core is framework-neutral. `include/` and `src/` contain no Arduino,

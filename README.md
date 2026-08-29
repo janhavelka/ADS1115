@@ -5,11 +5,10 @@ and ESP-IDF consumers. The library never owns the I2C bus: applications inject
 transport callbacks and retain ownership of handles, pins, locking, clock rate,
 timeouts, recovery, retries, and scheduling.
 
-Version 2.0 introduces a fixed-memory, owner-safe operation engine for
-production shared-bus use. The native suite contains 178 fault-injection and
-contract tests, and CI builds four Arduino environments plus native ESP-IDF for
-ESP32-S2/S3. Current physical, calibrated analog, electrical, injected-fault,
-native ESP-IDF target, and final-board qualification work is tracked in
+The production surface is a fixed-memory, owner-polled operation engine:
+`bind()` / `start*()` / `poll()` / `takeResult()` / `unbind()`. A compatibility
+surface of synchronous facades and direct register setters is retained for
+bring-up and service tools. Outstanding hardware qualification is tracked in
 [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
 
 ## Production Contract
@@ -102,10 +101,12 @@ callback per pass.
 ```cpp
 #include "ADS1115/ADS1115.h"
 
+// File scope.
 ADS1115::ADS1115 adc;
 ADS1115::OperationToken token;
 bool initializationPending = false;
 
+// In setup():
 ADS1115::DriverConfig transport{
     appI2cWrite, appI2cWriteRead, &sharedBusOwner, 20};
 
@@ -208,8 +209,13 @@ Conversion-time wait polls consume zero callbacks.
 | Initialize | probe, 3 writes, 3 readbacks | 7 |
 | Apply profile | 3 writes, 3 readbacks | 6 |
 | Recover | tracked probe, 3 writes, 3 readbacks | 7 |
-| Single-shot read | start CONFIG write, masked CONFIG verification, conversion read | 3 |
+| Single-shot read | start CONFIG write, masked CONFIG verification, conversion read | 2 + readiness polls |
 | Shutdown | single-shot CONFIG write and readback | 2 |
+
+A single-shot read normally needs three callbacks, because the driver waits the
+full worst-case conversion interval before its first readiness poll. A device
+that still reports `OS` busy at that point is re-polled about once per
+millisecond until the deadline, so size read deadlines for at least one retry.
 
 Callback timeout caps are partitioned across the requested poll budget so their
 sum cannot exceed `deadline - nowMs` as sampled at the poll boundary. Every cap
@@ -295,7 +301,9 @@ threshold ordering are rejected before I2C. Comparator thresholds are signed
 raw ADC codes and must be recalculated when PGA changes.
 
 The production owner-safe read path uses CONFIG OS-bit polling. It does not own
-or sample a GPIO. Legacy ALERT/RDY support remains an advanced diagnostic path.
+or sample a GPIO. Legacy ALERT/RDY support remains an advanced diagnostic path,
+where an asserted pin is accepted as an early readiness signal and the timing or
+OS-bit path still applies when the pin is not asserted.
 ALERT/RDY is open drain and needs a board-selected pull-up. Conversion-ready
 pulses can be short (approximately 8 us in continuous mode), so a reviewed GPIO,
 edge/latch policy, and electrical validation are required before product use.
@@ -371,6 +379,9 @@ configuration-trust behavior changed.
    Keep analog pins within the powered-device datasheet limits.
 7. The ADDR pin is continuously sampled. Board strap choice and I2C/ALERT pull-up
    sizing are electrical design inputs, not driver policy.
+8. The driver never issues the I2C general-call reset (`0x06` to address `0x00`).
+   A general call resets every device on the bus, which is a bus-owner decision.
+   Issue it from the application when a hard device reset is required.
 
 ## Validation And Reproducibility
 
@@ -417,40 +428,19 @@ tracked generated `Version.h` is present, unpacks the archive, and compiles the
 packed core with host C++17. Repository-only CI, test, tool, and reference files
 remain outside the consumer archive.
 
-Do not report an unrun build or hardware case as passed. The externally retained
-record `ads1115_559933a_20260804` covers clean ESP32-S2 diagnostic firmware at
-commit `559933a` on pioarduino `55.03.311` (Arduino-ESP32 `3.3.11`, ESP-IDF
-`v5.5.5`). Two responding devices at `0x48`/`0x49` completed the preflight and
-expanded exhaustive digital contract with no device-command failures or resets.
-Its one-hour workload completed 2,101 full cycles plus one partial cycle: 88,258
-workload commands, zero workload failures, no resets, and 0.188 s worst command
-latency. The run exposed a host-runner cleanup sequencing defect at the final
-partial-cycle cancellation; the corrected two-poll reconciliation path then
-passed on both devices and restored clean `READY` state.
-
-This evidence does not turn analog samples into accuracy claims. It also does
-not qualify ESP32-S3, native ESP-IDF hardware, all four physical address straps,
-ALERT/RDY or comparator electrical behavior, controlled physical faults,
-production shared-bus scheduling, or final-board/product endurance. `0x4A` and
-`0x4B` produced visible generic read errors while preserving the active driver;
-that is not proof of precise address-NACK mapping. Outstanding evidence is in
-[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md); execution details belong in the
-hardware validation plan.
+Hardware coverage is not implied by CI. Physical qualification -- calibrated
+analog accuracy, all four address straps, ALERT/RDY and comparator electrical
+behavior, injected faults, shared-bus scheduling, and final-board endurance --
+is tracked in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md) and executed with
+[`docs/ADS1115_HARDWARE_VALIDATION_PLAN.md`](docs/ADS1115_HARDWARE_VALIDATION_PLAN.md).
 
 ## Documentation
 
-- `CHANGELOG.md` - release history and 2.0 migration notes
-- `docs/OPEN_ITEMS.md` - outstanding hardware and integration evidence
-- `docs/IDF_PORT.md` - ESP-IDF adapter and error-mapping guidance
-- `docs/ADS1115_HARDWARE_VALIDATION_PLAN.md` - hardware evidence procedure
-- `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md` - dated capture template
-- `docs/reference/ADS111x_datasheet_revE.pdf` - authoritative TI Rev. E datasheet
-- `docs/reference/pdf-extracted-md/ADS111x_datasheet_revE.md` - retained full
-  PDF-derived transcript
-- `docs/reference/extracted-md/` - retained datasheet-derived transcripts for
-  quick human and AI-assisted contract review
-- `docs/README.md` - current documentation index
-- `Doxyfile` - warning-enforced generated public API reference
+- [`CHANGELOG.md`](CHANGELOG.md) - release history and 2.0 migration notes
+- [`docs/README.md`](docs/README.md) - index of every current document
+- [`docs/reference/`](docs/reference/) - TI ADS111x Rev. E datasheet and its
+  Markdown transcripts, the authority for all hardware behavior claims
+- `doxygen Doxyfile` - warning-enforced generated public API reference
 
 ## License
 

@@ -1,10 +1,6 @@
-﻿# AGENTS.md - ADS1115 Production Embedded Guidelines
+# AGENTS.md - ADS1115 Production Embedded Guidelines
 
 ## PlatformIO
-
-Before editing, fetch remotes and fast-forward the newest intended working
-branch to its upstream. Stop and report dirty, divergent, or conflicted state;
-never overwrite work to force a sync.
 
 On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
 VS Code-managed executable and defaults package/cache state to the isolated
@@ -15,18 +11,20 @@ packages; callers may override `PLATFORMIO_CORE_DIR` explicitly.
 Never install another PlatformIO Core; if the wrapper cannot find the managed
 executable, stop and report the missing installation.
 
-## Role and Target
-You are a professional embedded software engineer building a production-grade ADS1115 16-bit ADC library.
+## Scope and Target
+
+This repository is a production-grade ADS1115 16-bit ADC library.
 
 - Target: ESP32-S2 / ESP32-S3, Arduino and ESP-IDF consumers, PlatformIO/ESP-IDF.
-- Goals: deterministic behavior, long-term stability, clean API contracts, portability, no surprises in the field.
+- Goals: deterministic behavior, long-term stability, clean API contracts,
+  portability, no surprises in the field.
+- The library must stay usable both standalone for bench-testing a device and
+  as a component of a larger firmware.
 - These rules are binding.
 
-## Chunked Hardening Workflow
+## Change Policy
 
-- Work chunk-by-chunk; do not perform broad refactors during hardening prompts.
-- Keep implementation changes scoped to the current prompt and the existing
-  architecture unless the prompt explicitly authorizes a wider change.
+- Keep a change scoped to the problem it solves and to the existing architecture.
 - Prefer simplicity, clarity, correctness, robustness, safety, and readability
   over clever abstractions or speculative flexibility.
 - Before coding, inspect whether existing code can be simplified, reused, or
@@ -62,7 +60,6 @@ You are a professional embedded software engineer building a production-grade AD
   thread-safe unless explicitly proven, documented, and tested.
 - Hardware validation claims require dated logs or captures.
 - CI/build claims require actual command output or CI configuration evidence.
-- Each hardening prompt must end with a commit and push/sync.
 
 ---
 
@@ -81,11 +78,16 @@ examples/
   02_owner_safe_poll/    - Production owner-loop pattern
   common/                - Live Arduino example helpers only
   esp_idf/basic/         - Native ESP-IDF diagnostic example
-platformio.ini
-library.json
-README.md
-CHANGELOG.md
-AGENTS.md
+test/                    - Native Unity contract and fault-injection suite
+tools/                   - Contract checkers and the serial HIL runner
+scripts/                 - Version generator and the Windows PlatformIO wrapper
+docs/                    - Current contracts, open evidence, datasheet reference
+.github/workflows/       - CI
+platformio.ini           - Arduino/native build environments
+library.json             - PlatformIO manifest and single version source
+CMakeLists.txt           - ESP-IDF component registration
+idf_component.yml        - ESP-IDF component manifest
+Doxyfile                 - Warning-enforced API documentation build
 ```
 
 Rules:
@@ -282,26 +284,6 @@ Injected transport callbacks (DriverConfig/Config)
 
 ---
 
-## Hardening Subagent Roles
-
-When using subagents for hardening work, split responsibilities as follows:
-
-- **Core Contracts Agent**: public API compatibility, framework neutrality,
-  transport injection, timeout semantics, strict init/read-back behavior,
-  dirty-state tracking, shutdown semantics, and copy/move prevention.
-- **Tests/Fault Injection Agent**: native fake-transport tests for missing
-  clocks, partial write failures, dirty-state clearing, probe error mapping,
-  strict read-back masking, continuous-mode semantics, shutdown behavior, and
-  compile-time copy/move prevention.
-- **Docs/Examples/CI Agent**: README/Doxygen/API latency documentation,
-  example honesty, ALERT/RDY/PGA/comparator warnings, hardware validation
-  matrix, PlatformIO/ESP-IDF build coverage, and CI command accuracy.
-- **Final Integration Review Agent**: verify all changes together, check that
-  guard scripts and builds match claimed results, identify remaining hardware
-  validation gaps, and ensure no unrelated churn was introduced.
-
----
-
 ## Versioning and Releases
 
 Single source of truth: `library.json`. `Version.h` is auto-generated and must never be edited.
@@ -313,11 +295,18 @@ SemVer:
 - MINOR: new backward-compatible features or error codes (append only).
 - PATCH: bug fixes, refactors, docs.
 
+`scripts/generate_version.py` owns the version in `library.json`,
+`idf_component.yml`, `Doxyfile` (`PROJECT_NUMBER`), and the generated
+`include/ADS1115/Version.h`. Editing any of them by hand breaks
+`generate_version.py check` in CI.
+
 Release steps:
-1. Update `library.json`.
+1. `python scripts/generate_version.py bump patch|minor|major`
+   (or `set X.Y.Z`), which updates all four files together.
 2. Update `CHANGELOG.md` (Added/Changed/Fixed/Removed).
 3. Update `README.md` if API or examples changed.
-4. Commit and tag: `Release vX.Y.Z`.
+4. `python scripts/generate_version.py check`.
+5. Commit and tag: `Release vX.Y.Z`.
 
 ---
 
@@ -325,7 +314,8 @@ Release steps:
 
 - Member variables: `_camelCase`
 - Methods/Functions: `camelCase`
-- Constants: `CAPS_CASE`
+- Constants: `kCamelCase` for file- and class-local `static constexpr` values;
+  `CAPS_CASE` for the public register vocabulary in `CommandTable.h`
 - Enum values: `CAPS_CASE` or short forms (e.g., `AIN0_GND`)
 - Locals/params: `camelCase`
 - Config fields: `camelCase`
