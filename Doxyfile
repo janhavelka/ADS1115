@@ -34,6 +34,8 @@ STRIP_CODE_COMMENTS    = NO
 INPUT                  = README.md \
                          CHANGELOG.md \
                          include \
+                         docs/README.md \
+                         docs/CODE_AUDIT_REPORT.md \
                          docs/OPEN_ITEMS.md \
                          docs/IDF_PORT.md \
                          docs/ADS1115_HARDWARE_VALIDATION_PLAN.md \

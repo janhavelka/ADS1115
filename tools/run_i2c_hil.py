@@ -45,7 +45,6 @@ CLI_SYNC_MARKER = "=== Version Info ==="
 RESULT_PASS = "PASS"
 RESULT_FAIL = "FAIL"
 RESULT_EVIDENCE_REQUIRED = "EVIDENCE_REQUIRED"
-RESULT_UNKNOWN = "UNKNOWN"
 RESULT_NOT_RUN = "NOT_RUN"
 RESULT_DRY_RUN = "DRY_RUN"
 
@@ -117,7 +116,6 @@ class CommandSpec:
     expected: str
     expected_any: tuple[str, ...] = ()
     validators: tuple[str, ...] = ()
-    failure_tokens: tuple[str, ...] = ()
     timeout_s: float = DEFAULT_TIMEOUT_S
     notes: str = ""
     post_delay_s: float = 0.0
@@ -278,9 +276,6 @@ def output_has_failure(spec: CommandSpec, text: str) -> str | None:
     token = status_token(plain)
     if token in STATUS_FAILURES:
         return f"status token {token}"
-    for failure in spec.failure_tokens:
-        if failure in plain:
-            return f"failure token {failure}"
     for pattern in GENERIC_FAILURE_RE:
         if pattern.search(plain):
             return f"failure pattern {pattern.pattern}"
@@ -731,7 +726,7 @@ def per_address_plan(address: str, *, full: bool, benchmark: bool) -> list[Comma
             CommandSpec("REG-{address}-002", "Registers", "reg 1", "Read config register", ("Reg 0x01",), timeout_s=5.0),
             CommandSpec("REG-{address}-003", "Registers", "reg 2", "Read low threshold register", ("Reg 0x02",), timeout_s=5.0),
             CommandSpec("REG-{address}-004", "Registers", "reg 3", "Read high threshold register", ("Reg 0x03",), timeout_s=5.0),
-            CommandSpec("DIRTY-{address}-001", "Dirty State", "wreg 1 0x8583", "Raw config write succeeds and marks cache dirty", ("Status: OK",), ("status_ok",), timeout_s=5.0),
+            CommandSpec("DIRTY-{address}-001", "Dirty State", "wreg 3 0x7FFF", "Raw threshold write succeeds and marks cache dirty", ("Status: OK",), ("status_ok",), timeout_s=5.0),
             CommandSpec("DIRTY-{address}-002", "Dirty State", "settings", "Dirty state is visible after raw write", ("Hardware/cache dirty:",), ("dirty_yes",), timeout_s=5.0),
             CommandSpec("DIRTY-{address}-003", "Dirty State", "recover", "Recovery reapplies cached config", ("Status: OK",), ("status_ok",), timeout_s=8.0),
             CommandSpec("DIRTY-{address}-004", "Dirty State", "settings", "Dirty state clears after recovery", ("Hardware/cache dirty:",), ("dirty_no",), timeout_s=5.0),
@@ -754,8 +749,6 @@ def per_address_plan(address: str, *, full: bool, benchmark: bool) -> list[Comma
             CommandSpec("INV-{address}-006", "Invalid Input", "reg 4", "Invalid register read is rejected", ("Usage:",), ("invalid_or_usage",), expected_failure=True),
             CommandSpec("INV-{address}-007", "Invalid Input", "wreg 0 0x1234", "Invalid raw write register is rejected", ("Usage:",), ("invalid_or_usage",), expected_failure=True),
             CommandSpec("INV-{address}-008", "Invalid Input", "job poll 999", "Invalid job budget is rejected", ("Usage:",), ("invalid_or_usage",), expected_failure=True),
-            CommandSpec("RESTORE-{address}-001", "Recovery", "recover", "Restore safe cached configuration after functional suite", ("Status: OK",), ("status_ok",), timeout_s=8.0),
-            CommandSpec("RESTORE-{address}-002", "Health", "drv", "Final health remains READY with zero failures", ("=== Driver Health ===",), ("driver_ready", "zero_failures"), timeout_s=5.0),
         ]
     )
     if benchmark:
@@ -767,6 +760,21 @@ def per_address_plan(address: str, *, full: bool, benchmark: bool) -> list[Comma
                 CommandSpec("BENCH-{address}-004", "Benchmark", "stress_mix 200", "Mixed operation benchmark", ("=== stress_mix summary ===",), ("stress_mix_zero_fail", "rate_report"), timeout_s=60.0),
             ]
         )
+    full_steps.extend(
+        [
+            CommandSpec("RESTORE-{address}-MODE", "Recovery", "mode single", "Restore nominal single-shot mode", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-GAIN", "Recovery", "gain 2", "Restore nominal +/-2.048 V PGA", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-RATE", "Recovery", "rate 4", "Restore nominal 128 SPS data rate", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-MUX", "Recovery", "ch 0", "Restore nominal AIN0_GND mux", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-COMP-MODE", "Recovery", "comp mode trad", "Restore traditional comparator mode", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-COMP-POL", "Recovery", "comp pol low", "Restore active-low comparator polarity", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-COMP-LATCH", "Recovery", "comp latch 0", "Restore non-latching comparator mode", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-COMP-TH", "Recovery", "comp th -32768 32767", "Restore nominal comparator thresholds", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-COMP-OFF", "Recovery", "comp disable", "Disable comparator output", ("Status: OK",), ("status_ok",)),
+            CommandSpec("RESTORE-{address}-APPLY", "Recovery", "recover", "Verify the complete nominal cached profile", ("Status: OK",), ("status_ok",), timeout_s=8.0),
+            CommandSpec("RESTORE-{address}-HEALTH", "Health", "drv", "Final health remains READY with zero failures", ("=== Driver Health ===",), ("driver_ready", "zero_failures"), timeout_s=5.0),
+        ]
+    )
     steps.extend(full_steps)
     return [step.formatted(address=address) for step in steps]
 
@@ -1079,10 +1087,6 @@ def parser_self_test() -> None:
         raise AssertionError("evidence verdict should surface missing evidence")
     if final_verdict(verdict_rows, dry_run=False) != RESULT_EVIDENCE_REQUIRED:
         raise AssertionError("final verdict should remain EVIDENCE_REQUIRED when evidence is missing")
-    if process_exit_code(RESULT_UNKNOWN, fail_on_unknown=False) != 0:
-        raise AssertionError("UNKNOWN should not fail exploratory runs")
-    if process_exit_code(RESULT_UNKNOWN, fail_on_unknown=True) != 1:
-        raise AssertionError("--fail-on-unknown should fail UNKNOWN final verdicts")
     if process_exit_code(RESULT_EVIDENCE_REQUIRED, fail_on_unknown=False) != 0:
         raise AssertionError("EVIDENCE_REQUIRED should not fail exploratory runs")
     if process_exit_code(RESULT_EVIDENCE_REQUIRED, fail_on_unknown=True) != 1:
@@ -1591,7 +1595,7 @@ def write_markdown_summary(
         out.write(
             f"- Results: PASS={counts[RESULT_PASS]} FAIL={counts[RESULT_FAIL]} "
             f"EVIDENCE_REQUIRED={counts[RESULT_EVIDENCE_REQUIRED]} "
-            f"UNKNOWN={counts[RESULT_UNKNOWN]} NOT_RUN={counts[RESULT_NOT_RUN]}\n"
+            f"NOT_RUN={counts[RESULT_NOT_RUN]}\n"
         )
         out.write(f"- Contract verdict: {contract}\n")
         out.write(f"- Evidence verdict: {evidence}\n")
@@ -1987,8 +1991,6 @@ def final_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
     results = [row.result for row in rows]
     if RESULT_FAIL in results:
         return RESULT_FAIL
-    if RESULT_UNKNOWN in results:
-        return RESULT_UNKNOWN
     if RESULT_EVIDENCE_REQUIRED in results:
         return RESULT_EVIDENCE_REQUIRED
     return RESULT_PASS
@@ -2000,8 +2002,6 @@ def contract_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
     results = [row.result for row in rows]
     if RESULT_FAIL in results:
         return RESULT_FAIL
-    if RESULT_UNKNOWN in results:
-        return RESULT_UNKNOWN
     return RESULT_PASS
 
 
@@ -2013,8 +2013,6 @@ def evidence_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
         return RESULT_NOT_RUN
     if any(row.result == RESULT_FAIL for row in evidence_rows):
         return RESULT_FAIL
-    if any(row.result == RESULT_UNKNOWN for row in evidence_rows):
-        return RESULT_UNKNOWN
     if any(row.result == RESULT_EVIDENCE_REQUIRED for row in evidence_rows):
         return RESULT_EVIDENCE_REQUIRED
     return RESULT_PASS
@@ -2023,7 +2021,7 @@ def evidence_verdict(rows: Iterable[StepResult], *, dry_run: bool) -> str:
 def process_exit_code(verdict: str, *, fail_on_unknown: bool) -> int:
     if verdict == RESULT_FAIL:
         return 1
-    if fail_on_unknown and verdict in (RESULT_UNKNOWN, RESULT_EVIDENCE_REQUIRED):
+    if fail_on_unknown and verdict == RESULT_EVIDENCE_REQUIRED:
         return 1
     return 0
 
@@ -2045,7 +2043,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--stop-on-fail", action="store_true")
     parser.add_argument("--fail-on-unknown", "--fail-on-evidence-required",
                         dest="fail_on_unknown", action="store_true",
-                        help="Return nonzero when final verdict is UNKNOWN or EVIDENCE_REQUIRED")
+                        help="Return nonzero when final verdict is EVIDENCE_REQUIRED")
     parser.add_argument("--reset-before", action="store_true", help="Toggle serial reset lines before reading boot transcript")
     parser.add_argument("--soak", action="store_true", help="Run bounded soak loop after the command plan")
     parser.add_argument("--soak-duration-s", type=positive_float, default=DEFAULT_SOAK_DURATION_S)
@@ -2102,7 +2100,7 @@ def main(argv: list[str]) -> int:
     print(
         f"Counts: PASS={counts[RESULT_PASS]} FAIL={counts[RESULT_FAIL]} "
         f"EVIDENCE_REQUIRED={counts[RESULT_EVIDENCE_REQUIRED]} "
-        f"UNKNOWN={counts[RESULT_UNKNOWN]} NOT_RUN={counts[RESULT_NOT_RUN]}"
+        f"NOT_RUN={counts[RESULT_NOT_RUN]}"
     )
     print(f"Contract verdict: {contract}")
     print(f"Evidence verdict: {evidence}")

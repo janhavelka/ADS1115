@@ -135,7 +135,7 @@ Rules:
 - Public fallible APIs must return `Status`; silent failure is unacceptable.
 - Multi-register hardware updates must be explicit about partial hardware state.
   If a later transaction fails after an earlier register write may have reached
-  the chip, the driver must preserve the original transport error, expose a
+  the chip, the driver must preserve that transport/readback error, expose a
   hardware-config-dirty diagnostic, and clear it only after a successful full
   resync/recover path.
 
@@ -262,14 +262,16 @@ Injected transport callbacks (DriverConfig/Config)
 - Public API methods NEVER call `_updateHealth()` directly
 - Tracked register helpers use TRACKED wrappers -> health updated automatically
 - `probe()` uses RAW wrappers -> no health tracking (diagnostic only)
-- Owner and compatibility recovery use a tracked CONFIG read for their probe
-  step, so failures count after initialization
+- Owner initialization and recovery use a tracked CONFIG read for their probe
+  step, so all attempted owner transport is counted. Public `probe()` remains raw.
 
 ### Health Tracking Rules
 
 - `_updateHealth()` called ONLY inside tracked transport wrappers.
-- State transitions are guarded by `_initialized` (no DEGRADED/OFFLINE before
-  successful owner initialization or compatibility `begin()`).
+- Counters, timestamps, and last error update for every tracked callback,
+  including initialization. Driver-state transitions are guarded by
+  `_initialized` (no DEGRADED/OFFLINE before successful owner initialization or
+  compatibility `begin()`).
 - NOT called for config/param validation errors (INVALID_CONFIG, INVALID_PARAM).
 - NOT called for precondition errors (NOT_INITIALIZED).
 - `probe()` uses raw I2C and does NOT update health (diagnostic only).

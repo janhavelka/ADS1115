@@ -42,8 +42,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Continuous-mode settle windows are honored in three cases that skipped them:
   initialization no longer exempts itself from the two-period settle,
   `readLatestRaw()` no longer resets the settle counter, and a compatibility
-  facade driving `poll()` without a monotonic hook now arms the sentinel that
-  `tick()`/`service(nowMs)` resolves instead of measuring the interval from zero.
+  facade driving `poll()` without a monotonic hook now leaves the conversion
+  timestamp explicitly unarmed for `tick()`/`service(nowMs)` instead of
+  measuring the interval from zero.
+- `getThresholds()` no longer overwrites the desired/cache thresholds with a
+  diagnostic observation; mismatches invalidate trust and recovery replays the
+  committed profile.
+- Owner readiness retries are data-rate-bounded instead of polling OS every
+  millisecond, and the blocking stopped-clock heuristic no longer falsely trips
+  after only 1,024 fast same-tick iterations.
+- Initialization transport now contributes to health diagnostics, while state
+  remains `UNINIT` until initialization succeeds. Initialization and recovery
+  share tracked probe/error mapping; public `probe()` remains untracked.
+- Conversion-ready recognition now accepts every datasheet-valid threshold-MSB
+  and enabled-queue encoding rather than one convenience-writer profile.
+- Owner shutdown now exposes `APPLYING`, commits single-shot mode as desired,
+  and restores prior trust after a definite pre-write failure.
+- Idle legacy job pollers now report `RESULT_NOT_AVAILABLE`, and unbound
+  `getAppliedProfile()` no longer mutates its output.
+- Replaced the `UINT32_MAX` conversion-timestamp sentinel with explicit validity,
+  preserving real timestamps and wraparound at that value.
+- Raw-write address NACK no longer marks clean hardware state dirty.
 
 ### Changed
 
@@ -62,9 +81,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "default" marker.
 - Reduced the documentation set to current contracts: removed prompt-era and
   subagent-role material from `AGENTS.md`, the embedded HIL run report from
-  `README.md`, and duplicated evidence-retention policy across `docs/`. Recorded
-  the remaining driver findings and their proposed fixes in
-  `docs/CODE_AUDIT.md`.
+  `README.md`, and duplicated evidence-retention policy across `docs/`. The
+  completed finding-by-finding disposition is in `docs/CODE_AUDIT_REPORT.md`.
+- Lowered the framework-neutral core and packed-component requirement to C++11,
+  added ESP-IDF repository-file exclusions, deterministic build metadata with
+  optional `SOURCE_DATE_EPOCH`, and compile-time register/enum contract checks.
+- Hardened the native fake, CLI dispatch checker, and HIL plan/classification;
+  the full plan now restores a complete nominal profile after benchmarks.
+- The owner-safe example now demonstrates two bounded application-owned
+  recovery attempts before latching failure.
 
 ### Removed
 

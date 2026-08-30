@@ -16,19 +16,19 @@ REQUIRED_COMMON = [
     "HealthView.h",
 ]
 
-MANDATORY_COMMANDS = [
-    "help",
-    "scan",
-    "probe",
-    "recover",
-    "shutdown",
-    "drv",
-    "read",
-    "addr",
-    "verbose",
-    "stress",
-    "job",
-]
+MANDATORY_DISPATCH = {
+    "help": r'cmd\s*==\s*"help"',
+    "scan": r'cmd\s*==\s*"scan"',
+    "probe": r'cmd\s*==\s*"probe"',
+    "recover": r'cmd\s*==\s*"recover"',
+    "shutdown": r'cmd\s*==\s*"shutdown"',
+    "drv": r'cmd\s*==\s*"drv"',
+    "read": r'cmd\s*==\s*"read"',
+    "addr": r'cmd(?:\s*==\s*"addr"|\.startsWith\("addr "\))',
+    "verbose": r'cmd(?:\s*==\s*"verbose"|\.startsWith\("verbose "\))',
+    "stress": r'cmd\.startsWith\("stress"\)',
+    "job": r'cmd(?:\s*==\s*"job"|\.startsWith\("job "\))',
+}
 
 
 def fail(msg: str) -> None:
@@ -57,12 +57,18 @@ def main() -> int:
     hil_runner_text = hil_runner.read_text(encoding="utf-8", errors="replace")
     readme = (ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
-    for cmd in MANDATORY_COMMANDS:
-        if re.search(rf"\b{re.escape(cmd)}\b", text) is None:
-            fail(f"mandatory command '{cmd}' missing in {bringup_main.as_posix()}")
+    process_start = text.find("void processCommand(")
+    setup_start = text.find("\nvoid setup()", process_start)
+    if process_start < 0 or setup_start < 0:
+        fail("unable to isolate processCommand() dispatch body")
+    dispatch = text[process_start:setup_start]
 
-    if re.search(r"\bcfg\b", text) is None and re.search(r"\bsettings\b", text) is None:
-        fail("either 'cfg' or 'settings' command must be present")
+    for cmd, pattern in MANDATORY_DISPATCH.items():
+        if re.search(pattern, dispatch) is None:
+            fail(f"mandatory command '{cmd}' has no processCommand() dispatch branch")
+
+    if re.search(r'cmd\s*==\s*"(?:cfg|settings)"', dispatch) is None:
+        fail("either 'cfg' or 'settings' must have a processCommand() dispatch branch")
 
     for token in (
         "beginDriverAtAddress",

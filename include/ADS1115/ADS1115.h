@@ -241,11 +241,14 @@ public:
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain;
   ///        it must be in the future by no more than INT32_MAX milliseconds.
   /// @param[out] token Nonzero operation identity on acceptance.
-  /// @return IN_PROGRESS when scheduled.
+  /// Requires a valid binding but does not require prior initialization.
+  /// @return IN_PROGRESS when scheduled; NOT_INITIALIZED when unbound; BUSY for
+  /// active/pending work; or INVALID_PARAM for an invalid deadline.
   Status startInitialize(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Schedule a validated candidate-profile apply and readback without I2C.
   /// The candidate commits only after all writable fields are verified.
   /// The I2C address cannot change; unbind and bind a new profile instead.
+  /// Requires successful initialization.
   /// @param profile Candidate profile using the currently bound address.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
@@ -254,13 +257,15 @@ public:
   Status startApplyProfile(const DeviceProfile& profile, uint32_t nowMs,
                            uint32_t deadlineMs, OperationToken& token);
   /// Schedule owner-authorized probe and verified profile replay without I2C.
+  /// Requires a valid binding but can recover a failed initialization.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
   /// @param[out] token Nonzero operation identity on acceptance.
   /// @return IN_PROGRESS when scheduled, or a precondition status.
   Status startRecover(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Schedule one typed, provenance-preserving single-shot conversion without I2C.
-  /// Requires a VERIFIED single-shot profile with clean hardware state.
+  /// Requires successful initialization and a VERIFIED single-shot profile with
+  /// clean hardware state.
   /// @param request Application channel identity, MUX, and PGA for the sample.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
@@ -269,6 +274,8 @@ public:
   Status startRead(const ChannelRequest& request, uint32_t nowMs,
                    uint32_t deadlineMs, OperationToken& token);
   /// Schedule explicit single-shot-idle shutdown and CONFIG readback without I2C.
+  /// Requires successful initialization. Accepted work immediately moves
+  /// configurationState() to APPLYING until the readback completes or fails.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
   /// @param[out] token Nonzero operation identity on acceptance.
@@ -367,8 +374,9 @@ public:
   /// Probe ADS1115 CONFIG-register reachability without updating health counters.
   /// ADS1115 has no chip-ID register; this is a diagnostic I2C/register
   /// plausibility check, not identity proof.
-  /// Requires a successfully initialized driver. begin() uses the same raw
-  /// CONFIG-register probe internally before the driver is marked initialized.
+  /// Requires a successfully initialized driver. Owner initialization and
+  /// recovery instead use a tracked CONFIG read so their transport activity is
+  /// reflected in health counters; public probe() remains diagnostic-only.
   /// Address NACK maps to DEVICE_NOT_FOUND; distinguishable timeout, bus, data
   /// NACK, and generic I2C failures are preserved.
   /// Transaction count: one CONFIG read.
@@ -500,13 +508,15 @@ public:
   /// continuous-mode register value immediately.
   /// Transaction count: one CONFIG write to start, one conversion-register read,
   /// and one CONFIG readback per readiness poll. A device still reporting OS busy
-  /// after the worst-case conversion interval is re-polled about once per
-  /// millisecond until the deadline, so the readback count is bounded by
-  /// timeoutMs, not by one. Worst-case wall time is bounded by timeoutMs plus
+  /// after the worst-case conversion interval is re-polled at one eighth of the
+  /// worst-case conversion interval (rounded up to milliseconds) until the
+  /// deadline. Worst-case wall time is bounded by timeoutMs plus
   /// bus-silent post-callback reconciliation after an ambiguous start.
-  /// A stalled clock returns Err::CLOCK_STALLED after a finite same-tick guard
-  /// and leaves reconciliation active; drive it with poll() and consume the
-  /// terminal result through activeOperationToken().
+  /// A timeout or stalled clock can leave post-write reconciliation active;
+  /// while operationState() is RECONCILING, drive poll() with advancing time and
+  /// consume the terminal result through activeOperationToken(). The stopped-
+  /// clock guard permits 100000 same-tick polls, suitable for an approximately
+  /// one-millisecond monotonic source but not a substitute for a real deadline.
   /// @param[out] out Signed conversion code.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
@@ -514,8 +524,8 @@ public:
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
 
   /// Blocking read with voltage scaling.
-  /// Requires Config::nowMs plus the verified, clean, single-shot contract of
-  /// readBlocking().
+  /// Requires Config::nowMs plus the verified, clean, single-shot contract and
+  /// possible post-error reconciliation cleanup described by readBlocking().
   /// @param[out] volts Converted input voltage.
   /// @param timeoutMs Maximum wait in milliseconds.
   /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
@@ -528,7 +538,9 @@ public:
   /// Use pollSingleShot() to advance the job with an explicit transaction budget.
   /// A terminal poll result remains pending; call takeResult(result.token, ...)
   /// before starting another operation.
-  /// @return Err::IN_PROGRESS when the job is scheduled.
+  /// @return Err::IN_PROGRESS when scheduled; INVALID_CONFIG when the legacy
+  /// clock hook is absent; otherwise the startRead() validation/precondition
+  /// status. No I2C is performed.
   Status startSingleShot();
 
   /// Start a poll-chunked single-shot conversion job for a mux without I2C.
@@ -543,7 +555,8 @@ public:
   /// starting another operation.
   /// @param nowMs Current monotonic time in milliseconds.
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
-  /// @return Job progress, terminal status, and callbacks consumed.
+  /// @return Job progress, terminal status, and callbacks consumed. An idle
+  /// matching facade returns RESULT_NOT_AVAILABLE without performing I2C.
   PollResult pollSingleShot(uint32_t nowMs, uint8_t maxInstructions = 1);
 
   /// Start a staged cached-config apply job without performing I2C.
@@ -555,7 +568,9 @@ public:
   /// back all three registers before committing the applied profile.
   /// A terminal poll result remains pending; call takeResult(result.token, ...)
   /// before starting another operation.
-  /// @return Err::IN_PROGRESS when the job is scheduled.
+  /// @return Err::IN_PROGRESS when scheduled; INVALID_CONFIG when the legacy
+  /// clock hook is absent; otherwise the startApplyProfile() validation or
+  /// precondition status. No I2C is performed.
   Status startApplyConfigJob();
 
   /// Advance a config-apply job by at most maxInstructions transport callbacks.
@@ -563,7 +578,8 @@ public:
   /// @param nowMs Current monotonic time in milliseconds. It drives the operation
   ///        deadline, the per-callback timeout partition, and health timestamps.
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
-  /// @return Job progress, terminal status, and callbacks consumed.
+  /// @return Job progress, terminal status, and callbacks consumed. An idle
+  /// matching facade returns RESULT_NOT_AVAILABLE without performing I2C.
   PollResult pollApplyConfig(uint32_t nowMs, uint8_t maxInstructions = 1);
 
   /// Cancel the active poll-chunked job without touching hardware.
@@ -646,9 +662,10 @@ public:
   /// Successful raw writes are diagnostic writes: they leave the typed cache
   /// unchanged and mark hardwareConfigDirty() with Err::HARDWARE_CONFIG_DIRTY.
   /// hardwareConfigDirtyError().detail stores the register pointer.
-  /// If the transport reports an error after the raw write is attempted, the
-  /// same transport Status is preserved as the dirty diagnostic because hardware
-  /// may have accepted the write.
+  /// If the transport reports an ambiguous error after the raw write is
+  /// attempted, that Status becomes the dirty diagnostic because hardware may
+  /// have accepted the write. A definite address NACK cannot have changed the
+  /// target and does not dirty previously clean state.
   /// Dirty state clears only after a later full cached-settings rewrite and
   /// successful read-back verification.
   /// @return Status::Ok() on success; Err::INVALID_PARAM for read-only register
@@ -685,7 +702,8 @@ public:
   /// @return Status::Ok() when both threshold registers are written.
   Status setThresholds(int16_t low, int16_t high);
 
-  /// Read signed comparator thresholds and sync the legacy cache.
+  /// Read signed comparator thresholds without changing the desired or cached
+  /// applied profile.
   /// Matching values preserve an existing clean VERIFIED profile. A mismatch
   /// invalidates full-profile trust until a complete apply/recover succeeds.
   /// Transaction count: two threshold reads.
@@ -786,7 +804,7 @@ private:
   Status _probeRaw();
   Status _applyCachedConfigSynchronously();
   Status _writeConfigOnly();
-  void _markHardwareConfigDirty(const Status& st);
+  void _replaceHardwareConfigDirty(const Status& st);
   void _markHardwareConfigDirtyIfClean(const Status& st);
   void _clearHardwareConfigDirty();
   uint16_t _buildConfigRegister() const;
@@ -813,7 +831,7 @@ private:
 
   // === State ===
   static constexpr uint8_t kMaxJobInstructions = 3;
-  static constexpr uint16_t kMaxSameTickPolls = 1024U;
+  static constexpr uint32_t kMaxSameTickPolls = 100000U;
   static constexpr uint8_t kInvalidDirtyAddress = 0x00;
 
   Config _config;
@@ -872,6 +890,7 @@ private:
   bool _conversionStarted = false;
   bool _conversionReady = false;
   uint32_t _conversionStartMs = 0;
+  bool _conversionStartMsValid = false;
   uint8_t _continuousSettlePeriods = 1;
   int16_t _lastRawValue = 0;
 };

@@ -62,7 +62,8 @@ All driver calls require external serialization. No public API is ISR-safe.
 
 ## Installation
 
-The library requires C++17. Pin production dependencies to an approved tag or
+The framework-neutral core requires C++11. Repository examples build as C++17.
+Pin production dependencies to an approved tag or
 full commit instead of tracking a moving branch. A tagged PlatformIO dependency
 is:
 
@@ -178,6 +179,8 @@ Owner initialization and recovery always perform:
 
 ADS1115 has no chip-ID register. This proves address reachability and register
 profile plausibility, not silicon identity. The dynamic CONFIG OS bit is masked.
+The initialization/recovery reachability read is health-tracked; the public
+diagnostic `probe()` intentionally remains raw and leaves health unchanged.
 
 Configuration state is explicit:
 
@@ -214,8 +217,10 @@ Conversion-time wait polls consume zero callbacks.
 
 A single-shot read normally needs three callbacks, because the driver waits the
 full worst-case conversion interval before its first readiness poll. A device
-that still reports `OS` busy at that point is re-polled about once per
-millisecond until the deadline, so size read deadlines for at least one retry.
+that still reports `OS` busy at that point is re-polled at one eighth of the
+worst-case conversion interval, rounded up to milliseconds, until the deadline.
+This is about 18 ms at 8 SPS and 1 ms at the fastest rates, so size read
+deadlines for at least one retry.
 
 Callback timeout caps are partitioned across the requested poll budget so their
 sum cannot exceed `deadline - nowMs` as sampled at the poll boundary. Every cap
@@ -274,7 +279,10 @@ A deadline reached while the conversion may still be active follows the same
 wait-idle rule and publishes `TIMED_OUT`. Cancelled or timed-out reads before
 readiness verification, and profile-changing cancellations/timeouts, retain
 `UNKNOWN`/dirty diagnostics when hardware may have changed; recover before the
-next typed read.
+next typed read. A blocking facade can therefore return `TIMEOUT` or
+`CLOCK_STALLED` while the operation is still `RECONCILING`; continue owner
+`poll()` calls with advancing time and consume `activeOperationToken()` before
+starting another operation.
 
 ## Units And Pure Helpers
 
@@ -300,6 +308,12 @@ and the datasheet conversion-ready threshold pattern. Invalid combinations and
 threshold ordering are rejected before I2C. Comparator thresholds are signed
 raw ADC codes and must be recalculated when PGA changes.
 
+For conversion-ready mode the ADS1115 requires only low-threshold bit 15 clear,
+high-threshold bit 15 set, and an enabled comparator queue. Mode, latch,
+polarity, queue depth, and the remaining threshold bits do not disable that
+signaling. `enableConversionReadyPin()` writes the canonical traditional,
+non-latching, ASSERT_1, `0x0000/0x8000` form.
+
 The production owner-safe read path uses CONFIG OS-bit polling. It does not own
 or sample a GPIO. Legacy ALERT/RDY support remains an advanced diagnostic path,
 where an asserted pin is accepted as an early readiness signal and the timing or
@@ -311,8 +325,11 @@ edge/latch policy, and electrical validation are required before product use.
 ## Health And Fault Ownership
 
 `READY`, `DEGRADED`, and `OFFLINE` summarize consecutive tracked transport
-results. Counters saturate, a success resets consecutive failures, and timestamps
-use the compatibility clock hook when available.
+results. Counters include initialization callbacks, saturate, and reset
+consecutive failures on success. Before initialization completes, those counters
+and timestamps are updated while `DriverState` remains `UNINIT`. Owner-safe
+bindings use a fixed passive offline threshold of five; compatibility `Config`
+can select another nonzero threshold.
 
 Health is passive. `OFFLINE` never blocks a callback selected by the external
 owner and never starts retries or bus recovery. The application remains the only
@@ -324,10 +341,13 @@ Tracked callbacks executed by owner operations timestamp health with that
 operation's current `poll(nowMs, ...)` value; legacy direct calls use the
 optional `Config::nowMs` hook.
 
-Multi-register writes can partially reach hardware. The driver preserves the
-original transport/readback error through `hardwareConfigDirtyError()` and the
-address through `SettingsSnapshot::hardwareConfigDirtyAddress`. Only a complete
-verified replay clears the dirty state.
+Multi-register writes can partially reach hardware. The dirty diagnostic records
+the error for the latest hardware-affecting step of the current operation; a
+first ambiguous write error is retained until a later effect provides more
+specific evidence. Definite address NACKs do not dirty previously clean state.
+The affected address remains available through
+`SettingsSnapshot::hardwareConfigDirtyAddress`. Only a complete verified replay
+clears the dirty state.
 
 ## Migrating From 1.x And Advanced Diagnostics
 
@@ -356,7 +376,7 @@ configuration-trust behavior changed.
 
 | Example | Intent | Limits |
 | --- | --- | --- |
-| `examples/02_owner_safe_poll/` | Production ownership pattern: static mutex, shared-bus timeout enforcement, tokened operations, and one callback per scheduler pass. | Example pins and sample channel meaning must be replaced by the product profile. |
+| `examples/02_owner_safe_poll/` | Production ownership pattern: static mutex, shared-bus timeout enforcement, tokened operations, one callback per scheduler pass, and two bounded owner-driven recovery attempts before failure is latched. | Example pins, recovery policy, and sample channel meaning must be replaced by the product profile. |
 | `examples/01_basic_bringup_cli/` | The diagnostic Arduino bring-up CLI and HIL console. | Uses the compatibility and raw diagnostic surface; it is not a production bus manager. |
 | `examples/esp_idf/basic/` | Native IDF `app_main`, `i2c_master`, fixed-buffer diagnostic CLI, `esp_timer`, and FreeRTOS integration. | Externally serialized demo with coarse `esp_err_t` mapping; it does not include a shared-bus mutex. |
 
@@ -397,7 +417,10 @@ explicitly override `PLATFORMIO_CORE_DIR`; pioarduino `55.03.311` requires
 PlatformIO Core 6.1.19 or newer. The native ESP-IDF CI build is a separate
 compatibility baseline pinned to ESP-IDF `v5.3.5`. CI action revisions, runner
 images, Doxygen, and the host compiler still vary over time; builds are not
-claimed bit-reproducible.
+claimed bit-reproducible. Generated core-header metadata uses deterministic
+`"unknown"` fallbacks; PlatformIO supplies UTC date/time only when
+`SOURCE_DATE_EPOCH` is set, while continuing to report the Git commit and
+working-tree status.
 
 On Windows hosts with Win32 long-path support disabled, keep the wrapper's
 short default or explicitly set `PLATFORMIO_CORE_DIR` to another short,
@@ -425,7 +448,7 @@ idf.py -C examples/esp_idf/basic set-target esp32s2 build
 
 Package validation uses an explicit release allow-list, verifies that the
 tracked generated `Version.h` is present, unpacks the archive, and compiles the
-packed core with host C++17. Repository-only CI, test, tool, and reference files
+packed core with host C++11. Repository-only CI, test, tool, and reference files
 remain outside the consumer archive.
 
 Hardware coverage is not implied by CI. Physical qualification -- calibrated
@@ -437,7 +460,7 @@ is tracked in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md) and executed with
 ## Documentation
 
 - [`CHANGELOG.md`](CHANGELOG.md) - release history and 2.0 migration notes
-- [`docs/README.md`](docs/README.md) - index of every current document
+- `docs/README.md` - index of every current document
 - [`docs/reference/`](docs/reference/) - TI ADS111x Rev. E datasheet and its
   Markdown transcripts, the authority for all hardware behavior claims
 - `doxygen Doxyfile` - warning-enforced generated public API reference

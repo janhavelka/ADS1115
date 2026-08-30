@@ -150,7 +150,9 @@ struct ComparatorProfile {
 /// Bus handles, pins, locking, clock rate, retries, recovery, and scheduling
 /// remain owned by the application. Each callback must enforce transferTimeoutMs.
 /// The context and callback targets must outlive the binding. Calls require
-/// externally serialized task context and are not ISR-safe.
+/// externally serialized task context and are not ISR-safe. Owner-safe bindings
+/// use the fixed passive offline threshold of five tracked consecutive failures;
+/// it is diagnostic only and never gates I2C.
 struct DriverConfig {
   I2cWriteFn i2cWrite = nullptr; ///< Required application-owned write callback
   I2cWriteReadFn i2cWriteRead = nullptr; ///< Required repeated-start read callback
@@ -188,9 +190,11 @@ Status validateDeviceProfile(const DeviceProfile& profile);
 Status validateChannelRequest(const ChannelRequest& request);
 /// Validate a comparator profile without I2C.
 /// OFF requires queue == DISABLE. THRESHOLD requires an enabled queue and
-/// highThreshold > lowThreshold. CONVERSION_READY requires the exact datasheet
-/// pattern the driver programs: TRADITIONAL, NON_LATCHING, ASSERT_1,
-/// lowThreshold == 0, and highThreshold == 0x8000.
+/// highThreshold > lowThreshold. CONVERSION_READY follows the ADS1115 register
+/// rule: lowThreshold bit 15 clear, highThreshold bit 15 set, and queue enabled.
+/// Comparator mode, latch, polarity, queue depth, and remaining threshold bits
+/// do not affect conversion-ready signaling. The convenience writer still uses
+/// the canonical 0x0000/0x8000, traditional, non-latching, ASSERT_1 profile.
 /// @param profile Candidate comparator profile.
 /// @return OK when use, queue, and threshold fields form a valid profile.
 Status validateComparatorProfile(const ComparatorProfile& profile);

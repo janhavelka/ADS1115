@@ -49,10 +49,11 @@ writes, and three readbacks. Dynamic CONFIG OS/status bits are masked. ADS1115
 has no ID register, so success is address/register plausibility, not identity.
 Use a fixed board address inventory and final-board HIL.
 
-Multi-register operations can partially reach hardware. The original transport
-or readback failure remains visible through `hardwareConfigDirtyError()` and
-configuration state becomes `UNKNOWN`. Only successful full replay/readback
-returns it to `VERIFIED`.
+Multi-register operations can partially reach hardware. The error from the
+latest hardware-affecting step remains visible through
+`hardwareConfigDirtyError()`; a first ambiguous write error remains until newer
+effect evidence exists. Configuration state becomes `UNKNOWN`, and only a
+successful full replay/readback returns it to `VERIFIED`.
 
 ## ESP-IDF Error Mapping Limits
 

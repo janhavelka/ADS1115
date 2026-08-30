@@ -22,6 +22,8 @@ constexpr uint32_t TRANSFER_TIMEOUT_MS = 20;
 constexpr uint32_t OWNER_SCHEDULING_MARGIN_MS = 5;
 constexpr uint32_t READ_CALLBACK_COUNT = 3;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 1000;
+constexpr uint32_t RECOVERY_DEADLINE_MS = 200;
+constexpr uint8_t MAX_RECOVERY_ATTEMPTS = 2;
 
 struct SharedBusOwner {
   TwoWire* wire = nullptr;
@@ -34,11 +36,13 @@ ADS1115::ADS1115 adc;
 ADS1115::DeviceProfile profile;
 ADS1115::OperationToken activeToken;
 uint32_t nextSampleAtMs = 0;
+uint8_t recoveryAttempts = 0;
 
 enum class AppState : uint8_t {
   INITIALIZING,
   IDLE,
   READING,
+  RECOVERING,
   FAILED
 };
 
@@ -184,6 +188,27 @@ void fail(const ADS1115::Status& status) {
   appState = AppState::FAILED;
 }
 
+void startRecovery(uint32_t nowMs, const ADS1115::Status& cause) {
+  Serial.printf("ADS1115 operation failed code=%u detail=%ld: %s\n",
+                static_cast<unsigned>(cause.code),
+                static_cast<long>(cause.detail), cause.msg);
+  if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+    fail(ADS1115::Status::Error(ADS1115::Err::OFFLINE,
+                                "Bounded recovery attempts exhausted",
+                                recoveryAttempts));
+    return;
+  }
+
+  recoveryAttempts++;
+  ADS1115::Status status = adc.startRecover(
+      nowMs, nowMs + RECOVERY_DEADLINE_MS, activeToken);
+  if (!status.inProgress()) {
+    fail(status);
+    return;
+  }
+  appState = AppState::RECOVERING;
+}
+
 void startInitialization(uint32_t nowMs) {
   ADS1115::Status status = adc.startInitialize(nowMs, nowMs + 200U, activeToken);
   if (!status.inProgress()) {
@@ -205,7 +230,7 @@ void startSample(uint32_t nowMs) {
   ADS1115::Status status = adc.startRead(
       request, nowMs, nowMs + durationMs, activeToken);
   if (!status.inProgress()) {
-    fail(status);
+    startRecovery(nowMs, status);
     return;
   }
   appState = AppState::READING;
@@ -220,11 +245,13 @@ void consumeTerminalResult(uint32_t nowMs) {
     return;
   }
   if (!result.status.ok()) {
-    fail(result.status);
+    startRecovery(nowMs, result.status);
     return;
   }
 
-  if (result.kind == ADS1115::OperationKind::INITIALIZE) {
+  if (result.kind == ADS1115::OperationKind::INITIALIZE ||
+      result.kind == ADS1115::OperationKind::RECOVER) {
+    recoveryAttempts = 0;
     appState = AppState::IDLE;
     nextSampleAtMs = nowMs;
     return;
@@ -236,6 +263,7 @@ void consumeTerminalResult(uint32_t nowMs) {
                   static_cast<long>(result.sample.microvolts),
                   static_cast<unsigned long>(result.sample.configGeneration),
                   static_cast<unsigned long>(result.sample.sequence));
+    recoveryAttempts = 0;
     appState = AppState::IDLE;
     nextSampleAtMs = nowMs + SAMPLE_INTERVAL_MS;
     return;

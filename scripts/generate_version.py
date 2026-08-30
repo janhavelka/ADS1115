@@ -20,10 +20,11 @@ Standalone commands:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -151,10 +152,18 @@ def _append_build_metadata_defines(namespace: str, project_root: Path) -> None:
     if ENV is None:
         return
 
-    now = datetime.now()
-    build_date = now.strftime("%Y-%m-%d")
-    build_time = now.strftime("%H:%M:%S")
-    build_timestamp = f"{build_date} {build_time}"
+    source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    build_date = "unknown"
+    build_time = "unknown"
+    build_timestamp = "unknown"
+    if source_date_epoch is not None:
+        try:
+            now = datetime.fromtimestamp(int(source_date_epoch), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValueError("SOURCE_DATE_EPOCH must be a representable integer") from exc
+        build_date = now.strftime("%Y-%m-%d")
+        build_time = now.strftime("%H:%M:%S UTC")
+        build_timestamp = f"{build_date} {build_time}"
     git_commit, git_status = _get_git_info(project_root)
     prefix = _macro_prefix(namespace)
 
@@ -192,15 +201,15 @@ def _render_version_header(namespace: str, version: str) -> str:
 #endif
 
 #ifndef {prefix}_BUILD_DATE
-#define {prefix}_BUILD_DATE __DATE__
+#define {prefix}_BUILD_DATE "unknown"
 #endif
 
 #ifndef {prefix}_BUILD_TIME
-#define {prefix}_BUILD_TIME __TIME__
+#define {prefix}_BUILD_TIME "unknown"
 #endif
 
 #ifndef {prefix}_BUILD_TIMESTAMP
-#define {prefix}_BUILD_TIMESTAMP {prefix}_BUILD_DATE " " {prefix}_BUILD_TIME
+#define {prefix}_BUILD_TIMESTAMP "unknown"
 #endif
 
 #ifndef {prefix}_GIT_COMMIT

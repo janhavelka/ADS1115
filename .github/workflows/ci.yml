@@ -148,6 +148,6 @@ jobs:
           mkdir -p "$unpacked"
           tar -xzf "$archive" -C "$unpacked"
           test -f "$unpacked/include/ADS1115/Version.h"
-          g++ -std=c++17 -Wall -Wextra -Werror \
+          g++ -std=c++11 -Wall -Wextra -Werror \
             -I"$unpacked/include" -fsyntax-only "$unpacked/src/ADS1115.cpp"
 

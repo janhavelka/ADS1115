@@ -8,7 +8,7 @@ here.
 | Document | Purpose |
 | --- | --- |
 | [`../README.md`](../README.md) | User guide, owner-safe API contract, examples, and reproducible checks. |
-| [`CODE_AUDIT.md`](CODE_AUDIT.md) | Open driver defects and their proposed fixes. Delete when empty. |
+| [`CODE_AUDIT_REPORT.md`](CODE_AUDIT_REPORT.md) | Disposition and implementation report for the completed 2026-08-30 code audit. |
 | [`OPEN_ITEMS.md`](OPEN_ITEMS.md) | Outstanding hardware and integration evidence only. |
 | [`IDF_PORT.md`](IDF_PORT.md) | ESP-IDF adapter ownership, timeout, and error-mapping contract. |
 | [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for physical validation, including the evidence-retention rule. |

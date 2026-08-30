@@ -8,3 +8,19 @@ targets:
   - esp32s3
 dependencies:
   idf: ">=5.0"
+files:
+  exclude:
+    - ".github/**/*"
+    - "docs/**/*"
+    - "scripts/**/*"
+    - "test/**/*"
+    - "tools/**/*"
+    - ".clang-format"
+    - ".editorconfig"
+    - ".gitignore"
+    - "AGENTS.md"
+    - "CODEOWNERS"
+    - "CONTRIBUTING.md"
+    - "Doxyfile"
+    - "library.json"
+    - "platformio.ini"
