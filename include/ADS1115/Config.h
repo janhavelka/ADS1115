@@ -152,7 +152,8 @@ struct ComparatorProfile {
 /// The context and callback targets must outlive the binding. Calls require
 /// externally serialized task context and are not ISR-safe. Owner-safe bindings
 /// use the fixed passive offline threshold of five tracked consecutive failures;
-/// it is diagnostic only and never gates I2C.
+/// it is diagnostic only and never gates I2C. Owner time comes only from the
+/// nowMs argument supplied to poll(); the owner-safe path does not sample GPIO.
 struct DriverConfig {
   I2cWriteFn i2cWrite = nullptr; ///< Required application-owned write callback
   I2cWriteReadFn i2cWriteRead = nullptr; ///< Required repeated-start read callback

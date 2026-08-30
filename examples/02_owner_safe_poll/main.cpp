@@ -20,7 +20,8 @@ constexpr int I2C_SCL = 9;
 constexpr uint32_t I2C_CLOCK_HZ = 400000;
 constexpr uint32_t TRANSFER_TIMEOUT_MS = 20;
 constexpr uint32_t OWNER_SCHEDULING_MARGIN_MS = 5;
-constexpr uint32_t READ_CALLBACK_COUNT = 3;
+// Start write, initial OS read, one bounded OS retry, and conversion read.
+constexpr uint32_t READ_CALLBACK_COUNT = 4;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 1000;
 constexpr uint32_t RECOVERY_DEADLINE_MS = 200;
 constexpr uint8_t MAX_RECOVERY_ATTEMPTS = 2;

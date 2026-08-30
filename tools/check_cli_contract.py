@@ -28,6 +28,7 @@ MANDATORY_DISPATCH = {
     "verbose": r'cmd(?:\s*==\s*"verbose"|\.startsWith\("verbose "\))',
     "stress": r'cmd\.startsWith\("stress"\)',
     "job": r'cmd(?:\s*==\s*"job"|\.startsWith\("job "\))',
+    "own": r'cmd(?:\s*==\s*"own"|\.startsWith\("own "\))',
 }
 
 
@@ -92,6 +93,14 @@ def main() -> int:
         "DIAGNOSTIC_JOB_TIMEOUT_MS",
         "startDiagnosticSingleShotJob",
         "startDiagnosticApplyJob",
+        "handleOwnerCommand",
+        "makeOwnerDriverConfig",
+        "device.startInitialize",
+        "device.startRead",
+        "device.cancelActiveOperation",
+        "device.startRecover",
+        "device.startShutdown",
+        "device.unbind",
         "kCliCancelInput",
     ):
         if token not in text:
@@ -110,6 +119,13 @@ def main() -> int:
         '"raw", "Continuous latest-raw read"',
         'CLI_CANCEL_BYTE = b"\\x18"',
         "CLI_SYNC_BYTES = CLI_CANCEL_BYTE",
+        '"own unbind"',
+        '"own bind"',
+        '"own init"',
+        '"own read 0"',
+        '"own cancel"',
+        '"own recover"',
+        '"own shutdown"',
     ):
         if token not in hil_runner_text:
             fail(f"classified HIL runner must include token: {token!r}")

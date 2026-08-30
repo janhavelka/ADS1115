@@ -445,6 +445,15 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
                 return "job did not complete"
             if status_token(plain) != "OK":
                 return "completed job status is not OK"
+        elif validator == "owner_poll_pending":
+            if "=== Owner Poll Result ===" not in plain or "Done: NO" not in plain:
+                return "owner poll did not remain pending"
+        elif validator == "owner_poll_zero_callbacks":
+            if "Callbacks used: 0" not in plain:
+                return "owner wait poll consumed a callback"
+        elif validator == "owner_poll_done":
+            if "=== Owner Poll Result ===" not in plain or "Done: YES" not in plain:
+                return "owner poll did not complete"
         elif validator == "job_zero_budget":
             if "Instructions used: 0" not in plain:
                 return "zero-budget poll consumed instructions"
@@ -490,6 +499,8 @@ def classify_output(spec: CommandSpec, text: str, *, timed_out: bool = False) ->
         validation = validate_output(spec, text)
         if validation is not None:
             return RESULT_FAIL, validation
+        if not expected_found(spec, text):
+            return RESULT_FAIL, "expected output token was not found"
         return RESULT_PASS, failure or "expected validation/error path observed"
     if failure is not None:
         return RESULT_FAIL, failure
@@ -829,7 +840,7 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
         CommandSpec("TGT-{address}-REG-1", "Registers", "reg 1", "Read config register", ("Reg 0x01",), timeout_s=5.0),
         CommandSpec("TGT-{address}-REG-2", "Registers", "reg 2", "Read low threshold register", ("Reg 0x02",), timeout_s=5.0),
         CommandSpec("TGT-{address}-REG-3", "Registers", "reg 3", "Read high threshold register", ("Reg 0x03",), timeout_s=5.0),
-        CommandSpec("TGT-{address}-CFG-WRITE", "Registers", "config write 0x8583", "Write full config register", ("Status: OK",), ("status_ok",), timeout_s=5.0),
+        CommandSpec("TGT-{address}-CFG-WRITE", "Registers", "config write 0x0583", "Write full config without starting a conversion", ("Status: OK",), ("status_ok",), timeout_s=5.0),
         CommandSpec("TGT-{address}-CFG-READBACK", "Registers", "reg 1", "Read config after full write", ("Reg 0x01",), timeout_s=5.0),
         CommandSpec("TGT-{address}-DIRTY-WREG", "Dirty State", "wreg 2 0x8000", "Raw threshold write marks dirty", ("Status: OK",), ("status_ok",), timeout_s=5.0),
         CommandSpec("TGT-{address}-DIRTY-SETTINGS", "Dirty State", "settings", "Dirty state visible", ("Hardware/cache dirty:",), ("dirty_yes",), timeout_s=5.0),
@@ -851,6 +862,35 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
         CommandSpec("TGT-{address}-JOB-APPLY-POLL255-2", "Staged Jobs", "job poll 255", "Second clamped poll completes apply", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
         CommandSpec("TGT-{address}-STRESS-READ", "Stress", "stress 2", "Short scalar stress", ("=== Stress Summary ===",), ("stress_zero_errors", "rate_report"), timeout_s=25.0),
         CommandSpec("TGT-{address}-STRESS-MIX", "Stress", "stress_mix 3", "Short mixed stress", ("=== stress_mix summary ===",), ("stress_mix_zero_fail", "rate_report"), timeout_s=25.0),
+        CommandSpec("TGT-{address}-OWN-UNBIND-1", "Owner API", "own unbind", "Exercise bus-silent owner unbind", ("Bound: NO",), ("status_ok",)),
+        CommandSpec("TGT-{address}-OWN-BIND-1", "Owner API", "own bind", "Exercise bus-silent owner bind", ("Bound: YES",), ("status_ok",)),
+        CommandSpec("TGT-{address}-OWN-INIT", "Owner API", "own init", "Schedule owner initialization", ("Status: IN_PROGRESS",), ("status_in_progress",)),
+        CommandSpec("TGT-{address}-OWN-INIT-POLL-1", "Owner API", "own poll 3", "Advance owner initialization callbacks 1-3", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-INIT-POLL-2", "Owner API", "own poll 3", "Advance owner initialization callbacks 4-6", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-INIT-POLL-3", "Owner API", "own poll 3", "Complete and acknowledge owner initialization", ("=== Owner Poll Result ===", "Status: OK"), ("status_ok", "owner_poll_done")),
+        CommandSpec("TGT-{address}-OWN-READ", "Owner API", "own read 0", "Schedule owner-safe channel read", ("Status: IN_PROGRESS",), ("status_in_progress",)),
+        CommandSpec("TGT-{address}-OWN-READ-WRITE", "Owner API", "own poll 1", "Issue the owner-authorized start write", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-READ-ARM", "Owner API", "own poll 1", "Arm the post-callback conversion wait", ("=== Owner Poll Result ===",), ("owner_poll_pending", "owner_poll_zero_callbacks"), post_delay_s=0.03),
+        CommandSpec("TGT-{address}-OWN-READ-DONE", "Owner API", "own poll 3", "Verify and publish the owner sample", ("=== Owner Poll Result ===", "Status: OK", "Raw:"), ("status_ok", "owner_poll_done", "raw_sample")),
+        CommandSpec("TGT-{address}-OWN-CANCEL-READ", "Owner API", "own read 1", "Schedule a read for cancellation", ("Status: IN_PROGRESS",), ("status_in_progress",)),
+        CommandSpec("TGT-{address}-OWN-CANCEL-WRITE", "Owner API", "own poll 1", "Confirm the cancellable start write", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-CANCEL", "Owner API", "own cancel", "Enter owner wait-idle reconciliation", ("=== Owner Cancel ===",), ("job_active",), expected_failure=True),
+        CommandSpec("TGT-{address}-OWN-CANCEL-ARM", "Owner API", "own poll 1", "Arm cancellation reconciliation after callback return", ("=== Owner Poll Result ===",), ("owner_poll_pending", "owner_poll_zero_callbacks"), expected_failure=True, post_delay_s=0.03),
+        CommandSpec("TGT-{address}-OWN-CANCEL-DONE", "Owner API", "own poll 1", "Complete and acknowledge cancellation reconciliation", ("=== Owner Poll Result ===", "Status: CANCELLED"), ("status_cancelled", "owner_poll_done"), expected_failure=True),
+        CommandSpec("TGT-{address}-OWN-RECOVER", "Owner API", "own recover", "Schedule owner verified recovery", ("Status: IN_PROGRESS",), ("status_in_progress",)),
+        CommandSpec("TGT-{address}-OWN-RECOVER-POLL-1", "Owner API", "own poll 3", "Advance owner recovery callbacks 1-3", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-RECOVER-POLL-2", "Owner API", "own poll 3", "Advance owner recovery callbacks 4-6", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-RECOVER-POLL-3", "Owner API", "own poll 3", "Complete and acknowledge owner recovery", ("=== Owner Poll Result ===", "Status: OK"), ("status_ok", "owner_poll_done")),
+        CommandSpec("TGT-{address}-OWN-SHUTDOWN", "Owner API", "own shutdown", "Schedule owner verified shutdown", ("Status: IN_PROGRESS",), ("status_in_progress",)),
+        CommandSpec("TGT-{address}-OWN-SHUTDOWN-DONE", "Owner API", "own poll 3", "Complete and acknowledge owner shutdown", ("=== Owner Poll Result ===", "Status: OK"), ("status_ok", "owner_poll_done")),
+        CommandSpec("TGT-{address}-OWN-UNBIND-2", "Owner API", "own unbind", "Repeat bus-silent owner unbind", ("Bound: NO",), ("status_ok",)),
+        CommandSpec("TGT-{address}-OWN-BIND-2", "Owner API", "own bind", "Restore the owner binding", ("Bound: YES",), ("status_ok",)),
+        CommandSpec("TGT-{address}-OWN-RESTORE-INIT", "Owner API", "own init", "Schedule final owner initialization", ("Status: IN_PROGRESS",), ("status_in_progress",)),
+        CommandSpec("TGT-{address}-OWN-RESTORE-POLL-1", "Owner API", "own poll 3", "Advance final initialization callbacks 1-3", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-RESTORE-POLL-2", "Owner API", "own poll 3", "Advance final initialization callbacks 4-6", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
+        CommandSpec("TGT-{address}-OWN-RESTORE-POLL-3", "Owner API", "own poll 3", "Complete final owner initialization", ("=== Owner Poll Result ===", "Status: OK"), ("status_ok", "owner_poll_done")),
+        CommandSpec("TGT-{address}-OWN-RETURN-COMPAT", "Owner API", "addr {address}", "Restore the clocked diagnostic binding after owner exercise", ("Status: OK",), ("status_ok", "driver_ready"), timeout_s=8.0),
+        CommandSpec("TGT-{address}-OWN-COMPAT-CLOCK", "Owner API", "settings", "Prove the restored diagnostic binding has a clock", ("Timebase available: YES",), ("driver_ready",)),
         CommandSpec("TGT-{address}-INV-READ0", "Invalid Input", "read 0", "Reject zero read count", ("Invalid count",), ("invalid_or_usage",), expected_failure=True),
         CommandSpec("TGT-{address}-INV-CH-NEG", "Invalid Input", "ch -1", "Reject negative channel", ("Invalid channel",), ("invalid_or_usage",), expected_failure=True),
         CommandSpec("TGT-{address}-INV-CH4", "Invalid Input", "ch 4", "Reject channel above range", ("Invalid channel",), ("invalid_or_usage",), expected_failure=True),
@@ -990,6 +1030,11 @@ def parser_self_test() -> None:
         (CommandSpec("T", "Cleanup", "job poll 0", "", ("=== Job Poll Result ===",), ("job_cleanup_armed_or_inactive",), expected_failure=True), "=== Job Poll Result ===\n  Status: CANCELLED\n  Instructions used: 0\n  Done: NO\n  State: WAIT_IDLE_AFTER_ABANDON\n> ", RESULT_PASS),
         (CommandSpec("T", "Cleanup", "job poll 0", "", ("=== Job Poll Result ===",), ("job_reconciliation_armed",), expected_failure=True), "=== Job Poll Result ===\n  Status: CANCELLED\n  Instructions used: 0\n  Done: NO\n  State: WAIT_IDLE_AFTER_ABANDON\n> ", RESULT_PASS),
         (CommandSpec("T", "Cleanup", "job poll 3", "", ("=== Job Poll Result ===",), ("job_cleanup_terminal",), expected_failure=True), "=== Job Poll Result ===\n  Status: I2C_TIMEOUT\n  Instructions used: 0\n  Done: YES\n  State: FAILED\n> ", RESULT_PASS),
+        (CommandSpec("T", "Owner", "own poll 1", "", ("=== Owner Poll Result ===",), ("owner_poll_pending", "owner_poll_zero_callbacks")), "=== Owner Poll Result ===\n  Status: IN_PROGRESS\n  Callbacks used: 0\n  Done: NO\n> ", RESULT_PASS),
+        (CommandSpec("T", "Owner", "own poll 1", "", ("=== Owner Poll Result ===",), ("owner_poll_pending", "owner_poll_zero_callbacks")), "=== Owner Poll Result ===\n  Status: OK\n  Callbacks used: 0\n  Done: YES\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Owner", "own cancel", "", ("=== Owner Cancel ===",), ("job_active",), expected_failure=True), "=== Owner Cancel ===\n  Active: YES\n  Job state: WAIT_IDLE_AFTER_ABANDON\n> ", RESULT_PASS),
+        (CommandSpec("T", "Owner", "own cancel", "", ("=== Owner Cancel ===",), ("job_active",), expected_failure=True), "=== Owner Cancel ===\n  Status: OK\n  Active: NO\n> ", RESULT_FAIL),
+        (CommandSpec("T", "Invalid", "ch 4", "", ("Invalid channel",), ("invalid_or_usage",), expected_failure=True), "Usage: ch [0..3]\n> ", RESULT_FAIL),
         (CommandSpec("T", "Mode", "start", "", ("Status:",), ("status_in_progress",)), "Status: IN_PROGRESS (code=9, detail=0)\nMessage: Conversion started\n> ", RESULT_PASS),
         (CommandSpec("T", "Job", "job poll", "", ("No active pollable job",), ("no_active_job",)), "No active pollable job\n=== Job Status ===\n  Active: NO\n> ", RESULT_PASS),
         (CommandSpec("T", "Selftest", "selftest", "", ("Selftest result:",), ("selftest",)), "Selftest result: pass=18 fail=0 skip=0\n> ", RESULT_PASS),

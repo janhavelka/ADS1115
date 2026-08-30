@@ -273,9 +273,14 @@ public:
   /// @return IN_PROGRESS when scheduled, or a validation/precondition status.
   Status startRead(const ChannelRequest& request, uint32_t nowMs,
                    uint32_t deadlineMs, OperationToken& token);
-  /// Schedule explicit single-shot-idle shutdown and CONFIG readback without I2C.
+  /// Schedule explicit single-shot-idle shutdown and CONFIG/OS readback without I2C.
   /// Requires successful initialization. Accepted work immediately moves
   /// configurationState() to APPLYING until the readback completes or fails.
+  /// A continuous-to-single-shot transition waits one worst-case conversion
+  /// interval from the first post-write poll before checking OS, so success
+  /// proves the device is no longer converting. The deadline must cover that
+  /// interval, all planned callbacks, readiness retries, and owner scheduling.
+  /// Unknown or dirty configuration uses the conservative 8-SPS idle bound.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
   /// @param[out] token Nonzero operation identity on acceptance.
@@ -333,8 +338,15 @@ public:
   void end();
 
   /// Compatibility synchronous shutdown facade while keeping the binding.
-  /// Transaction count: one CONFIG write and one masked CONFIG readback.
-  /// @return Final shutdown write/readback status.
+  /// Config::nowMs is required when cached state is continuous, unknown, or
+  /// dirty. A verified, clean single-shot profile retains the bounded clockless
+  /// write/readback path; an unexpected OS-busy result then returns
+  /// INVALID_CONFIG and requires explicit owner poll() reconciliation.
+  /// Otherwise performs one CONFIG write and one or more bounded readiness
+  /// readbacks; Config::cooperativeYield is called between timed polls.
+  /// @return Final shutdown status or a bounded config/timeout/stalled-clock
+  /// status. Post-write failure can require owner poll() reconciliation before
+  /// another operation is accepted.
   Status shutdown();
 
   /// Check if begin() completed successfully and end() has not been called.
@@ -545,7 +557,10 @@ public:
 
   /// Start a poll-chunked single-shot conversion job for a mux without I2C.
   /// @param mux Input mux to use for this conversion.
-  /// @return Err::IN_PROGRESS when the job is scheduled.
+  /// @return Err::IN_PROGRESS when scheduled; INVALID_PARAM for an invalid mux,
+  /// INVALID_CONFIG when the legacy clock hook is absent, or the startRead()
+  /// initialization, busy, mode, and configuration-trust precondition status.
+  /// No I2C is performed. Consume the terminal token through takeResult().
   Status startSingleShot(Mux mux);
 
   /// Advance a single-shot job by at most maxInstructions transport callbacks.
@@ -821,13 +836,15 @@ private:
                          OperationToken& token);
   bool _deadlineReached(uint32_t nowMs) const;
   bool _singleShotMayBeActive() const;
+  DataRate _operationGuardDataRate() const;
   Status _activeHardwareBusyStatus() const;
   void _resetOperationScratch();
   void _loadProfileIntoConfig(const DeviceProfile& profile);
   DeviceProfile _profileFromConfig() const;
   uint16_t _buildConfigRegisterFor(const DeviceProfile& profile, Mux mux,
                                    Gain gain) const;
-  Status _verifyJobReadback(uint8_t reg, uint16_t expected, const char* message);
+  Status _verifyJobReadback(uint8_t reg, uint16_t expected, const char* message,
+                            uint16_t* observedOut = nullptr);
 
   // === State ===
   static constexpr uint8_t kMaxJobInstructions = 3;
@@ -860,6 +877,9 @@ private:
   bool _jobStartWriteAttempted = false;
   bool _jobAnyWriteConfirmed = false;
   uint32_t _jobNextReadyPollMs = 0;
+  uint32_t _jobWaitDurationMs = 0;
+  bool _jobWaitStartPending = false;
+  bool _shutdownWaitForIdle = false;
   Status _abandonStatus = Status::Ok();
   OperationState _abandonTerminalState = OperationState::FAILED;
   bool _abandonWaitStartPending = false;

@@ -213,7 +213,7 @@ Conversion-time wait polls consume zero callbacks.
 | Apply profile | 3 writes, 3 readbacks | 6 |
 | Recover | tracked probe, 3 writes, 3 readbacks | 7 |
 | Single-shot read | start CONFIG write, masked CONFIG verification, conversion read | 2 + readiness polls |
-| Shutdown | single-shot CONFIG write and readback | 2 |
+| Shutdown | single-shot CONFIG write, idle wait, CONFIG/OS verification | 1 + readiness polls |
 
 A single-shot read normally needs three callbacks, because the driver waits the
 full worst-case conversion interval before its first readiness poll. A device
@@ -221,6 +221,13 @@ that still reports `OS` busy at that point is re-polled at one eighth of the
 worst-case conversion interval, rounded up to milliseconds, until the deadline.
 This is about 18 ms at 8 SPS and 1 ms at the fastest rates, so size read
 deadlines for at least one retry.
+
+The conversion interval is armed on the first owner poll after the blocking
+start callback returns. Shutdown uses the same post-callback boundary when
+leaving continuous mode, waits a full worst-case conversion interval, and only
+commits success after CONFIG matches and OS reports idle. If configuration trust
+is unknown or dirty, shutdown conservatively uses the slowest 8-SPS interval
+instead of relying on cached mode or rate fields.
 
 Callback timeout caps are partitioned across the requested poll budget so their
 sum cannot exceed `deadline - nowMs` as sampled at the poll boundary. Every cap
@@ -357,7 +364,7 @@ but its behavior has intentionally hardened in 2.0:
 | Surface | 2.0 contract |
 | --- | --- |
 | `Config` / `begin()` | Synchronous compatibility facade; initialization now always performs full readback. |
-| `recover()` / `shutdown()` | Bounded synchronous facades over the same engine; can perform 7 / 2 callbacks. |
+| `recover()` / `shutdown()` | Bounded synchronous facades over the same engine; recovery uses 7 callbacks, while shutdown uses one write plus bounded CONFIG/OS readiness polls. Shutdown needs `Config::nowMs` for continuous or untrusted state; a clean verified single-shot profile retains a clockless write/readback path. |
 | `end()` | Bus-silent alias for `unbind()`; call `shutdown()` explicitly when hardware idle is required. |
 | Direct setters | Advanced diagnostics; a successful direct mutation makes profile state `UNKNOWN` until verified replay. |
 | Raw register writes | Advanced diagnostics; always mark cache/hardware state dirty or preserve an ambiguous write failure. |
@@ -377,8 +384,12 @@ configuration-trust behavior changed.
 | Example | Intent | Limits |
 | --- | --- | --- |
 | `examples/02_owner_safe_poll/` | Production ownership pattern: static mutex, shared-bus timeout enforcement, tokened operations, one callback per scheduler pass, and two bounded owner-driven recovery attempts before failure is latched. | Example pins, recovery policy, and sample channel meaning must be replaced by the product profile. |
-| `examples/01_basic_bringup_cli/` | The diagnostic Arduino bring-up CLI and HIL console. | Uses the compatibility and raw diagnostic surface; it is not a production bus manager. |
+| `examples/01_basic_bringup_cli/` | The diagnostic Arduino bring-up CLI and HIL console, including `own ...` commands for explicit owner lifecycle exercise. | Includes no shared-bus mutex and is not a production bus manager. |
 | `examples/esp_idf/basic/` | Native IDF `app_main`, `i2c_master`, fixed-buffer diagnostic CLI, `esp_timer`, and FreeRTOS integration. | Externally serialized demo with coarse `esp_err_t` mapping; it does not include a shared-bus mutex. |
+
+The Arduino diagnostic CLI can exercise owner lifecycle calls, but it is not a production bus manager.
+It deliberately does not supply the production mutex or scheduling policy shown by
+`examples/02_owner_safe_poll/`.
 
 `examples/common/` is example-only glue and is not part of the library.
 

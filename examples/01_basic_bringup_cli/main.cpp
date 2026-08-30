@@ -29,6 +29,7 @@ static constexpr uint8_t DEFAULT_ADS1115_ADDRESS = 0x48;
 uint8_t activeI2cAddress = DEFAULT_ADS1115_ADDRESS;
 uint8_t requestedI2cAddress = DEFAULT_ADS1115_ADDRESS;
 ADS1115::Status lastAddressSelectionStatus = ADS1115::Status::Ok();
+ADS1115::DeviceProfile ownerProfile;
 static constexpr uint32_t STRESS_PROGRESS_UPDATES = 10U;
 static constexpr uint32_t DIAGNOSTIC_JOB_TIMEOUT_MS = 5000U;
 
@@ -281,6 +282,15 @@ void printHelp() {
   cli::printHelpItem("job apply", "Start poll-chunked config apply job");
   cli::printHelpItem("job poll [0..255]", "Poll active job with bounded instruction budget");
   cli::printHelpItem("job cancel", "Cancel active poll-chunked job");
+  cli::printHelpItem("own", "Show owner-safe lifecycle state");
+  cli::printHelpItem("own bind", "Bus-silent bind using the remembered profile");
+  cli::printHelpItem("own init", "Schedule owner-safe initialization");
+  cli::printHelpItem("own read <0..3>", "Schedule an owner-safe single-ended read");
+  cli::printHelpItem("own poll [0..255]", "Advance owner work with a callback budget");
+  cli::printHelpItem("own cancel", "Cancel/reconcile the active owner operation");
+  cli::printHelpItem("own recover", "Schedule owner-safe verified recovery");
+  cli::printHelpItem("own shutdown", "Schedule owner-safe verified shutdown");
+  cli::printHelpItem("own unbind", "Bus-silent unbind after terminal cleanup");
 
   cli::printHelpSection("Configuration");
   cli::printHelpItem("ch [0|1|2|3]", "Set single-ended channel (AINx vs GND)");
@@ -564,6 +574,24 @@ ADS1115::Config makeDriverConfig(uint8_t address) {
   return cfg;
 }
 
+ADS1115::DriverConfig makeOwnerDriverConfig() {
+  ADS1115::DriverConfig cfg;
+  cfg.i2cWrite = transport::wireWrite;
+  cfg.i2cWriteRead = transport::wireWriteRead;
+  cfg.i2cUser = &Wire;
+  cfg.transferTimeoutMs = board::I2C_TIMEOUT_MS;
+  return cfg;
+}
+
+void rememberVerifiedOwnerProfile() {
+  ADS1115::AppliedProfileSnapshot applied;
+  if (device.getAppliedProfile(applied).ok() &&
+      applied.state == ADS1115::ConfigurationState::VERIFIED) {
+    ownerProfile = applied.profile;
+  }
+  ownerProfile.i2cAddress = activeI2cAddress;
+}
+
 ADS1115::Status probeAddressRaw(uint8_t address) {
   const uint8_t tx[1] = {ADS1115::cmd::REG_CONFIG};
   uint8_t rx[2] = {0, 0};
@@ -605,6 +633,7 @@ ADS1115::Status beginDriverAtAddress(uint8_t address) {
   if (st.ok()) {
     activeI2cAddress = address;
     requestedI2cAddress = address;
+    rememberVerifiedOwnerProfile();
   }
   return st;
 }
@@ -935,6 +964,122 @@ void handleJobCommand(const String& cmd) {
   } else {
     LOGW("Usage: job [single|apply|poll [0..255]|cancel]");
   }
+}
+
+void printOwnerState() {
+  Serial.println("=== Owner API State ===");
+  Serial.printf("  Bound: %s\n", device.isBound() ? "YES" : "NO");
+  Serial.printf("  Initialized: %s\n", device.isInitialized() ? "YES" : "NO");
+  Serial.printf("  Active: %s\n", device.jobActive() ? "YES" : "NO");
+  Serial.printf("  Terminal pending: %s\n",
+                device.terminalResultAvailable() ? "YES" : "NO");
+  Serial.printf("  Job state: %s\n", jobStateToStr(device.jobState()));
+  Serial.printf("  Configuration state: %u\n",
+                static_cast<unsigned>(device.configurationState()));
+}
+
+void printAndAcknowledgeOwnerPoll(const ADS1115::PollResult& progress) {
+  Serial.println("=== Owner Poll Result ===");
+  printStatus(progress.status);
+  Serial.printf("  Callbacks used: %u\n",
+                static_cast<unsigned>(progress.instructionsUsed));
+  Serial.printf("  Done: %s\n", progress.done ? "YES" : "NO");
+  Serial.printf("  Job state: %s\n", jobStateToStr(progress.state));
+  if (!progress.done || !progress.token.valid()) {
+    return;
+  }
+
+  ADS1115::OperationResult terminal;
+  const ADS1115::Status takeStatus = device.takeResult(progress.token, terminal);
+  Serial.println("  Terminal result:");
+  printStatus(takeStatus.ok() ? terminal.status : takeStatus);
+  if (takeStatus.ok() && terminal.sampleValid) {
+    Serial.printf("  Raw: %d\n", static_cast<int>(terminal.sample.rawCode));
+    Serial.printf("  Channel ID: %u\n",
+                  static_cast<unsigned>(terminal.sample.channelId));
+  }
+  if (takeStatus.ok() && terminal.status.ok() && device.isInitialized()) {
+    rememberVerifiedOwnerProfile();
+  }
+}
+
+void handleOwnerCommand(const String& cmd) {
+  if (cmd == "own") {
+    printOwnerState();
+    return;
+  }
+
+  if (cmd == "own bind") {
+    if (device.isBound()) {
+      rememberVerifiedOwnerProfile();
+    }
+    ownerProfile.i2cAddress = activeI2cAddress;
+    printStatus(device.bind(makeOwnerDriverConfig(), ownerProfile));
+  } else if (cmd == "own init") {
+    const uint32_t now = millis();
+    ADS1115::OperationToken token;
+    printStatus(device.startInitialize(
+        now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token));
+  } else if (cmd.startsWith("own read ")) {
+    int32_t channel = -1;
+    if (!parseI32(cmd.substring(9), channel) || channel < 0 || channel > 3) {
+      LOGW("Usage: own read <0..3>");
+      return;
+    }
+    ADS1115::ChannelRequest request;
+    request.channelId = static_cast<uint16_t>(channel);
+    request.mux = channelToMux(static_cast<int>(channel));
+    request.gain = ownerProfile.defaultGain;
+    const uint32_t now = millis();
+    ADS1115::OperationToken token;
+    printStatus(device.startRead(
+        request, now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token));
+  } else if (cmd == "own poll" || cmd.startsWith("own poll ")) {
+    uint32_t budget = 1;
+    if (cmd.length() > 8 &&
+        (!parseU32(cmd.substring(9), budget) || budget > 255U)) {
+      LOGW("Usage: own poll [0..255]");
+      return;
+    }
+    printAndAcknowledgeOwnerPoll(
+        device.poll(millis(), static_cast<uint8_t>(budget)));
+  } else if (cmd == "own cancel") {
+    Serial.println("=== Owner Cancel ===");
+    const ADS1115::OperationToken token = device.activeOperationToken();
+    const ADS1115::CancelDisposition disposition =
+        device.cancelActiveOperation();
+    Serial.printf("  Disposition: %u\n", static_cast<unsigned>(disposition));
+    if (!device.jobActive() && token.valid() &&
+        device.terminalResultAvailable()) {
+      ADS1115::OperationResult terminal;
+      const ADS1115::Status takeStatus = device.takeResult(token, terminal);
+      printStatus(takeStatus.ok() ? terminal.status : takeStatus);
+    }
+  } else if (cmd == "own recover") {
+    const uint32_t now = millis();
+    ADS1115::OperationToken token;
+    printStatus(device.startRecover(
+        now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token));
+  } else if (cmd == "own shutdown") {
+    const uint32_t now = millis();
+    ADS1115::OperationToken token;
+    printStatus(device.startShutdown(
+        now, now + DIAGNOSTIC_JOB_TIMEOUT_MS, token));
+  } else if (cmd == "own unbind") {
+    if (device.jobActive() || device.terminalResultAvailable()) {
+      printStatus(ADS1115::Status::Error(
+          ADS1115::Err::BUSY, "Finish owner operation before unbind"));
+    } else {
+      if (device.isBound()) {
+        rememberVerifiedOwnerProfile();
+      }
+      device.unbind();
+      printStatus(ADS1115::Status::Ok());
+    }
+  } else {
+    LOGW("Usage: own [bind|init|read <0..3>|poll [0..255]|cancel|recover|shutdown|unbind]");
+  }
+  printOwnerState();
 }
 
 void runStressMix(int count) {
@@ -1728,6 +1873,8 @@ void processCommand(const String& cmdLine) {
     printTimingInfo();
   } else if (cmd == "job" || cmd.startsWith("job ")) {
     handleJobCommand(cmd);
+  } else if (cmd == "own" || cmd.startsWith("own ")) {
+    handleOwnerCommand(cmd);
   } else if (cmd == "comp") {
     printComparatorSettings();
   } else if (cmd.startsWith("comp mode ")) {
@@ -1952,6 +2099,7 @@ void setup() {
     printStatus(st);
     return;
   }
+  rememberVerifiedOwnerProfile();
 
   LOGI("Device initialized successfully");
   printActiveAddress();

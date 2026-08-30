@@ -21,7 +21,7 @@ evidence system and record its stable reference in the dated result.
 | Gate | Required coverage | Evidence needed |
 | --- | --- | --- |
 | Runtime identity | Clean firmware matching the intended commit, pioarduino `55.03.311`, Arduino-ESP32 `3.3.11`, ESP-IDF `v5.5.5`, and build timestamp | Build and startup identity record |
-| Arduino diagnostic HIL (remaining) | ESP32-S3 targeted and exhaustive plans; populated and expected-absent addresses | Dated result and external evidence reference |
+| Arduino diagnostic HIL (remaining) | ESP32-S3 targeted and exhaustive plans, including `own bind/init/read/poll/cancel/recover/shutdown/unbind`; populated and expected-absent addresses | Dated result and external evidence reference |
 | Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
 | Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
 | Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |

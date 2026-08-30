@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded `own bind/init/read/poll/cancel/recover/shutdown/unbind`
+  commands to the diagnostic Arduino CLI and targeted HIL coverage of their
+  intermediate, terminal, cancellation, and binding states. The plan restores
+  and verifies the clocked compatibility binding before later diagnostic/soak
+  commands.
+
 ### Fixed
 
 - A failed or mismatched CONFIG readiness poll no longer latches
@@ -63,6 +71,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the `UINT32_MAX` conversion-timestamp sentinel with explicit validity,
   preserving real timestamps and wraparound at that value.
 - Raw-write address NACK no longer marks clean hardware state dirty.
+- Single-shot and continuous-settle timing guards now begin after potentially
+  blocking transport callbacks have returned, including owner-polled starts.
+- Shutdown now proves OS idle before publishing success, preserves its idle
+  guard across zero-budget polls and read errors, retries persistent busy
+  indications within the deadline, and reconciles cancellation, timeout, and
+  stopped-clock exits bus-silently. Unknown or dirty pre-shutdown hardware uses
+  the conservative 8-SPS guard instead of trusting the cached data rate.
+- The native fake now has opt-in CONFIG/OS conversion lifecycle behavior,
+  post-callback time advancement, and a reset helper that clears every sticky
+  status and read mask used by fault-injection tests.
+- The owner example budgets four callbacks for single-shot reads, allowing the
+  initial OS check plus one bounded retry, and the HIL raw CONFIG exercise uses
+  the non-converting `0x0583` value.
 
 ### Changed
 
@@ -90,6 +111,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the full plan now restores a complete nominal profile after benchmarks.
 - The owner-safe example now demonstrates two bounded application-owned
   recovery attempts before latching failure.
+- Synchronous shutdown requires `Config::nowMs` only for continuous or
+  untrusted hardware state. A verified clean single-shot profile keeps its
+  clockless write/readback path; if that path observes busy hardware or a
+  post-write verification failure, it returns boundedly with owner-driven
+  reconciliation still active.
 
 ### Removed
 
