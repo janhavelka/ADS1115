@@ -1049,6 +1049,26 @@ void skipSelftest(SelftestStats& stats, const char* name, const char* note) {
   std::printf("  [SKIP] %s - %s\n", name, note);
 }
 
+// Poll a started single-shot conversion to readiness within a bounded window.
+// Returns the last readiness status; ready reports whether data can be read.
+ADS1115::Status waitForConversionReady(bool& ready) {
+  ready = false;
+  const uint32_t waitStart = nowMs();
+  ADS1115::Status pollStatus = ADS1115::Status::Ok();
+  while ((nowMs() - waitStart) < 200U) {
+    pollStatus = device.readConversionReady(ready);
+    if (!pollStatus.ok() || ready) {
+      break;
+    }
+    pollStatus = device.service(nowMs());
+    if (!pollStatus.ok()) {
+      break;
+    }
+    sleepMs(1U);
+  }
+  return pollStatus;
+}
+
 void runSelfTest() {
   SelftestStats stats;
   std::printf("=== ADS1115 selftest (safe commands) ===\n");
@@ -1094,20 +1114,8 @@ void runSelfTest() {
   const bool started = st.ok() || st.inProgress();
   reportSelftest(stats, "startConversion", started, started ? "" : errToStr(st.code));
   if (started) {
-    const uint32_t waitStart = nowMs();
     bool ready = false;
-    ADS1115::Status pollStatus = ADS1115::Status::Ok();
-    while ((nowMs() - waitStart) < 200U) {
-      pollStatus = device.readConversionReady(ready);
-      if (!pollStatus.ok() || ready) {
-        break;
-      }
-      pollStatus = device.service(nowMs());
-      if (!pollStatus.ok()) {
-        break;
-      }
-      sleepMs(1U);
-    }
+    ADS1115::Status pollStatus = waitForConversionReady(ready);
     reportSelftest(stats, "poll after start", pollStatus.ok() && ready,
                    pollStatus.ok() ? "" : errToStr(pollStatus.code));
     int16_t raw = 0;
@@ -1115,9 +1123,29 @@ void runSelfTest() {
     reportSelftest(stats, "readRaw(after start)", pollStatus.ok(),
                    pollStatus.ok() ? "" : errToStr(pollStatus.code));
   }
+  // readRaw() consumed the single-shot readiness above, so readVoltage() needs
+  // its own conversion. Without this the check always failed CONVERSION_NOT_READY.
   float volts = 0.0f;
-  st = device.readVoltage(volts);
-  reportSelftest(stats, "readVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
+  st = device.startConversion();
+  const bool voltageStarted = st.ok() || st.inProgress();
+  reportSelftest(stats, "startConversion(voltage)", voltageStarted,
+                 voltageStarted ? "" : errToStr(st.code));
+  if (voltageStarted) {
+    bool voltageReady = false;
+    ADS1115::Status readyStatus = waitForConversionReady(voltageReady);
+    reportSelftest(stats, "poll before readVoltage",
+                   readyStatus.ok() && voltageReady,
+                   readyStatus.ok() ? "" : errToStr(readyStatus.code));
+    if (readyStatus.ok() && voltageReady) {
+      st = device.readVoltage(volts);
+      reportSelftest(stats, "readVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
+    } else {
+      skipSelftest(stats, "readVoltage", "conversion not ready");
+    }
+  } else {
+    skipSelftest(stats, "poll before readVoltage", "conversion not started");
+    skipSelftest(stats, "readVoltage", "conversion not started");
+  }
   st = device.readBlockingVoltage(volts);
   reportSelftest(stats, "readBlockingVoltage", st.ok(), st.ok() ? "" : errToStr(st.code));
   st = device.setComparatorMode(ADS1115::ComparatorMode::TRADITIONAL);

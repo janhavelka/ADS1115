@@ -9,9 +9,11 @@
 | Analog input absolute range | GND - 0.3 V to VDD + 0.3 V | Datasheet, p. 4 |
 | Continuous input current, non-supply pins | -10 mA to +10 mA | Datasheet, p. 4 |
 | Data rates | 8 to 860 SPS | Datasheet, p. 5 |
+| I2C SCL frequency minimum | 10 kHz | Datasheet, p. 6 |
 | I2C standard mode | Up to 100 kHz | Datasheet, p. 20 |
 | I2C fast mode | Up to 400 kHz | Datasheet, p. 20 |
 | I2C high-speed mode | Up to 3.4 MHz per I2C high-speed protocol | Datasheet, pp. 6, 20 |
+| I2C bus idle timeout | Bus times out if held idle longer than 25 ms mid-transaction | Datasheet, p. 21 |
 
 ## Full-scale range and LSB
 
@@ -47,8 +49,10 @@ Source: ADS111x datasheet Rev. E, p. 26.
 
 - In single-shot mode, write `OS=1` to start a conversion, then poll `OS` or wait based on data rate.
 - At 860 SPS, a conversion takes about 1.2 ms; lower rates take longer.
-- The data-rate oscillator tolerance is about +/-10%; deadline calculations
-  should include margin for the slow side or verify completion by polling `OS`.
+- "Data rate variation" is a specified -10% / +10% limit for all data rates over
+  the full temperature range, not an approximation; the output data rate scales
+  with the internal oscillator. Size the slow side as `1 / (0.9 * DR)` and still
+  verify completion by polling `OS`.
 - High-speed I2C requires the controller-code entry sequence `00001XXXb` before transfers at up to 3.4 MHz.
 
 ## Input source impedance

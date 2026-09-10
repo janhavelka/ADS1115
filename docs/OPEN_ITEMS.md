@@ -1,9 +1,9 @@
 # Open Validation Items
 
 This page lists evidence that is still needed before making broader hardware or
-product claims. The completed code-audit dispositions are recorded in
-[`CODE_AUDIT_REPORT.md`](CODE_AUDIT_REPORT.md); newly discovered core defects
-should be tracked as actionable repository issues rather than hardware evidence.
+product claims. Completed code work belongs in [`../CHANGELOG.md`](../CHANGELOG.md);
+newly discovered core defects should be tracked as actionable repository issues
+rather than hardware evidence.
 
 ## Hardware and integration evidence
 

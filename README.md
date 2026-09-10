@@ -50,7 +50,8 @@ All driver calls require external serialization. No public API is ISR-safe.
   in `include/` or `src/`
 - Injected, non-owning I2C transport with explicit callback timeouts
 - Four legal address straps: `0x48`/GND, `0x49`/VDD, `0x4A`/SDA, `0x4B`/SCL
-- Four single-ended and four differential MUX selections
+- Two differential or four single-ended measurements across the eight
+  `MUX[2:0]` encodings, four of them differential
 - Six PGA ranges from +/-6.144 V through +/-0.256 V
 - Eight data rates from 8 SPS through 860 SPS
 - Correct signed two's-complement conversion handling
@@ -322,9 +323,12 @@ signaling. `enableConversionReadyPin()` writes the canonical traditional,
 non-latching, ASSERT_1, `0x0000/0x8000` form.
 
 The production owner-safe read path uses CONFIG OS-bit polling. It does not own
-or sample a GPIO. Legacy ALERT/RDY support remains an advanced diagnostic path,
-where an asserted pin is accepted as an early readiness signal and the timing or
-OS-bit path still applies when the pin is not asserted.
+or sample a GPIO. Legacy ALERT/RDY support remains an advanced diagnostic path.
+The pin is sampled only after the worst-case conversion interval has already
+elapsed, so it is not an early-readiness signal: in single-shot mode an asserted
+pin only replaces the CONFIG OS read, which also means that read's config-drift
+check is skipped. In continuous mode the pin level changes nothing, because the
+elapsed interval alone already declares readiness.
 ALERT/RDY is open drain and needs a board-selected pull-up. Conversion-ready
 pulses can be short (approximately 8 us in continuous mode), so a reviewed GPIO,
 edge/latch policy, and electrical validation are required before product use.
@@ -410,7 +414,14 @@ It deliberately does not supply the production mutex or scheduling policy shown 
    Keep analog pins within the powered-device datasheet limits.
 7. The ADDR pin is continuously sampled. Board strap choice and I2C/ALERT pull-up
    sizing are electrical design inputs, not driver policy.
-8. The driver never issues the I2C general-call reset (`0x06` to address `0x00`).
+8. The application owns power sequencing. The datasheet requires roughly 50 us
+   after VDD is stable before the first transaction; the driver's first I2C call
+   assumes the power-up reset already completed.
+9. Analog source impedance is a board concern the driver cannot observe.
+   Differential input impedance falls to about 710 kOhm at the +/-0.512 V and
+   +/-0.256 V ranges, so buffer high-impedance sources or accept a gain error
+   that no readback can detect.
+10. The driver never issues the I2C general-call reset (`0x06` to address `0x00`).
    A general call resets every device on the bus, which is a bus-owner decision.
    Issue it from the application when a hard device reset is required.
 
@@ -471,7 +482,9 @@ is tracked in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md) and executed with
 ## Documentation
 
 - [`CHANGELOG.md`](CHANGELOG.md) - release history and 2.0 migration notes
-- `docs/README.md` - index of every current document
+- `docs/README.md` - index of the `docs/` tree
+- `CONTRIBUTING.md` and `AGENTS.md` - contribution workflow and binding
+  engineering rules
 - [`docs/reference/`](docs/reference/) - TI ADS111x Rev. E datasheet and its
   Markdown transcripts, the authority for all hardware behavior claims
 - `doxygen Doxyfile` - warning-enforced generated public API reference

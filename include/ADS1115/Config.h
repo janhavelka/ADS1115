@@ -114,6 +114,10 @@ enum class ComparatorPolarity : uint8_t {
 };
 
 /// @brief Comparator latch behavior.
+///
+/// A latched ALERT/RDY assertion is cleared by reading conversion data, so any
+/// driver conversion read clears it as a side effect. The driver never issues
+/// the SMBus alert response, which is the other documented clear path.
 enum class ComparatorLatch : uint8_t {
   NON_LATCHING = 0,  ///< Non-latching (default)
   LATCHING     = 1   ///< Latching

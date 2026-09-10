@@ -8,7 +8,7 @@ Source: ADS111x datasheet Rev. E, pp. 1, 3, 12, 25-27.
 | --- | --- | --- | --- | --- |
 | ADS1113 | One differential or one single-ended input | No; fixed +/-2.048 V FSR | No | Config register reserves MUX/PGA/comparator fields. |
 | ADS1114 | One differential or one single-ended input | Yes | Yes | No MUX; AIN0/AIN1 only. |
-| ADS1115 | Four single-ended selections and four differential selections | Yes | Yes | Full MUX support. |
+| ADS1115 | Two differential or four single-ended measurements, via eight `MUX[2:0]` encodings | Yes | Yes | Full MUX support. Wiring AIN3 as a shared common for AIN0/AIN1/AIN2 offers no common-mode noise attenuation. |
 
 ## Datasheet facts used by this repo
 

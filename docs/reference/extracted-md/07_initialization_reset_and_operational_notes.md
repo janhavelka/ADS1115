@@ -21,9 +21,11 @@ Source: ADS111x datasheet Rev. E, pp. 18, 20.
 1. Write Config with desired `MUX`, `PGA`, `DR`, and `MODE=0`.
 2. Set pointer to Conversion register.
 3. Read conversion samples at or below the selected data rate.
-4. If changing MUX or PGA, write a new Config value and allow a new conversion period before trusting the result.
+4. If changing MUX or PGA, write a new Config value, then discard one conversion:
+   allow two conversion periods before trusting the result.
 5. A config change during continuous conversion completes the current conversion
-   with the previous settings before the new settings affect later conversions.
+   with the previous settings before the new settings affect later conversions,
+   which is why step 4 needs two periods rather than one.
 
 ## Operational cautions
 

@@ -190,9 +190,12 @@ struct Status {
 - I2C address configurable: 0x48 (ADDR->GND), 0x49 (ADDR->VDD), 0x4A (ADDR->SDA), 0x4B (ADDR->SCL).
 - Initialization must check reachability by reading the CONFIG register and
   must verify the complete writable profile. ADS1115 has no identity register.
-- Support input multiplexer configurations:
+- Support all eight input multiplexer encodings. The datasheet specifies the
+  part as two differential or four single-ended measurements:
   - 4 single-ended input selections (AIN0-AIN3 vs GND)
-  - 4 differential MUX selections (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3)
+  - 4 differential encodings (AIN0-AIN1, AIN0-AIN3, AIN1-AIN3, AIN2-AIN3); the
+    last three share AIN3 as the negative input, so a board may wire it as a
+    common point
 - Configurable PGA (gain): +/-6.144V, +/-4.096V, +/-2.048V, +/-1.024V, +/-0.512V, +/-0.256V
 - Configurable data rate: 8, 16, 32, 64, 128, 250, 475, 860 SPS
 - Support operating modes:

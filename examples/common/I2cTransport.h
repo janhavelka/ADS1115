@@ -20,6 +20,23 @@
 
 namespace transport {
 
+/**
+ * @brief Apply the driver-supplied per-transfer timeout to this Wire call.
+ *
+ * The driver partitions each callback's timeout against the remaining operation
+ * deadline, so the adapter must apply the supplied value per call instead of
+ * relying on a single value latched at initWire() time.
+ */
+inline void applyWireTimeout(TwoWire* wire, uint32_t timeoutMs) {
+#if defined(ARDUINO_ARCH_ESP32)
+  const uint32_t clamped = timeoutMs > 0xFFFFU ? 0xFFFFU : timeoutMs;
+  wire->setTimeOut(static_cast<uint16_t>(clamped));
+#else
+  (void)wire;
+  (void)timeoutMs;
+#endif
+}
+
 inline ADS1115::Status mapWireStatus(uint8_t result) {
   switch (result) {
     case 0:
@@ -71,7 +88,7 @@ inline ADS1115::Status wireWrite(uint8_t addr, const uint8_t* data, size_t len,
                                   static_cast<int32_t>(len));
   }
 
-  (void)timeoutMs;
+  applyWireTimeout(wire, timeoutMs);
 
   wire->beginTransmission(addr);
   size_t written = wire->write(data, len);
@@ -114,7 +131,7 @@ inline ADS1115::Status wireWriteRead(uint8_t addr, const uint8_t* tx, size_t txL
     return ADS1115::Status::Error(ADS1115::Err::INVALID_PARAM, "I2C read exceeds buffer");
   }
 
-  (void)timeoutMs;
+  applyWireTimeout(wire, timeoutMs);
 
   wire->beginTransmission(addr);
   size_t written = wire->write(tx, txLen);

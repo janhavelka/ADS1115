@@ -17,6 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Arduino example transport now applies the driver-supplied per-callback
+  timeout to each Wire transfer instead of discarding it. It previously relied
+  on the single value latched by `initWire()`, so the driver's deadline
+  partitioning had no effect on the diagnostic bring-up path. The owner-safe and
+  ESP-IDF example transports already honored it.
+- The ESP-IDF example `selftest` no longer reports a spurious failure. It called
+  `readVoltage()` after `readRaw()` had consumed single-shot readiness, so the
+  check always returned `Err::CONVERSION_NOT_READY` on working hardware. It now
+  starts and awaits its own conversion, matching the Arduino CLI.
+- The abandoned-conversion quiet interval now uses the same signed, wrap-safe
+  deadline comparison as every other wait gate in the driver. The previous
+  unsigned elapsed-time form treated any backwards step of the supplied clock as
+  a completed interval and could release reconciliation early.
+- Corrected the ALERT/RDY readiness documentation. The pin is sampled only after
+  the conversion interval has elapsed, so it was never an early-readiness
+  signal; in single-shot mode an asserted pin substitutes for the CONFIG OS read
+  and therefore also skips that read's config-drift check, and in continuous
+  mode it has no effect at all.
 - A failed or mismatched CONFIG readiness poll no longer latches
   `_conversionStarted`. It previously left every entry point --
   `startRead()`, `startRecover()`, `startInitialize()`, `startApplyProfile()`,
@@ -31,11 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconciliation now carries its intended terminal state instead of deriving it
   from the error code, so a transport-level `Err::TIMEOUT` inside one callback is
   no longer reported as whole-operation `TIMED_OUT`.
-- Conversion-ready ALERT/RDY no longer disables readiness in continuous mode. The
-  pin is an early-accept signal; when it is not asserted the timing and OS-bit
-  paths still apply. Previously, binding the GPIO made `readConversionReady()`
-  incapable of ever returning true, because the datasheet conversion-ready pulse
-  is about 8 us.
+- Conversion-ready ALERT/RDY no longer disables readiness in continuous mode.
+  The pin is sampled only after the conversion interval has elapsed, and when it
+  is not asserted the timing and OS-bit paths still apply. Previously, binding
+  the GPIO made `readConversionReady()` incapable of ever returning true,
+  because the datasheet conversion-ready pulse is about 8 us.
 - `writeConfig()` normalizes the reserved PGA aliases `110b` and `111b` to the
   canonical `101b` encoding, so the typed cache matches hardware bit for bit.
   Previously the next masked CONFIG comparison raised a spurious
@@ -87,6 +105,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documented two datasheet constraints the driver cannot enforce: comparator
+  threshold codes must be recalculated when the PGA range changes
+  (`setGain()`, `startRead()`), and a latched ALERT/RDY assertion is cleared as
+  a side effect of any driver conversion read (`ComparatorLatch`). Added the
+  50 us power-up wait and the analog input-impedance caveat to the README
+  contract list.
+- Removed a vacuously-true CONFIG range check in `writeConfig()`. Every field
+  occupies its full encoding space after masking, so the `INVALID_PARAM` branch
+  was unreachable; PGA alias normalization is unchanged.
+- `service()` no longer duplicates the readiness timing rule. It delegates to
+  the readiness path, which already owns the two-period continuous settle.
+- Replaced the completed one-off audit report with `docs/CODE_AUDIT.md`, an
+  open backlog of remaining defects and cleanups with proposed fixes. Corrected
+  the differential-channel count, the data-rate tolerance wording, the
+  continuous-mode settle step, and two missing I2C limits in the datasheet
+  reference notes.
+
 - `enableConversionReadyPin()` applies through the shared operation engine, and
   the duplicate synchronous apply/verify implementation (`_applyConfig()`,
   `_verifyConfigReadback()`) is removed. The five hand-rolled copies of the
@@ -102,8 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "default" marker.
 - Reduced the documentation set to current contracts: removed prompt-era and
   subagent-role material from `AGENTS.md`, the embedded HIL run report from
-  `README.md`, and duplicated evidence-retention policy across `docs/`. The
-  completed finding-by-finding disposition is in `docs/CODE_AUDIT_REPORT.md`.
+  `README.md`, and duplicated evidence-retention policy across `docs/`.
 - Lowered the framework-neutral core and packed-component requirement to C++11,
   added ESP-IDF repository-file exclusions, deterministic build metadata with
   optional `SOURCE_DATE_EPOCH`, and compile-time register/enum contract checks.

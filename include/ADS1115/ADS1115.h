@@ -266,6 +266,10 @@ public:
   /// Schedule one typed, provenance-preserving single-shot conversion without I2C.
   /// Requires successful initialization and a VERIFIED single-shot profile with
   /// clean hardware state.
+  /// ChannelRequest::gain may differ from the profile default. The driver writes
+  /// and verifies it, but it does not rewrite the comparator thresholds, whose
+  /// codes then denote different voltages. Keep the request gain equal to the
+  /// profile gain while a THRESHOLD comparator profile is active.
   /// @param request Application channel identity, MUX, and PGA for the sample.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
@@ -473,10 +477,13 @@ public:
   Status conversionReady(bool& ready);
 
   /// Check conversion readiness with explicit error reporting.
-  /// An asserted ALERT/RDY pin is accepted as an early readiness signal when the
-  /// pin and conversion-ready thresholds are configured. Otherwise single-shot
-  /// mode polls the OS bit after the conversion time and continuous mode tracks
-  /// the configured data-rate interval between fresh samples.
+  /// Readiness is always gated on the elapsed conversion interval first.
+  /// Single-shot mode then polls the OS bit, and continuous mode tracks the
+  /// configured data-rate interval between fresh samples. When the pin and
+  /// conversion-ready thresholds are configured, an asserted ALERT/RDY level
+  /// substitutes for the single-shot OS read; that shortcut also skips the
+  /// config-drift comparison the OS read performs, and it has no effect in
+  /// continuous mode.
   /// Requires a time source: either Config::nowMs, or an external
   /// tick(nowMs)/service(nowMs) timebase. Without one the elapsed interval stays
   /// zero and readiness never becomes true.
@@ -624,6 +631,10 @@ public:
   /// Set PGA full-scale range. Cache changes commit only after I2C success.
   /// Transaction count: one CONFIG write. PGA full-scale range does not relax
   /// ADS1115 analog input absolute limits; keep inputs within datasheet limits.
+  /// The comparator is a digital comparator, so its threshold codes keep their
+  /// numeric value and change meaning when the range changes. Recalculate and
+  /// rewrite them with setThresholds() whenever a THRESHOLD comparator profile
+  /// is active.
   /// @param gain Full-scale range selection.
   /// @return Status::Ok() when CONFIG was written.
   Status setGain(Gain gain);
@@ -883,7 +894,7 @@ private:
   Status _abandonStatus = Status::Ok();
   OperationState _abandonTerminalState = OperationState::FAILED;
   bool _abandonWaitStartPending = false;
-  uint32_t _abandonWaitStartMs = 0;
+  uint32_t _abandonWaitUntilMs = 0;
 
   // === Owner Operation State ===
   OperationKind _operationKind = OperationKind::NONE;

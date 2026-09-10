@@ -147,20 +147,6 @@ bool isAlertRdyAsserted(const Config& cfg) {
   return !level;
 }
 
-bool isValidConfigValue(uint16_t config) {
-  uint8_t mux = static_cast<uint8_t>((config & cmd::MASK_MUX) >> cmd::BIT_MUX);
-  uint8_t pga = static_cast<uint8_t>((config & cmd::MASK_PGA) >> cmd::BIT_PGA);
-  uint8_t mode = static_cast<uint8_t>((config & cmd::MASK_MODE) >> cmd::BIT_MODE);
-  uint8_t dr = static_cast<uint8_t>((config & cmd::MASK_DR) >> cmd::BIT_DR);
-  uint8_t compMode = static_cast<uint8_t>((config & cmd::MASK_COMP_MODE) >> cmd::BIT_COMP_MODE);
-  uint8_t compPol = static_cast<uint8_t>((config & cmd::MASK_COMP_POL) >> cmd::BIT_COMP_POL);
-  uint8_t compLat = static_cast<uint8_t>((config & cmd::MASK_COMP_LAT) >> cmd::BIT_COMP_LAT);
-  uint8_t compQue = static_cast<uint8_t>((config & cmd::MASK_COMP_QUE) >> cmd::BIT_COMP_QUE);
-
-  return mux <= 7 && pga <= 7 && mode <= 1 && dr <= 7 &&
-         compMode <= 1 && compPol <= 1 && compLat <= 1 && compQue <= 3;
-}
-
 bool isValidRegister(uint8_t reg) {
   return reg <= cmd::REG_HI_THRESH;
 }
@@ -179,10 +165,6 @@ bool isUncertainWriteFailure(Err err) {
          err == Err::I2C_NACK_DATA ||
          err == Err::I2C_TIMEOUT ||
          err == Err::I2C_BUS;
-}
-
-bool elapsedAtLeast(uint32_t startMs, uint32_t intervalMs, uint32_t nowMs) {
-  return (nowMs - startMs) >= intervalMs;
 }
 
 } // namespace
@@ -924,13 +906,13 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
           // The timestamp supplied to the I2C-start poll was sampled before the
           // blocking callback. Arm the quiet interval only at the next owner
           // poll, which is the first trustworthy post-callback boundary.
-          _abandonWaitStartMs = nowMs;
+          const uint32_t conversionMs =
+              (worstCaseConversionTimeUs(_operationGuardDataRate()) + 999UL) / 1000UL;
+          _abandonWaitUntilMs = nowMs + conversionMs;
           _abandonWaitStartPending = false;
           return _pollResult(_abandonStatus, used, false);
         }
-        const uint32_t conversionMs =
-            (worstCaseConversionTimeUs(_operationGuardDataRate()) + 999UL) / 1000UL;
-        if (!elapsedAtLeast(_abandonWaitStartMs, conversionMs, nowMs)) {
+        if (static_cast<int32_t>(nowMs - _abandonWaitUntilMs) < 0) {
           return _pollResult(_abandonStatus, used, false);
         }
         _conversionStarted = false;
@@ -1191,10 +1173,11 @@ Status ADS1115::service(uint32_t nowMs) {
       _conversionStartMsValid = true;
       return Status::Ok();
     }
-    if ((nowMs - _conversionStartMs) >= getConversionTimeMs()) {
-      bool ready = false;
-      return _readConversionReadyAt(nowMs, ready);
-    }
+    // _readConversionReadyAt() owns the whole readiness rule, including the
+    // two-period continuous settle. It returns OK without touching the bus
+    // while the interval is still running, so do not duplicate the gate here.
+    bool ready = false;
+    return _readConversionReadyAt(nowMs, ready);
   }
 
   return Status::Ok();
@@ -1974,9 +1957,6 @@ Status ADS1115::writeConfig(uint16_t config) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
-  if (!isValidConfigValue(config)) {
-    return Status::Error(Err::INVALID_PARAM, "Invalid config value");
-  }
   if (_jobActive) {
     return _jobBusyStatus();
   }
@@ -1984,6 +1964,8 @@ Status ADS1115::writeConfig(uint16_t config) {
     return _activeHardwareBusyStatus();
   }
 
+  // No range check is needed: every CONFIG field occupies its full encoding
+  // space, so all 65536 bit patterns are legal register values on this part.
   // PGA 110b/111b are datasheet aliases of 101b. Write the canonical encoding so
   // the typed cache matches hardware bit for bit and later masked readbacks do
   // not report a mismatch the driver caused itself.
@@ -2382,7 +2364,7 @@ void ADS1115::_resetOperationScratch() {
   _abandonStatus = Status::Ok();
   _abandonTerminalState = OperationState::FAILED;
   _abandonWaitStartPending = false;
-  _abandonWaitStartMs = 0;
+  _abandonWaitUntilMs = 0;
   _workingSample = SampleResult{};
 }
 
