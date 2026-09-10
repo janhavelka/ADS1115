@@ -11,6 +11,8 @@ dependencies:
 files:
   exclude:
     - ".github/**/*"
+    - ".pio/**/*"
+    - "hil_logs/**/*"
     - "docs/**/*"
     - "scripts/**/*"
     - "test/**/*"

@@ -406,27 +406,10 @@ void printStatus(const ADS1115::Status& st) {
 }
 
 ADS1115::Status applyCachedProfileVerified() {
-  ADS1115::Status st = device.startApplyConfigJob();
-  if (!st.inProgress()) {
-    return st;
-  }
-  for (uint8_t step = 0; step < 3U; ++step) {
-    const ADS1115::PollResult progress = device.pollApplyConfig(nowMs(), 3);
-    if (!progress.done) {
-      continue;
-    }
-    ADS1115::OperationResult terminal;
-    st = device.takeResult(progress.token, terminal);
-    return st.ok() ? terminal.status : st;
-  }
-  const ADS1115::OperationToken token = device.activeOperationToken();
-  device.cancelJob();
-  ADS1115::OperationResult terminal;
-  if (device.terminalResultAvailable()) {
-    (void)device.takeResult(token, terminal);
-  }
-  return ADS1115::Status::Error(ADS1115::Err::INDETERMINATE,
-                                "Config verification did not terminate");
+  // Every caller has just used typed setters, which update the desired profile.
+  // Reuse the bounded replay facade so idle guards use the configured real clock
+  // and yield hook, and any failed reconciliation retains its original status.
+  return device.recover();
 }
 
 ADS1115::Status mutateAndVerify(const ADS1115::Status& mutation) {
@@ -735,25 +718,6 @@ void printSettingsSnapshot() {
               static_cast<int>(snap.lastRawValue));
 }
 
-bool isSingleShotJobState(ADS1115::JobState state) {
-  using ADS1115::JobState;
-  return state == JobState::SINGLE_SHOT_WRITE_CONFIG ||
-         state == JobState::SINGLE_SHOT_WAIT_CONVERSION ||
-         state == JobState::SINGLE_SHOT_POLL_READY ||
-         state == JobState::SINGLE_SHOT_READ_CONVERSION ||
-         state == JobState::WAIT_IDLE_AFTER_ABANDON;
-}
-
-bool isApplyJobState(ADS1115::JobState state) {
-  using ADS1115::JobState;
-  return state == JobState::APPLY_WRITE_LOW_THRESHOLD ||
-         state == JobState::APPLY_WRITE_HIGH_THRESHOLD ||
-         state == JobState::APPLY_WRITE_CONFIG ||
-         state == JobState::APPLY_VERIFY_LOW_THRESHOLD ||
-         state == JobState::APPLY_VERIFY_HIGH_THRESHOLD ||
-         state == JobState::APPLY_VERIFY_CONFIG;
-}
-
 void printJobStatus() {
   std::printf("=== Job Status ===\n");
   std::printf("  Active: %s\n", device.jobActive() ? "YES" : "NO");
@@ -831,13 +795,9 @@ void handleJobCommand(const char* cmd) {
       std::printf("Usage: job poll [0..255]\n");
       return;
     }
-    const ADS1115::JobState state = device.jobState();
-    if (isSingleShotJobState(state)) {
+    if (device.jobActive() || device.terminalResultAvailable()) {
       printAndAcknowledgePollResult(
-          device.pollSingleShot(nowMs(), static_cast<uint8_t>(budget)));
-    } else if (isApplyJobState(state)) {
-      printAndAcknowledgePollResult(
-          device.pollApplyConfig(nowMs(), static_cast<uint8_t>(budget)));
+          device.poll(nowMs(), static_cast<uint8_t>(budget)));
     } else {
       std::printf("No active pollable job\n");
       printJobStatus();
@@ -923,7 +883,7 @@ void runStress(uint32_t count) {
 }
 
 bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline, ADS1115::Status& failure) {
-  failure = device.setMode(baseline.mode);
+  failure = mutateAndVerify(device.setMode(baseline.mode));
   if (!failure.ok()) return false;
   failure = device.setMux(baseline.mux);
   if (!failure.ok()) return false;
@@ -1095,11 +1055,11 @@ void runSelfTest() {
   uint16_t cfg = 0;
   st = device.readConfig(cfg);
   reportSelftest(stats, "readConfig", st.ok(), st.ok() ? "" : errToStr(st.code));
-  st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+  st = mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT));
   reportSelftest(stats, "setMode(single)", st.ok(), st.ok() ? "" : errToStr(st.code));
   st = device.setMode(ADS1115::Mode::CONTINUOUS);
   reportSelftest(stats, "setMode(continuous)", st.ok(), st.ok() ? "" : errToStr(st.code));
-  st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+  st = mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT));
   reportSelftest(stats, "restore mode(single)", st.ok(), st.ok() ? "" : errToStr(st.code));
   st = device.setGain(ADS1115::Gain::FSR_2_048V);
   reportSelftest(stats, "setGain(2.048V)", st.ok(), st.ok() ? "" : errToStr(st.code));

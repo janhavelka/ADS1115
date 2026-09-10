@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added fault-model regressions for uncertain CONFIG effects, slow-rate and
+  continuous-mode drift, stale OS-idle probes, recovery interruption, and
+  synchronous clock failures; explicit status-number and four-address guards
+  protect compatibility and transport routing.
 - Added bounded `own bind/init/read/poll/cancel/recover/shutdown/unbind`
   commands to the diagnostic Arduino CLI and targeted HIL coverage of their
   intermediate, terminal, cancellation, and binding states. The plan restores
@@ -17,6 +21,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Doxygen now selects the root README by path, avoiding duplicate main pages
+  from `docs/README.md` with the 1.9.8 version used by CI.
+- Unknown write errors now preserve hardware uncertainty by default. Transport
+  callbacks must finish synchronously; a callback returning `IN_PROGRESS` maps
+  to `INDETERMINATE` with its original detail and counts as a transport failure.
+- Raw CONFIG writes, ambiguous CONFIG failures, and continuous-to-single-shot
+  transitions retain possible conversion activity independently of the cached
+  mode. Recovery and initialization stop uncertain or observed active hardware,
+  wait using the conservative 8-SPS bound, and verify idle before full profile
+  replay. A potentially stale immediate OS-idle probe cannot bypass this guard.
+  Applying a profile from continuous or uncertain activity uses the same path.
+- CONFIG drift invalidates the cached conversion timing in both owner and
+  compatibility readiness paths. Reconciliation uses the slowest-rate bound and
+  retains uncertain activity until explicit idle verification; passive waiting
+  alone no longer claims continuous-mode drift is idle.
+- `begin()`, `recover()`, and conversion-ready profile application now drive
+  timed recovery through a bounded compatibility runner. Required idle waits
+  with a missing or stalled clock return an error and remain available for
+  explicit owner polling. Diagnostic CLI verification and job polling handle
+  these stages and mode transitions.
+- Successful `writeConfig()` promotes the normalized settings as the recovery
+  target, matching typed setters. Raw register writes retain their diagnostic
+  override contract and do not replace the desired profile.
+- Legacy poll facades derive `done` from operation activity even when a different
+  operation's terminal result is pending; the token remains available exactly
+  once through `takeResult()`.
+- Public API comments now describe configuration trust, cancellation after
+  verified idle, original-error preservation, verified-commit generations, and
+  shared clock domains. The README distinguishes unreleased behavior from the
+  pinned release, and the audit backlog contains only unresolved findings.
+- Native builds enable compiler warnings; ESP-IDF component packages explicitly
+  exclude local PlatformIO state and HIL logs.
 - The Arduino example transport now applies the driver-supplied per-callback
   timeout to each Wire transfer instead of discarding it. It previously relied
   on the single value latched by `initWire()`, so the driver's deadline
@@ -35,14 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signal; in single-shot mode an asserted pin substitutes for the CONFIG OS read
   and therefore also skips that read's config-drift check, and in continuous
   mode it has no effect at all.
-- A failed or mismatched CONFIG readiness poll no longer latches
-  `_conversionStarted`. It previously left every entry point --
-  `startRead()`, `startRecover()`, `startInitialize()`, `startApplyProfile()`,
-  `startShutdown()`, `recover()`, the direct setters and `writeConfig()` --
-  returning `Err::BUSY` "Conversion may still be active" for the lifetime of the
-  binding after a single transient transport failure. Both branches now enter the
-  existing bus-silent wait-idle reconciliation, which clears the conversion state
-  and publishes the original transport error as the terminal result.
+- A failed or mismatched owner CONFIG readiness poll no longer permanently
+  prevents recovery. Bus-silent reconciliation publishes the original error;
+  known single-shot activity can clear after its guard, while detected drift
+  remains uncertain until recovery explicitly establishes idle.
 - An abandoned single-shot conversion is no longer publishable. `_conversionReady`
   is cleared on every non-success exit from the conversion read and on
   cancellation after a verified readiness check.

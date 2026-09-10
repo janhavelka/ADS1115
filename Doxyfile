@@ -53,7 +53,8 @@ EXCLUDE_SYMBOLS        = ADS1115_VERSION_STRING ADS1115_BUILD_DATE \
                          ADS1115_BUILD_TIME ADS1115_BUILD_TIMESTAMP \
                          ADS1115_GIT_COMMIT ADS1115_GIT_STATUS \
                          ADS1115_VERSION_FULL
-USE_MDFILE_AS_MAINPAGE = README.md
+# Keep a path here: Doxygen 1.9.8 also matches a bare name to docs/README.md.
+USE_MDFILE_AS_MAINPAGE = ./README.md
 FULL_PATH_NAMES        = NO
 SORT_MEMBER_DOCS       = YES
 SORT_BRIEF_DOCS        = YES

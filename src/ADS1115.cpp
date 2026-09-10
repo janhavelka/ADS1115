@@ -160,11 +160,27 @@ bool isDefiniteAddressAbsence(Err err) {
 }
 
 bool isUncertainWriteFailure(Err err) {
-  return err == Err::I2C_ERROR ||
-         err == Err::TIMEOUT ||
-         err == Err::I2C_NACK_DATA ||
-         err == Err::I2C_TIMEOUT ||
-         err == Err::I2C_BUS;
+  // Only these callback outcomes prove that no register write took effect.
+  // Unknown/future transport failures must not restore trusted hardware state.
+  return err != Err::OK && err != Err::I2C_NACK_ADDR &&
+         err != Err::INVALID_CONFIG && err != Err::INVALID_PARAM;
+}
+
+Status terminalTransportStatus(Status status) {
+  return status.inProgress()
+             ? Status::Error(Err::INDETERMINATE,
+                             "Transport callback did not complete synchronously",
+                             status.detail)
+             : status;
+}
+
+uint32_t compatibilityProfileBudgetMs(uint32_t transferTimeoutMs) {
+  // Probe + idle write/readback + six apply transfers, with room for an OS
+  // retry and the slowest idle guard. Saturate before converting to a deadline.
+  const uint64_t budget = static_cast<uint64_t>(transferTimeoutMs) * 10ULL +
+      2ULL * ((worstCaseConversionTimeUs(DataRate::SPS_8) + 999ULL) / 1000ULL) + 8ULL;
+  return budget > static_cast<uint64_t>(INT32_MAX)
+             ? static_cast<uint32_t>(INT32_MAX) : static_cast<uint32_t>(budget);
 }
 
 } // namespace
@@ -343,6 +359,7 @@ void ADS1115::unbind() {
   _totalFailures = 0;
   _totalSuccess = 0;
   _conversionStarted = false;
+  _conversionNeedsReconciliation = false;
   _conversionReady = false;
   _conversionStartMs = 0;
   _conversionStartMsValid = false;
@@ -398,7 +415,7 @@ Status ADS1115::startInitialize(uint32_t nowMs, uint32_t deadlineMs,
     token = OperationToken{};
     return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
-  if (_singleShotMayBeActive()) {
+  if (_singleShotMayBeActive() && !_conversionNeedsReconciliation) {
     token = OperationToken{};
     return _activeHardwareBusyStatus();
   }
@@ -425,7 +442,7 @@ Status ADS1115::startApplyProfile(const DeviceProfile& profile, uint32_t nowMs,
   if (profile.i2cAddress != _config.i2cAddress) {
     return Status::Error(Err::INVALID_PARAM, "Address change requires rebind");
   }
-  if (_singleShotMayBeActive()) {
+  if (_singleShotMayBeActive() && !_conversionNeedsReconciliation) {
     return _activeHardwareBusyStatus();
   }
   st = _beginOperation(OperationKind::APPLY_PROFILE, nowMs, deadlineMs, token);
@@ -438,7 +455,8 @@ Status ADS1115::startApplyProfile(const DeviceProfile& profile, uint32_t nowMs,
   _jobThresholdHigh = profile.comparator.highThreshold;
   _jobConfigRegister = _buildConfigRegisterFor(profile, profile.defaultMux,
                                                 profile.defaultGain);
-  _jobState = JobState::APPLY_WRITE_LOW_THRESHOLD;
+  _jobState = (_conversionNeedsReconciliation || _config.mode == Mode::CONTINUOUS)
+                  ? JobState::PROBE_CONFIG : JobState::APPLY_WRITE_LOW_THRESHOLD;
   return st;
 }
 
@@ -448,7 +466,7 @@ Status ADS1115::startRecover(uint32_t nowMs, uint32_t deadlineMs,
   if (!_bound) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not bound");
   }
-  if (_singleShotMayBeActive()) {
+  if (_singleShotMayBeActive() && !_conversionNeedsReconciliation) {
     return _activeHardwareBusyStatus();
   }
   Status st = _beginOperation(OperationKind::RECOVER, nowMs, deadlineMs, token);
@@ -501,7 +519,7 @@ Status ADS1115::startShutdown(uint32_t nowMs, uint32_t deadlineMs,
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
-  if (_singleShotMayBeActive()) {
+  if (_singleShotMayBeActive() && !_conversionNeedsReconciliation) {
     return _activeHardwareBusyStatus();
   }
   Status st = _beginOperation(OperationKind::SHUTDOWN, nowMs, deadlineMs, token);
@@ -518,13 +536,13 @@ Status ADS1115::startShutdown(uint32_t nowMs, uint32_t deadlineMs,
 
 PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
   if (!_bound) {
-    return _pollResult(Status::Error(Err::NOT_INITIALIZED, "Driver not bound"), 0, true);
+    return _pollResult(Status::Error(Err::NOT_INITIALIZED, "Driver not bound"), 0);
   }
   if (!_jobActive) {
     if (_terminalResultAvailable) {
-      return _pollResult(_terminalResult.status, 0, true);
+      return _pollResult(_terminalResult.status, 0);
     }
-    return _pollResult(Status::Ok(), 0, true);
+    return _pollResult(Status::Ok(), 0);
   }
 
   _pollNowMs = nowMs;
@@ -574,7 +592,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
     switch (_jobState) {
       case JobState::PROBE_CONFIG: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         uint16_t configReg = 0;
         Status st = _readRegister16Tracked(cmd::REG_CONFIG, configReg);
@@ -592,21 +610,43 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
         _jobConfigRegister = _buildConfigRegisterFor(
             _candidateProfile, _candidateProfile.defaultMux,
             _candidateProfile.defaultGain);
+        if (_conversionNeedsReconciliation ||
+            (configReg & cmd::MASK_MODE) == cmd::MODE_CONTINUOUS ||
+            (configReg & cmd::MASK_OS) != cmd::OS_IDLE) {
+          // Readback of writable bits alone cannot identify which profile
+          // produced an in-flight conversion. Establish idle before replaying
+          // either a single-shot or a continuous desired profile. A potentially
+          // stale OS-idle level immediately after a start cannot clear retained
+          // activity uncertainty.
+          _requireConversionReconciliation();
+          _resumeApplyAfterIdle = true;
+          _jobConfigRegister |= cmd::MODE_SINGLE_SHOT;
+          _jobState = JobState::SHUTDOWN_WRITE_CONFIG;
+          continue;
+        }
+        _conversionNeedsReconciliation = false;
+        _conversionStarted = false;
+        _conversionReady = false;
+        _conversionStartMsValid = false;
         _jobState = JobState::APPLY_WRITE_LOW_THRESHOLD;
         continue;
       }
 
       case JobState::APPLY_WRITE_LOW_THRESHOLD: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         Status st = _writeRegister16Tracked(cmd::REG_LO_THRESH,
                                             static_cast<uint16_t>(_jobThresholdLow));
         used++;
         if (!st.ok()) {
-          if (isUncertainWriteFailure(st.code)) {
+          if (_jobAnyWriteConfirmed || isUncertainWriteFailure(st.code)) {
             _configurationState = ConfigurationState::UNKNOWN;
-            _markHardwareConfigDirtyIfClean(st);
+            if (_jobAnyWriteConfirmed) {
+              _replaceHardwareConfigDirty(st);
+            } else {
+              _markHardwareConfigDirtyIfClean(st);
+            }
           } else {
             _configurationState = _configurationStateBeforeOperation;
           }
@@ -619,7 +659,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::APPLY_WRITE_HIGH_THRESHOLD: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         Status st = _writeRegister16Tracked(cmd::REG_HI_THRESH,
                                             static_cast<uint16_t>(_jobThresholdHigh));
@@ -636,7 +676,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::APPLY_WRITE_CONFIG: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         Status st = _writeRegister16Tracked(cmd::REG_CONFIG, _jobConfigRegister);
         used++;
@@ -652,7 +692,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::APPLY_VERIFY_LOW_THRESHOLD: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         Status st = _verifyJobReadback(cmd::REG_LO_THRESH,
                                        static_cast<uint16_t>(_jobThresholdLow),
@@ -669,7 +709,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::APPLY_VERIFY_HIGH_THRESHOLD: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         Status st = _verifyJobReadback(cmd::REG_HI_THRESH,
                                        static_cast<uint16_t>(_jobThresholdHigh),
@@ -693,14 +733,14 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
             _conversionStartMsValid = true;
             _jobNextReadyPollMs = nowMs + _jobWaitDurationMs;
             _jobWaitStartPending = false;
-            return _pollResult(_lastJobStatus, used, false);
+            return _pollResult(_lastJobStatus, used);
           }
           if (static_cast<int32_t>(nowMs - _jobNextReadyPollMs) < 0) {
-            return _pollResult(_lastJobStatus, used, false);
+            return _pollResult(_lastJobStatus, used);
           }
         }
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         uint16_t observedConfig = 0;
         Status st = _verifyJobReadback(cmd::REG_CONFIG, _jobConfigRegister,
@@ -709,14 +749,15 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
         if (!st.ok()) {
           _configurationState = ConfigurationState::UNKNOWN;
           _replaceHardwareConfigDirty(st);
-          if (_operationKind == OperationKind::SHUTDOWN &&
+          if ((_operationKind == OperationKind::SHUTDOWN || _resumeApplyAfterIdle ||
+               _shutdownWaitForIdle) &&
               _jobAnyWriteConfirmed) {
+            _requireConversionReconciliation();
             return _abandonConversion(st, OperationState::FAILED, used);
           }
           return _finishOperation(st, OperationState::FAILED, used);
         }
-        if (_operationKind == OperationKind::SHUTDOWN &&
-            (_jobConfigRegister & cmd::MASK_MODE) == cmd::MODE_SINGLE_SHOT &&
+        if ((_jobConfigRegister & cmd::MASK_MODE) == cmd::MODE_SINGLE_SHOT &&
             (observedConfig & cmd::MASK_OS) != cmd::OS_IDLE) {
           _conversionStarted = true;
           _conversionReady = false;
@@ -728,7 +769,20 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
           }
           _jobWaitStartPending = true;
           _shutdownWaitForIdle = true;
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
+        }
+        _conversionNeedsReconciliation = false;
+        if (_resumeApplyAfterIdle) {
+          _conversionStarted = false;
+          _conversionReady = false;
+          _conversionStartMsValid = false;
+          _shutdownWaitForIdle = false;
+          _resumeApplyAfterIdle = false;
+          _jobConfigRegister = _buildConfigRegisterFor(
+              _candidateProfile, _candidateProfile.defaultMux,
+              _candidateProfile.defaultGain);
+          _jobState = JobState::APPLY_WRITE_LOW_THRESHOLD;
+          continue;
         }
         if (_operationKind == OperationKind::SHUTDOWN) {
           _conversionStarted = false;
@@ -772,7 +826,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::SINGLE_SHOT_WRITE_CONFIG: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         _jobStartWriteAttempted = true;
         _conversionStartMs = 0;
@@ -794,7 +848,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
         _conversionReady = false;
         _jobWaitStartPending = true;
         _jobState = JobState::SINGLE_SHOT_WAIT_CONVERSION;
-        return _pollResult(_lastJobStatus, used, false);
+        return _pollResult(_lastJobStatus, used);
       }
 
       case JobState::SINGLE_SHOT_WAIT_CONVERSION:
@@ -807,17 +861,17 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
               (worstCaseConversionTimeUs(_desiredProfile.dataRate) + 999UL) / 1000UL;
           _jobNextReadyPollMs = nowMs + conversionMs;
           _jobWaitStartPending = false;
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         if (static_cast<int32_t>(nowMs - _jobNextReadyPollMs) < 0) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         _jobState = JobState::SINGLE_SHOT_POLL_READY;
         continue;
 
       case JobState::SINGLE_SHOT_POLL_READY: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         uint16_t configReg = 0;
         Status st = _readRegister16Tracked(cmd::REG_CONFIG, configReg);
@@ -830,6 +884,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
           st = Status::Error(Err::READBACK_MISMATCH,
                              "Read profile mismatch", configReg);
           _replaceHardwareConfigDirty(st);
+          _requireConversionReconciliation();
           return _abandonConversion(st, OperationState::FAILED, used);
         }
         if ((configReg & cmd::MASK_OS) != cmd::OS_IDLE) {
@@ -838,7 +893,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
           _jobNextReadyPollMs = nowMs +
               (retryIntervalMs == 0U ? 1U : retryIntervalMs);
           _jobState = JobState::SINGLE_SHOT_WAIT_CONVERSION;
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         _config.mux = _channelRequest.mux;
         _config.gain = _channelRequest.gain;
@@ -860,7 +915,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::SINGLE_SHOT_READ_CONVERSION: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         uint16_t rawReg = 0;
         Status st = _readRegister16Tracked(cmd::REG_CONVERSION, rawReg);
@@ -910,12 +965,12 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
               (worstCaseConversionTimeUs(_operationGuardDataRate()) + 999UL) / 1000UL;
           _abandonWaitUntilMs = nowMs + conversionMs;
           _abandonWaitStartPending = false;
-          return _pollResult(_abandonStatus, used, false);
+          return _pollResult(_abandonStatus, used);
         }
         if (static_cast<int32_t>(nowMs - _abandonWaitUntilMs) < 0) {
-          return _pollResult(_abandonStatus, used, false);
+          return _pollResult(_abandonStatus, used);
         }
-        _conversionStarted = false;
+        _conversionStarted = _conversionNeedsReconciliation;
         _conversionReady = false;
         _conversionStartMsValid = false;
         return _finishOperation(_abandonStatus, _abandonTerminalState, used);
@@ -923,7 +978,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
       case JobState::SHUTDOWN_WRITE_CONFIG: {
         if (used >= budget) {
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         Status st = _writeRegister16Tracked(cmd::REG_CONFIG, _jobConfigRegister);
         used++;
@@ -940,7 +995,8 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
         const bool priorProfileTrusted =
             _configurationStateBeforeOperation == ConfigurationState::VERIFIED &&
             !_hardwareConfigDirty;
-        if (_config.mode == Mode::CONTINUOUS || !priorProfileTrusted) {
+        if (_config.mode == Mode::CONTINUOUS || !priorProfileTrusted ||
+            _conversionNeedsReconciliation || _resumeApplyAfterIdle) {
           _conversionStarted = true;
           _conversionReady = false;
           _conversionStartMsValid = false;
@@ -949,7 +1005,7 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
           _jobWaitStartPending = true;
           _shutdownWaitForIdle = true;
           _jobState = JobState::APPLY_VERIFY_CONFIG;
-          return _pollResult(_lastJobStatus, used, false);
+          return _pollResult(_lastJobStatus, used);
         }
         _jobState = JobState::APPLY_VERIFY_CONFIG;
         continue;
@@ -965,9 +1021,9 @@ PollResult ADS1115::poll(uint32_t nowMs, uint8_t maxTransactions) {
 
 // Give up on a single-shot conversion that may still be running on the device.
 // The operation stays active but bus-silent until the worst-case conversion
-// interval has elapsed, which is the only way to prove the device is idle again
-// without touching the bus. The abandoned sample is never published, and the
-// reason that caused the abandonment becomes the terminal result.
+// interval has elapsed. Known single-shot activity then ends; uncertain CONFIG
+// activity remains blocked until an explicit stop and idle verification. The
+// abandoned sample is never published, and the original reason is preserved.
 PollResult ADS1115::_abandonConversion(const Status& reason, OperationState terminalState,
                                       uint8_t used) {
   _abandonStatus = reason;
@@ -978,7 +1034,7 @@ PollResult ADS1115::_abandonConversion(const Status& reason, OperationState term
   _conversionStarted = true;
   _conversionReady = false;
   _configurationState = ConfigurationState::UNKNOWN;
-  return _pollResult(reason, used, false);
+  return _pollResult(reason, used);
 }
 
 CancelDisposition ADS1115::cancelActiveOperation() {
@@ -1132,27 +1188,13 @@ Status ADS1115::begin(const Config& config) {
   const uint32_t nowMs = requestedConfig.nowMs != nullptr
                              ? requestedConfig.nowMs(requestedConfig.timeUser)
                              : 0;
-  const uint32_t initBudgetMs =
-      requestedConfig.i2cTimeoutMs > (static_cast<uint32_t>(INT32_MAX) - 8U) / 7U
-          ? static_cast<uint32_t>(INT32_MAX)
-          : requestedConfig.i2cTimeoutMs * 7U + 8U;
+  const uint32_t initBudgetMs = compatibilityProfileBudgetMs(_config.i2cTimeoutMs);
   OperationToken token;
   st = startInitialize(nowMs, nowMs + initBudgetMs, token);
   if (st.code != Err::IN_PROGRESS) {
     return st;
   }
-  for (uint8_t step = 0; step < 4 && _jobActive; ++step) {
-    (void)poll(nowMs, kMaxJobInstructions);
-  }
-  if (_jobActive) {
-    return Status::Error(Err::INDETERMINATE, "Initialization did not terminate");
-  }
-  OperationResult result;
-  st = takeResult(token, result);
-  if (!st.ok()) {
-    return st;
-  }
-  return result.status;
+  return _runCompatibilityOperation(token);
 }
 
 void ADS1115::tick(uint32_t nowMs) {
@@ -1197,7 +1239,7 @@ Status ADS1115::shutdown() {
   if (_terminalResultAvailable) {
     return Status::Error(Err::BUSY, "Take terminal result before shutdown");
   }
-  if (_singleShotMayBeActive()) {
+  if (_singleShotMayBeActive() && !_conversionNeedsReconciliation) {
     return _activeHardwareBusyStatus();
   }
   const bool priorProfileTrusted =
@@ -1327,24 +1369,13 @@ Status ADS1115::recover() {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
   const uint32_t nowMs = _config.nowMs != nullptr ? _nowMs() : 0;
-  const uint32_t budgetMs =
-      _config.i2cTimeoutMs > (static_cast<uint32_t>(INT32_MAX) - 8U) / 7U
-          ? static_cast<uint32_t>(INT32_MAX)
-          : _config.i2cTimeoutMs * 7U + 8U;
+  const uint32_t budgetMs = compatibilityProfileBudgetMs(_config.i2cTimeoutMs);
   OperationToken token;
   Status st = startRecover(nowMs, nowMs + budgetMs, token);
   if (st.code != Err::IN_PROGRESS) {
     return st;
   }
-  for (uint8_t step = 0; step < 4 && _jobActive; ++step) {
-    (void)poll(nowMs, kMaxJobInstructions);
-  }
-  if (_jobActive) {
-    return Status::Error(Err::INDETERMINATE, "Recovery did not terminate");
-  }
-  OperationResult result;
-  st = takeResult(token, result);
-  return st.ok() ? result.status : st;
+  return _runCompatibilityOperation(token);
 }
 
 Status ADS1115::getSettings(SettingsSnapshot& out) const {
@@ -1417,7 +1448,7 @@ Status ADS1115::startConversion() {
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
-  if (_conversionStarted) {
+  if (_singleShotMayBeActive()) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
   }
 
@@ -1457,7 +1488,7 @@ Status ADS1115::startConversion(Mux mux) {
   if (_config.mode == Mode::CONTINUOUS) {
     return Status::Error(Err::UNSUPPORTED_OPERATION, "Continuous mode active");
   }
-  if (_conversionStarted) {
+  if (_singleShotMayBeActive()) {
     return Status::Error(Err::BUSY, "Conversion already in progress");
   }
 
@@ -1518,6 +1549,10 @@ Status ADS1115::_readConversionReadyAt(uint32_t nowMs, bool& ready) {
   if (!_initialized) {
     return Status::Error(Err::NOT_INITIALIZED, "Driver not initialized");
   }
+  if (_conversionNeedsReconciliation) {
+    return Status::Error(Err::CONFIG_UNKNOWN,
+                         "Recover uncertain conversion state before readiness polling");
+  }
   if (_conversionReady) {
     ready = true;
     return Status::Ok();
@@ -1570,19 +1605,15 @@ Status ADS1115::_readConversionReadyAt(uint32_t nowMs, bool& ready) {
     return st;
   }
 
+  if ((configReg & kConfigReadbackMask) !=
+      (_buildConfigRegister() & kConfigReadbackMask)) {
+    const Status mismatch = Status::Error(Err::READBACK_MISMATCH,
+                                          "Config changed during conversion", configReg);
+    _replaceHardwareConfigDirty(mismatch);
+    _requireConversionReconciliation();
+    return mismatch;
+  }
   if ((configReg & cmd::MASK_OS) == cmd::OS_IDLE) {
-    if ((configReg & kConfigReadbackMask) !=
-        (_buildConfigRegister() & kConfigReadbackMask)) {
-      _configurationState = ConfigurationState::UNKNOWN;
-      Status mismatch = Status::Error(Err::READBACK_MISMATCH,
-                                      "Config changed during conversion", configReg);
-      _replaceHardwareConfigDirty(mismatch);
-      _conversionStarted = false;
-      _conversionReady = false;
-      _conversionStartMs = 0;
-      _conversionStartMsValid = false;
-      return mismatch;
-    }
     _conversionStarted = false;
     _conversionReady = true;
     _conversionStartMsValid = false;
@@ -1797,13 +1828,12 @@ PollResult ADS1115::pollSingleShot(uint32_t nowMs, uint8_t maxInstructions) {
   }
   if (_operationKind != OperationKind::READ_SINGLE_SHOT &&
       (_jobActive || _terminalResultAvailable)) {
-    return _pollResult(Status::Error(Err::BUSY, "Different operation active"), 0,
-                       false);
+    return _pollResult(Status::Error(Err::BUSY, "Different operation active"), 0);
   }
   if (_operationKind == OperationKind::NONE) {
     return _pollResult(Status::Error(Err::RESULT_NOT_AVAILABLE,
                                      "No single-shot job available"),
-                       0, true);
+                       0);
   }
   return poll(nowMs, maxInstructions);
 }
@@ -1814,10 +1844,7 @@ Status ADS1115::startApplyConfigJob() {
                          "nowMs required by compatibility staged API");
   }
   const uint32_t nowMs = _nowMs();
-  const uint32_t durationMs =
-      _config.i2cTimeoutMs > (static_cast<uint32_t>(INT32_MAX) - 8U) / 6U
-          ? static_cast<uint32_t>(INT32_MAX)
-          : _config.i2cTimeoutMs * 6U + 8U;
+  const uint32_t durationMs = compatibilityProfileBudgetMs(_config.i2cTimeoutMs);
   OperationToken token;
   return startApplyProfile(_profileFromConfig(), nowMs, nowMs + durationMs, token);
 }
@@ -1828,13 +1855,12 @@ PollResult ADS1115::pollApplyConfig(uint32_t nowMs, uint8_t maxInstructions) {
   }
   if (_operationKind != OperationKind::APPLY_PROFILE &&
       (_jobActive || _terminalResultAvailable)) {
-    return _pollResult(Status::Error(Err::BUSY, "Different operation active"), 0,
-                       false);
+    return _pollResult(Status::Error(Err::BUSY, "Different operation active"), 0);
   }
   if (_operationKind == OperationKind::NONE) {
     return _pollResult(Status::Error(Err::RESULT_NOT_AVAILABLE,
                                      "No config-apply job available"),
-                       0, true);
+                       0);
   }
   return poll(nowMs, maxInstructions);
 }
@@ -1923,7 +1949,7 @@ Status ADS1115::setMode(Mode mode) {
   if (_jobActive) {
     return _jobBusyStatus();
   }
-  if (_config.mode == Mode::SINGLE_SHOT && _singleShotMayBeActive()) {
+  if (_singleShotMayBeActive()) {
     return _activeHardwareBusyStatus();
   }
   const Mode oldMode = _config.mode;
@@ -1935,10 +1961,12 @@ Status ADS1115::setMode(Mode mode) {
   Status st = _writeConfigOnly();
   if (!st.ok()) {
     _config.mode = oldMode;
-    _conversionStarted = oldConversionStarted;
-    _conversionReady = oldConversionReady;
-    _conversionStartMs = oldConversionStartMs;
-    _conversionStartMsValid = oldConversionStartMsValid;
+    if (!_conversionNeedsReconciliation) {
+      _conversionStarted = oldConversionStarted;
+      _conversionReady = oldConversionReady;
+      _conversionStartMs = oldConversionStartMs;
+      _conversionStartMsValid = oldConversionStartMsValid;
+    }
   }
   return st;
 }
@@ -1960,7 +1988,7 @@ Status ADS1115::writeConfig(uint16_t config) {
   if (_jobActive) {
     return _jobBusyStatus();
   }
-  if (_config.mode == Mode::SINGLE_SHOT && _singleShotMayBeActive()) {
+  if (_singleShotMayBeActive()) {
     return _activeHardwareBusyStatus();
   }
 
@@ -1975,6 +2003,7 @@ Status ADS1115::writeConfig(uint16_t config) {
       (config & ~cmd::MASK_PGA) |
       ((static_cast<uint16_t>(requestedGain) << cmd::BIT_PGA) & cmd::MASK_PGA));
 
+  const Mode previousMode = _config.mode;
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, config);
   if (!st.ok()) {
     _markHardwareConfigDirtyIfClean(st);
@@ -2006,6 +2035,12 @@ Status ADS1115::writeConfig(uint16_t config) {
     _conversionReady = false;
     _conversionStartMsValid = false;
   }
+
+  if (previousMode == Mode::CONTINUOUS && _config.mode == Mode::SINGLE_SHOT) {
+    _requireConversionReconciliation();
+  }
+
+  _desiredProfile = _profileFromConfig();
 
   _configurationState = ConfigurationState::UNKNOWN;
 
@@ -2205,24 +2240,60 @@ Status ADS1115::enableConversionReadyPin() {
 
 Status ADS1115::_applyCachedConfigSynchronously() {
   const uint32_t nowMs = _config.nowMs != nullptr ? _nowMs() : 0;
-  const uint32_t budgetMs =
-      _config.i2cTimeoutMs > (static_cast<uint32_t>(INT32_MAX) - 8U) / 6U
-          ? static_cast<uint32_t>(INT32_MAX)
-          : _config.i2cTimeoutMs * 6U + 8U;
+  const uint32_t budgetMs = compatibilityProfileBudgetMs(_config.i2cTimeoutMs);
   OperationToken token;
   Status st = startApplyProfile(_profileFromConfig(), nowMs, nowMs + budgetMs, token);
   if (st.code != Err::IN_PROGRESS) {
     return st;
   }
-  for (uint8_t step = 0; step < 2 && _jobActive; ++step) {
-    (void)poll(nowMs, kMaxJobInstructions);
+  return _runCompatibilityOperation(token);
+}
+
+Status ADS1115::_runCompatibilityOperation(OperationToken token) {
+  const bool hasClock = _config.nowMs != nullptr;
+  uint32_t lastNowMs = hasClock ? _nowMs() : 0U;
+  uint32_t sameTickPolls = 0;
+  while (_jobActive) {
+    const uint32_t nowMs = hasClock ? _nowMs() : 0U;
+    if (nowMs == lastNowMs) {
+      if (++sameTickPolls >= kMaxSameTickPolls) {
+        const Status stalled = Status::Error(Err::CLOCK_STALLED,
+                                             "Timebase did not advance",
+                                             static_cast<int32_t>(sameTickPolls));
+        if (_operationState != OperationState::RECONCILING) {
+          if (_jobAnyWriteConfirmed || _conversionNeedsReconciliation) {
+            _replaceHardwareConfigDirty(stalled);
+            _requireConversionReconciliation();
+            (void)_abandonConversion(stalled, OperationState::FAILED, 0);
+          } else {
+            _configurationState = _configurationStateBeforeOperation;
+            (void)_finishOperation(stalled, OperationState::FAILED, 0);
+          }
+        }
+        return stalled;
+      }
+    } else {
+      lastNowMs = nowMs;
+      sameTickPolls = 1;
+    }
+    const PollResult progress = poll(nowMs, kMaxJobInstructions);
+    if (progress.done) {
+      OperationResult result;
+      const Status st = takeResult(token, result);
+      return st.ok() ? result.status : st;
+    }
+    if (_operationState == OperationState::RECONCILING) {
+      // Preserve the original failure and leave its bus-silent cleanup to the
+      // owner. Consuming/overwriting it here would hide uncertain hardware.
+      return progress.status;
+    }
+    if (!hasClock && _shutdownWaitForIdle) {
+      return Status::Error(Err::INVALID_CONFIG,
+                           "nowMs required for idle verification; continue owner poll");
+    }
+    _cooperativeYield();
   }
-  if (_jobActive) {
-    return Status::Error(Err::INDETERMINATE, "Cached config apply did not terminate");
-  }
-  OperationResult result;
-  st = takeResult(token, result);
-  return st.ok() ? result.status : st;
+  return Status::Error(Err::INDETERMINATE, "Operation ended without a result");
 }
 
 Status ADS1115::disableComparator() {
@@ -2283,11 +2354,11 @@ uint8_t ADS1115::_instructionBudget(uint8_t maxInstructions) const {
   return (maxInstructions > kMaxJobInstructions) ? kMaxJobInstructions : maxInstructions;
 }
 
-PollResult ADS1115::_pollResult(Status status, uint8_t instructionsUsed, bool done) const {
+PollResult ADS1115::_pollResult(Status status, uint8_t instructionsUsed) const {
   PollResult result;
   result.status = status;
   result.instructionsUsed = instructionsUsed;
-  result.done = done;
+  result.done = !_jobActive;
   result.state = _jobState;
   result.token = _operationToken;
   result.kind = _operationKind;
@@ -2297,6 +2368,9 @@ PollResult ADS1115::_pollResult(Status status, uint8_t instructionsUsed, bool do
 
 PollResult ADS1115::_finishOperation(const Status& status, OperationState state,
                                      uint8_t transactionsUsed, bool sampleValid) {
+  if (_conversionNeedsReconciliation) {
+    _configurationState = ConfigurationState::UNKNOWN;
+  }
   _jobActive = false;
   _operationState = state;
   _lastJobStatus = status;
@@ -2321,7 +2395,7 @@ PollResult ADS1115::_finishOperation(const Status& status, OperationState state,
     _terminalResult.sample = _workingSample;
   }
   _terminalResultAvailable = true;
-  return _pollResult(status, transactionsUsed, true);
+  return _pollResult(status, transactionsUsed);
 }
 
 bool ADS1115::_deadlineReached(uint32_t nowMs) const {
@@ -2329,15 +2403,17 @@ bool ADS1115::_deadlineReached(uint32_t nowMs) const {
 }
 
 bool ADS1115::_singleShotMayBeActive() const {
-  return (_config.mode == Mode::SINGLE_SHOT && _conversionStarted) ||
+  return _conversionNeedsReconciliation ||
+         (_config.mode == Mode::SINGLE_SHOT && _conversionStarted) ||
          (_operationKind == OperationKind::READ_SINGLE_SHOT &&
           (_jobStartWriteAttempted || _jobActive));
 }
 
 DataRate ADS1115::_operationGuardDataRate() const {
-  if (_operationKind == OperationKind::SHUTDOWN &&
-      (_configurationStateBeforeOperation != ConfigurationState::VERIFIED ||
-       _hardwareConfigDirty)) {
+  if (_conversionNeedsReconciliation || _hardwareConfigDirty ||
+      _configurationState == ConfigurationState::UNKNOWN ||
+      ((_operationKind == OperationKind::SHUTDOWN || _resumeApplyAfterIdle) &&
+       _configurationStateBeforeOperation != ConfigurationState::VERIFIED)) {
     return DataRate::SPS_8;
   }
   return _desiredProfile.dataRate;
@@ -2361,6 +2437,7 @@ void ADS1115::_resetOperationScratch() {
   _jobWaitDurationMs = 0;
   _jobWaitStartPending = false;
   _shutdownWaitForIdle = false;
+  _resumeApplyAfterIdle = false;
   _abandonStatus = Status::Ok();
   _abandonTerminalState = OperationState::FAILED;
   _abandonWaitStartPending = false;
@@ -2438,9 +2515,9 @@ Status ADS1115::_i2cWriteReadRaw(const uint8_t* txBuf, size_t txLen,
   const uint32_t timeoutMs = (_jobActive && _activeTransferTimeoutMs != 0)
                                  ? _activeTransferTimeoutMs
                                  : _config.i2cTimeoutMs;
-  return _config.i2cWriteRead(_config.i2cAddress, txBuf, txLen,
+  return terminalTransportStatus(_config.i2cWriteRead(_config.i2cAddress, txBuf, txLen,
                               rxBuf, rxLen, timeoutMs,
-                              _config.i2cUser);
+                              _config.i2cUser));
 }
 
 Status ADS1115::_i2cWriteRaw(const uint8_t* buf, size_t len) {
@@ -2453,8 +2530,8 @@ Status ADS1115::_i2cWriteRaw(const uint8_t* buf, size_t len) {
   const uint32_t timeoutMs = (_jobActive && _activeTransferTimeoutMs != 0)
                                  ? _activeTransferTimeoutMs
                                  : _config.i2cTimeoutMs;
-  return _config.i2cWrite(_config.i2cAddress, buf, len,
-                          timeoutMs, _config.i2cUser);
+  return terminalTransportStatus(_config.i2cWrite(_config.i2cAddress, buf, len,
+                          timeoutMs, _config.i2cUser));
 }
 
 Status ADS1115::_i2cWriteReadTracked(const uint8_t* txBuf, size_t txLen,
@@ -2515,6 +2592,9 @@ Status ADS1115::writeRegister16(uint8_t reg, uint16_t value) {
   _replaceHardwareConfigDirty(
       Status::Error(Err::HARDWARE_CONFIG_DIRTY,
                     "Raw register write changed hardware config", reg));
+  if (reg == cmd::REG_CONFIG) {
+    _requireConversionReconciliation();
+  }
   return Status::Ok();
 }
 
@@ -2543,7 +2623,17 @@ Status ADS1115::_writeRegister16Tracked(uint8_t reg, uint16_t value) {
     static_cast<uint8_t>((value >> 8) & 0xFF),
     static_cast<uint8_t>(value & 0xFF)
   };
-  return _i2cWriteTracked(tx, sizeof(tx));
+  Status st = _i2cWriteTracked(tx, sizeof(tx));
+  if (reg == cmd::REG_CONFIG && isUncertainWriteFailure(st.code)) {
+    _requireConversionReconciliation();
+  } else if (st.ok() && reg == cmd::REG_CONFIG && _jobActive &&
+             _jobState == JobState::APPLY_WRITE_CONFIG &&
+             (value & cmd::MASK_MODE) == cmd::MODE_CONTINUOUS) {
+    // A failed later verification must not forget the continuous conversion
+    // this apply already started. Full successful verification clears it.
+    _requireConversionReconciliation();
+  }
+  return st;
 }
 
 Status ADS1115::_readRegister16Raw(uint8_t reg, uint16_t& value) {
@@ -2608,6 +2698,7 @@ Status ADS1115::_updateHealth(const Status& st) {
 // ============================================================================
 
 Status ADS1115::_writeConfigOnly() {
+  const bool wasConverting = _conversionStarted;
   Status st = _writeRegister16Tracked(cmd::REG_CONFIG, _buildConfigRegister());
   if (!st.ok()) {
     _markHardwareConfigDirtyIfClean(st);
@@ -2623,6 +2714,10 @@ Status ADS1115::_writeConfigOnly() {
     _conversionStarted = false;
     _conversionStartMs = 0;
     _conversionStartMsValid = false;
+    if (wasConverting) {
+      // MODE=single stops continuous conversion only after its current cycle.
+      _requireConversionReconciliation();
+    }
   }
   _conversionReady = false;
   // The operator's mutation is the new desired profile, so a later
@@ -2631,6 +2726,13 @@ Status ADS1115::_writeConfigOnly() {
   _desiredProfile = _profileFromConfig();
   _configurationState = ConfigurationState::UNKNOWN;
   return Status::Ok();
+}
+
+void ADS1115::_requireConversionReconciliation() {
+  _conversionNeedsReconciliation = true;
+  _conversionStarted = true;
+  _conversionReady = false;
+  _conversionStartMsValid = false;
 }
 
 Status ADS1115::_verifyJobReadback(uint8_t reg, uint16_t expected, const char* message,

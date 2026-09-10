@@ -92,7 +92,7 @@ struct SampleResult {
   Gain gain = Gain::FSR_2_048V; ///< PGA range used for scaling
   DataRate dataRate = DataRate::SPS_128; ///< Data rate used for conversion timing
   uint16_t flags = 0; ///< Bitwise SampleFlag values
-  uint32_t configGeneration = 0; ///< Verified profile generation used
+  uint32_t configGeneration = 0; ///< Verified commit counter; see AppliedProfileSnapshot::generation
   uint32_t sequence = 0; ///< Successful-sample sequence; wraps UINT32_MAX to 1
 };
 
@@ -103,6 +103,8 @@ struct SampleResult {
 /// committed record may no longer match hardware.
 /// A typed read updates profile.defaultMux/defaultGain to the channel it verified,
 /// so those two fields track what is latched in the device CONFIG register.
+/// Each verified commit increments generation, including reads with unchanged
+/// settings; generation does not identify unique register values.
 /// startRecover() and startApplyProfile() replay the owner's desired profile.
 struct AppliedProfileSnapshot {
   DeviceProfile profile{}; ///< Last committed record; validity is qualified by state
@@ -144,6 +146,10 @@ enum class JobState : uint8_t {
 };
 
 /// @brief Result returned by poll-chunked job calls.
+/// done means no operation remains active, even when a mismatched compatibility
+/// facade reports BUSY for another operation's pending terminal result. Consume
+/// that result with its matching token; done alone does not imply success or
+/// that a result exists.
 struct PollResult {
   Status status = Status::Ok();       ///< Current or terminal job status.
   uint8_t instructionsUsed = 0;       ///< Transport callbacks used by this poll call.
@@ -237,6 +243,11 @@ public:
   ///         while an operation/result/direct conversion prevents rebinding.
   Status bind(const DriverConfig& driverConfig, const DeviceProfile& profile);
   /// Schedule probe, full profile apply, and mandatory readback without I2C.
+  /// If conversion state is uncertain or the probe shows continuous mode or OS
+  /// busy, poll() first requests single-shot idle, waits the conservative 8-SPS
+  /// interval (140 ms), and verifies CONFIG and OS before replaying the profile.
+  /// Budget seven callbacks
+  /// without that preflight, otherwise eight plus idle-readiness polls and the wait.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain;
   ///        it must be in the future by no more than INT32_MAX milliseconds.
@@ -249,6 +260,10 @@ public:
   /// The candidate commits only after all writable fields are verified.
   /// The I2C address cannot change; unbind and bind a new profile instead.
   /// Requires successful initialization.
+  /// Tracked continuous or uncertain conversion state adds a probe and, when
+  /// hardware is active or uncertainty persists, the idle preflight described
+  /// by startInitialize().
+  /// Budget six callbacks normally, or up to eight plus idle-readiness polls.
   /// @param profile Candidate profile using the currently bound address.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
@@ -258,6 +273,9 @@ public:
                            uint32_t deadlineMs, OperationToken& token);
   /// Schedule owner-authorized probe and verified profile replay without I2C.
   /// Requires a valid binding but can recover a failed initialization.
+  /// Uses the desired profile, including successful typed setter/writeConfig()
+  /// changes. Raw register overrides do not replace that profile. Active hardware
+  /// is reconciled through the idle preflight described by startInitialize().
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
   /// @param[out] token Nonzero operation identity on acceptance.
@@ -268,8 +286,9 @@ public:
   /// clean hardware state.
   /// ChannelRequest::gain may differ from the profile default. The driver writes
   /// and verifies it, but it does not rewrite the comparator thresholds, whose
-  /// codes then denote different voltages. Keep the request gain equal to the
-  /// profile gain while a THRESHOLD comparator profile is active.
+  /// codes then denote different voltages. For fixed voltage trip points, keep
+  /// the request gain equal to the THRESHOLD profile gain or apply a matching
+  /// profile with recalculated threshold codes first.
   /// @param request Application channel identity, MUX, and PGA for the sample.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain.
@@ -291,6 +310,8 @@ public:
   /// @return IN_PROGRESS when scheduled, or a precondition status.
   Status startShutdown(uint32_t nowMs, uint32_t deadlineMs, OperationToken& token);
   /// Advance the active operation by at most maxTransactions callbacks.
+  /// Timed waits require an advancing caller clock. Repeated identical timestamps
+  /// leave waits pending while each call remains bounded and returns.
   /// @param nowMs Current time in the operation's original time domain.
   /// @param maxTransactions Callback budget, clamped to three and to the whole
   ///        milliseconds remaining before the deadline; zero is bus-silent.
@@ -299,9 +320,13 @@ public:
   /// Request cancellation without I2C.
   /// A confirmed or ambiguous conversion start enters bus-silent wait-idle
   /// reconciliation; the abandoned sample is never published or reused.
-  /// Cancelling after any possible hardware effect sets hardwareConfigDirty() and
-  /// moves configuration trust to UNKNOWN, so a verified replay through
-  /// startRecover() or startApplyProfile() is required before the next typed read.
+  /// Cancelling after an unverified hardware effect sets hardwareConfigDirty()
+  /// and moves configuration trust to UNKNOWN; a full verified replay is needed
+  /// before the next typed read. Once CONFIG and OS idle are verified, cancelling
+  /// before the conversion-register read only discards the sample and can retain
+  /// VERIFIED/clean state. A cancellation during existing reconciliation leaves
+  /// the original failure and terminal disposition unchanged; the returned
+  /// RECONCILIATION_REQUIRED reports pending cleanup, not a replacement error.
   /// @return Immediate disposition and whether reconciliation remains active.
   CancelDisposition cancelActiveOperation();
   /// Consume the pending terminal result exactly once by token without I2C.
@@ -318,25 +343,40 @@ public:
 
   /// Compatibility synchronous initialization facade.
   ///
-  /// Always performs one CONFIG probe, three writes, and three readbacks.
+  /// Performs seven callbacks when hardware is initially idle. Active hardware
+  /// adds a single-shot idle write, a conservative 140-ms wait, and CONFIG/OS
+  /// readiness reads: eight callbacks plus idle-readiness polls in total.
   /// ADS1115 has no ID register; this proves address reachability and profile
-  /// plausibility only, with dynamic CONFIG OS/status bits masked out.
+  /// plausibility only. Writable fields are verified, and single-shot completion
+  /// also requires OS idle.
   /// If begin() fails after one or more writes may have reached hardware,
   /// hardwareConfigDirty() and hardwareConfigDirtyError() remain available even
   /// though the driver is not initialized. A later successful full apply clears
   /// the dirty diagnostic.
+  /// Config::nowMs is optional for the idle fast path. A required timed idle wait
+  /// without it returns INVALID_CONFIG with the operation still active. A stopped
+  /// clock returns CLOCK_STALLED. After either outcome or a failure leaving
+  /// reconciliation active, continue poll() with advancing time in the original
+  /// domain (zero at start without a clock) and consume activeOperationToken().
+  /// Config::cooperativeYield is called between synchronous polls.
   /// @param config Transport callbacks, device address, timing, and conversion settings.
-  /// @return Status::Ok() when the device responds and cached configuration is applied.
+  /// @return OK when the complete profile is verified; INVALID_CONFIG for invalid
+  /// settings or a missing required clock; BUSY for an active operation, pending
+  /// result, or direct conversion; otherwise transport/readback, TIMEOUT,
+  /// CLOCK_STALLED, or INDETERMINATE status. Original transport detail is retained.
   Status begin(const Config& config);
   /// Compatibility wrapper around service() that discards its Status.
-  /// @param nowMs Current monotonic time in milliseconds.
+  /// @param nowMs Time in the same advancing monotonic domain as start*()/poll()
+  ///        and Config::nowMs when that compatibility hook is configured.
   void tick(uint32_t nowMs);
   /// Status-returning compatibility service step.
   /// Advances an active owner operation by at most one transaction, or services
   /// legacy conversion polling when no owner operation is active.
-  /// @param nowMs Current monotonic time in milliseconds.
+  /// @param nowMs Time in the same advancing monotonic domain as start*()/poll()
+  ///        and Config::nowMs when that compatibility hook is configured.
   /// @return Immediate status from the service step, or Status::Ok() when no
-  /// I2C work is needed.
+  /// I2C work is needed; NOT_INITIALIZED when unbound. Active operation errors
+  /// and compatibility readiness/transport failures remain observable.
   Status service(uint32_t nowMs);
   /// Bus-silent compatibility alias for unbind().
   void end();
@@ -398,9 +438,20 @@ public:
   /// Transaction count: one CONFIG read.
   /// @return Status::Ok() when the CONFIG register can be read.
   Status probe();
-  /// Attempt recovery from DEGRADED or OFFLINE state using tracked I2C.
-  /// Transaction count: one CONFIG read, three writes, and three readbacks.
-  /// @return Status::Ok() when the device responds and cached configuration is restored.
+  /// Replay and verify the desired profile using tracked I2C in any health state.
+  /// Requires a valid binding and can recover failed initialization. Successful
+  /// typed setters and writeConfig() update this profile; raw writes do not.
+  /// Uses seven callbacks normally. Active or uncertain conversion state needs
+  /// eight plus bounded idle-readiness polls and a conservative 140-ms wait
+  /// before profile replay, even if an initial OS read reports idle.
+  /// Config::nowMs is needed for timed waits; its absence returns INVALID_CONFIG
+  /// with an active operation, and a stopped clock returns CLOCK_STALLED.
+  /// Continue unfinished work with advancing owner poll() time in the original
+  /// domain and consume activeOperationToken(), as described by begin().
+  /// @return OK after verified replay; NOT_INITIALIZED when unbound; BUSY for
+  /// active/pending work or a tracked direct conversion; otherwise validation,
+  /// transport/readback, INVALID_CONFIG, TIMEOUT, CLOCK_STALLED, or INDETERMINATE
+  /// status with the original transport detail preserved.
   Status recover();
 
   /// Populate a snapshot of cached configuration and runtime state without I2C.
@@ -452,15 +503,18 @@ public:
   /// @{
 
   /// Start one single-shot conversion using the cached mux.
-  /// @return Err::IN_PROGRESS when started, Err::UNSUPPORTED_OPERATION in
-  /// continuous mode, or Err::BUSY when a single-shot conversion is already active.
+  /// @return IN_PROGRESS when started; NOT_INITIALIZED before initialization;
+  /// UNSUPPORTED_OPERATION in continuous mode; BUSY for an active job/conversion;
+  /// or the transport failure with its detail. Ambiguous writes require recovery.
   Status startConversion();
 
   /// Start one single-shot conversion after applying the requested mux.
   /// The cached mux is restored if the CONFIG write fails.
   /// @param mux Input mux to use for this conversion.
-  /// @return Err::IN_PROGRESS when started, Err::UNSUPPORTED_OPERATION in
-  /// continuous mode, or Err::BUSY when a single-shot conversion is already active.
+  /// @return IN_PROGRESS when started; NOT_INITIALIZED before initialization;
+  /// INVALID_PARAM for an invalid mux; UNSUPPORTED_OPERATION in continuous mode;
+  /// BUSY for an active job/conversion; or the transport failure with its detail.
+  /// An ambiguous write can require recovery even though the cached mux is restored.
   Status startConversion(Mux mux);
 
   /// Compatibility wrapper around readConversionReady(). Returns false when the
@@ -484,6 +538,10 @@ public:
   /// substitutes for the single-shot OS read; that shortcut also skips the
   /// config-drift comparison the OS read performs, and it has no effect in
   /// continuous mode.
+  /// A CONFIG read compares writable fields even while OS reports busy. Drift
+  /// returns READBACK_MISMATCH with the observed register in Status::detail,
+  /// dirties trust, and requires explicit recovery. While conversion state is
+  /// uncertain, later readiness calls return CONFIG_UNKNOWN without I2C.
   /// Requires a time source: either Config::nowMs, or an external
   /// tick(nowMs)/service(nowMs) timebase. Without one the elapsed interval stays
   /// zero and readiness never becomes true.
@@ -538,8 +596,11 @@ public:
   /// one-millisecond monotonic source but not a substitute for a real deadline.
   /// @param[out] out Signed conversion code.
   /// @param timeoutMs Maximum wait in milliseconds.
-  /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
-  /// or Err::CLOCK_STALLED when the supplied clock stops advancing.
+  /// @return OK on success; NOT_INITIALIZED, INVALID_CONFIG for a missing clock,
+  /// INVALID_PARAM for an invalid deadline, BUSY for active/pending work,
+  /// UNSUPPORTED_OPERATION for continuous mode, or CONFIG_UNKNOWN for unverified
+  /// state. Runtime failures preserve transport/readback errors and detail, or
+  /// report TIMEOUT, CLOCK_STALLED, RESULT_NOT_AVAILABLE, or INDETERMINATE.
   Status readBlocking(int16_t& out, uint32_t timeoutMs = 200);
 
   /// Blocking read with voltage scaling.
@@ -547,8 +608,8 @@ public:
   /// possible post-error reconciliation cleanup described by readBlocking().
   /// @param[out] volts Converted input voltage.
   /// @param timeoutMs Maximum wait in milliseconds.
-  /// @return Status::Ok() on success, Err::TIMEOUT when the deadline expires,
-  /// or Err::CLOCK_STALLED when the supplied clock stops advancing.
+  /// @return OK on success; otherwise the initialization/mode/trust precondition
+  /// status or the validation, timing, and transport failures of readBlocking().
   Status readBlockingVoltage(float& volts, uint32_t timeoutMs = 200);
 
   /// Start a poll-chunked single-shot conversion job without performing I2C.
@@ -579,13 +640,15 @@ public:
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
   /// @return Job progress, terminal status, and callbacks consumed. An idle
   /// matching facade returns RESULT_NOT_AVAILABLE without performing I2C.
+  /// A different operation/result returns BUSY; done still means no active job.
   PollResult pollSingleShot(uint32_t nowMs, uint8_t maxInstructions = 1);
 
   /// Start a staged cached-config apply job without performing I2C.
   /// While any poll-chunked job is active, normal public I2C/configuration APIs
   /// return Err::BUSY; use the matching poll method or cancelJob().
-  /// Normal continuous-mode background conversion state is allowed; an active
-  /// single-shot conversion is rejected with Err::BUSY.
+  /// Normal continuous or uncertain conversion state is reconciled by the idle
+  /// preflight of startApplyProfile(); a tracked direct single-shot conversion
+  /// is rejected with BUSY.
   /// The job writes low threshold, high threshold, CONFIG, then always reads
   /// back all three registers before committing the applied profile.
   /// A terminal poll result remains pending; call takeResult(result.token, ...)
@@ -602,6 +665,7 @@ public:
   /// @param maxInstructions Maximum transport callbacks to perform this poll.
   /// @return Job progress, terminal status, and callbacks consumed. An idle
   /// matching facade returns RESULT_NOT_AVAILABLE without performing I2C.
+  /// A different operation/result returns BUSY; done still means no active job.
   PollResult pollApplyConfig(uint32_t nowMs, uint8_t maxInstructions = 1);
 
   /// Cancel the active poll-chunked job without touching hardware.
@@ -621,6 +685,8 @@ public:
   /// @{
 
   /// Set the input multiplexer. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write.
   /// @param mux Input mux selection.
   /// @return Status::Ok() when CONFIG was written.
@@ -629,6 +695,8 @@ public:
   Mux getMux() const { return _config.mux; }
 
   /// Set PGA full-scale range. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write. PGA full-scale range does not relax
   /// ADS1115 analog input absolute limits; keep inputs within datasheet limits.
   /// The comparator is a digital comparator, so its threshold codes keep their
@@ -642,6 +710,8 @@ public:
   Gain getGain() const { return _config.gain; }
 
   /// Set output data rate. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write.
   /// @param rate Output sample rate.
   /// @return Status::Ok() when CONFIG was written.
@@ -650,6 +720,9 @@ public:
   DataRate getDataRate() const { return _config.dataRate; }
 
   /// Set operating mode. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read. Leaving continuous
+  /// mode also requires explicit idle reconciliation before another mutation.
   /// Transaction count: one CONFIG write.
   /// @param mode Single-shot or continuous conversion mode.
   /// @return Status::Ok() when CONFIG was written.
@@ -663,7 +736,11 @@ public:
   /// @return Status::Ok() on a successful register read.
   Status readConfig(uint16_t& config);
 
-  /// Write a validated CONFIG register value and sync the typed cache.
+  /// Write a CONFIG register value and update the typed cache and desired profile.
+  /// Success sets trust UNKNOWN until a full verified apply/recover. Threshold
+  /// codes are retained; their voltage meaning changes with PGA. Unlike raw
+  /// writeRegister16(), this mutation becomes the profile replayed by recover().
+  /// Ambiguous writes or leaving continuous mode can require idle reconciliation.
   /// Transaction count: one CONFIG write.
   /// @param config Raw 16-bit CONFIG value. PGA aliases 110b and 111b map to Gain::FSR_0_256V.
   /// @return Status::Ok() when the register is written and cache is updated.
@@ -686,7 +763,10 @@ public:
   /// @param reg Register pointer.
   /// @param value Raw 16-bit value to write.
   /// Successful raw writes are diagnostic writes: they leave the typed cache
-  /// unchanged and mark hardwareConfigDirty() with Err::HARDWARE_CONFIG_DIRTY.
+  /// and desired recovery profile unchanged and mark hardwareConfigDirty() with
+  /// Err::HARDWARE_CONFIG_DIRTY. Successful raw CONFIG writes require explicit
+  /// recovery/apply/shutdown to reconcile possible conversion activity; readiness
+  /// polling cannot clear that uncertainty.
   /// hardwareConfigDirtyError().detail stores the register pointer.
   /// If the transport reports an ambiguous error after the raw write is
   /// attempted, that Status becomes the dirty diagnostic because hardware may
@@ -717,6 +797,8 @@ public:
   /// @{
 
   /// Set signed comparator thresholds. Cache changes commit after both writes succeed.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Thresholds are signed raw conversion codes and must be recalculated if the
   /// gain/full-scale range changes. high must exceed low, so this cannot program
   /// the datasheet conversion-ready pattern; use enableConversionReadyPin() for
@@ -739,6 +821,8 @@ public:
   Status getThresholds(int16_t& low, int16_t& high);
 
   /// Set comparator mode. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write.
   /// @param mode Traditional or window comparator mode.
   /// @return Status::Ok() when CONFIG was written.
@@ -747,6 +831,8 @@ public:
   ComparatorMode getComparatorMode() const { return _config.compMode; }
 
   /// Set ALERT/RDY polarity. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write.
   /// @param polarity ALERT/RDY active polarity.
   /// @return Status::Ok() when CONFIG was written.
@@ -755,6 +841,8 @@ public:
   ComparatorPolarity getComparatorPolarity() const { return _config.compPolarity; }
 
   /// Set comparator latch behavior. Cache changes commit only after I2C success.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write.
   /// @param latch Latching or non-latching behavior.
   /// @return Status::Ok() when CONFIG was written.
@@ -763,6 +851,8 @@ public:
   ComparatorLatch getComparatorLatch() const { return _config.compLatch; }
 
   /// Set comparator queue depth or disable comparator.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Transaction count: one CONFIG write.
   /// @param queue Comparator assertion queue depth.
   /// @return Status::Ok() when CONFIG was written.
@@ -782,11 +872,18 @@ public:
   /// be short; continuous-mode pulses are approximately 8 us per the datasheet
   /// caveat. Use an interrupt-capable input or latching strategy when polling
   /// cannot guarantee capture.
-  /// Transaction count: three writes and three read-back reads.
-  /// @return Status::Ok() when thresholds and CONFIG are written.
+  /// Performs a full verified apply: six callbacks normally, or up to eight plus
+  /// idle-readiness polls and the conservative 140-ms wait when reconciling active
+  /// hardware. Success commits the desired profile with VERIFIED trust.
+  /// Timed waits require Config::nowMs. Missing or stalled clocks and unfinished
+  /// reconciliation have the same owner poll()/token cleanup contract as recover().
+  /// @return OK after verification; otherwise initialization/busy, validation,
+  /// clock, timeout, or transport/readback status with original transport detail.
   Status enableConversionReadyPin();
 
   /// Disable comparator output by setting queue to DISABLE.
+  /// Success promotes the desired profile and sets trust UNKNOWN; complete a
+  /// verified apply/recover before the next typed owner read.
   /// Threshold registers are left as programmed, so set them explicitly before
   /// re-enabling the comparator.
   /// Transaction count: one CONFIG write.
@@ -829,7 +926,9 @@ private:
   Status _readConversionReadyAt(uint32_t nowMs, bool& ready);
   Status _probeRaw();
   Status _applyCachedConfigSynchronously();
+  Status _runCompatibilityOperation(OperationToken token);
   Status _writeConfigOnly();
+  void _requireConversionReconciliation();
   void _replaceHardwareConfigDirty(const Status& st);
   void _markHardwareConfigDirtyIfClean(const Status& st);
   void _clearHardwareConfigDirty();
@@ -838,7 +937,7 @@ private:
   void _cooperativeYield() const;
   Status _jobBusyStatus() const;
   uint8_t _instructionBudget(uint8_t maxInstructions) const;
-  PollResult _pollResult(Status status, uint8_t instructionsUsed, bool done) const;
+  PollResult _pollResult(Status status, uint8_t instructionsUsed) const;
   PollResult _finishOperation(const Status& status, OperationState state,
                               uint8_t transactionsUsed, bool sampleValid = false);
   PollResult _abandonConversion(const Status& reason, OperationState terminalState,
@@ -891,6 +990,7 @@ private:
   uint32_t _jobWaitDurationMs = 0;
   bool _jobWaitStartPending = false;
   bool _shutdownWaitForIdle = false;
+  bool _resumeApplyAfterIdle = false;
   Status _abandonStatus = Status::Ok();
   OperationState _abandonTerminalState = OperationState::FAILED;
   bool _abandonWaitStartPending = false;
@@ -919,6 +1019,7 @@ private:
 
   // === Conversion State ===
   bool _conversionStarted = false;
+  bool _conversionNeedsReconciliation = false;
   bool _conversionReady = false;
   uint32_t _conversionStartMs = 0;
   bool _conversionStartMsValid = false;

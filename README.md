@@ -11,6 +11,11 @@ surface of synchronous facades and direct register setters is retained for
 bring-up and service tools. Outstanding hardware qualification is tracked in
 [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
 
+This README describes the current source tree, including the fixes listed in
+[`CHANGELOG.md` under Unreleased](CHANGELOG.md#unreleased). The `v2.0.1` tag
+predates those fixes; use the documentation at that tag when consuming that
+release.
+
 ## Production Contract
 
 Use this lifecycle in a serialized I2C owner task:
@@ -64,9 +69,9 @@ All driver calls require external serialization. No public API is ISR-safe.
 ## Installation
 
 The framework-neutral core requires C++11. Repository examples build as C++17.
-Pin production dependencies to an approved tag or
-full commit instead of tracking a moving branch. A tagged PlatformIO dependency
-is:
+Pin production dependencies to an approved tag or full commit instead of
+tracking a moving branch. The following example installs the published
+`v2.0.1` source, which excludes the Unreleased changes described above:
 
 ```ini
 lib_deps =
@@ -75,6 +80,8 @@ lib_deps =
 
 For ESP-IDF, place the repository under the application's `components/`
 directory and pin it, for example with a submodule checked out at `v2.0.1`.
+To consume Unreleased fixes, pin a reviewed full commit containing them in
+either integration.
 The native component example is under `examples/esp_idf/basic`. A source-vendored
 installation must preserve both `include/ADS1115/` and `src/`.
 
@@ -208,11 +215,11 @@ when accepted. `poll(nowMs, maxTransactions)` is the only owner-safe call that
 touches I2C. A budget of zero is bus-silent; values above three are clamped.
 Conversion-time wait polls consume zero callbacks.
 
-| Operation | Callback sequence | Maximum callbacks |
+| Operation | Callback sequence | Callbacks |
 | --- | --- | ---: |
-| Initialize | probe, 3 writes, 3 readbacks | 7 |
-| Apply profile | 3 writes, 3 readbacks | 6 |
-| Recover | tracked probe, 3 writes, 3 readbacks | 7 |
+| Initialize | probe, idle reconciliation if needed, 3 writes, 3 readbacks | 7 normally; 8 + idle polls during reconciliation |
+| Apply profile | idle reconciliation if needed, 3 writes, 3 readbacks | 6 normally; up to 8 + idle polls during reconciliation |
+| Recover | tracked probe, idle reconciliation if needed, 3 writes, 3 readbacks | 7 normally; 8 + idle polls during reconciliation |
 | Single-shot read | start CONFIG write, masked CONFIG verification, conversion read | 2 + readiness polls |
 | Shutdown | single-shot CONFIG write, idle wait, CONFIG/OS verification | 1 + readiness polls |
 
@@ -230,11 +237,23 @@ commits success after CONFIG matches and OS reports idle. If configuration trust
 is unknown or dirty, shutdown conservatively uses the slowest 8-SPS interval
 instead of relying on cached mode or rate fields.
 
+Initialization and recovery probe the hardware before replay. If conversion
+state remains uncertain or CONFIG shows continuous mode or an active
+conversion, they first write single-shot mode,
+wait the conservative 8-SPS interval, and verify both CONFIG and OS idle.
+Profile apply uses the same path for tracked continuous or uncertain conversion
+state. Only then does the full profile replay begin. Additional idle polls are
+bounded by the operation deadline; size the deadline for the extra transfers,
+up to 140 ms for the initial idle wait, and scheduling jitter.
+
 Callback timeout caps are partitioned across the requested poll budget so their
 sum cannot exceed `deadline - nowMs` as sampled at the poll boundary. Every cap
 is also limited by `transferTimeoutMs`. The owner must pass `nowMs` from the same
 monotonic time domain used at start. Deadlines must be in the future by at most
-`INT32_MAX` milliseconds.
+`INT32_MAX` milliseconds. `tick(nowMs)` and `service(nowMs)` use that same
+domain when forwarding an active operation to `poll()`. The caller's clock
+must advance for timed waits to complete; each asynchronous poll remains
+bounded even if the caller supplies the same timestamp repeatedly.
 
 When a poll budget allows multiple callbacks, `nowMs` is sampled only at the
 poll boundary and the remaining timeout is divided conservatively between the
@@ -264,6 +283,10 @@ until the pending terminal result is consumed.
 - configuration generation and monotonic successful-sample sequence;
 - verified-configuration and positive/negative code-limit flags.
 
+Configuration generation identifies a successful verified commit. It advances
+after each successful typed read, including consecutive reads with identical
+settings; it is not a hash or identity of the register values.
+
 The result is a value object. No pointer into mutable driver storage is exposed.
 It contains a sequence and configuration provenance, but no timestamp,
 freshness, or board-level validity. The application must attach its chosen
@@ -282,6 +305,13 @@ capture/completion timestamp and freshness policy.
 - The abandoned conversion is never published or reused for another MUX.
 - If the start callback already returned an ambiguous transport failure, that
   original failure remains the terminal result.
+
+When configuration is untrusted, the quiet interval uses the slowest 8-SPS
+conversion bound (140 ms). Waiting alone cannot stop an unexpectedly continuous
+device. After a raw/ambiguous CONFIG write or observed profile drift, conversion
+state therefore remains uncertain until a successful explicit recovery,
+profile apply, or shutdown establishes idle. Consume the failed operation's
+terminal result before starting that reconciliation operation.
 
 A deadline reached while the conversion may still be active follows the same
 wait-idle rule and publishes `TIMED_OUT`. Cancelled or timed-out reads before
@@ -314,7 +344,10 @@ Other bus-silent helpers include:
 `ComparatorProfile::use` distinguishes disabled output, threshold comparison,
 and the datasheet conversion-ready threshold pattern. Invalid combinations and
 threshold ordering are rejected before I2C. Comparator thresholds are signed
-raw ADC codes and must be recalculated when PGA changes.
+raw ADC codes. Gain setters and per-request gains preserve those codes, so the
+voltage trip points change with gain. Applications that require fixed voltage
+thresholds must recalculate the codes and apply a matching profile when PGA
+changes.
 
 For conversion-ready mode the ADS1115 requires only low-threshold bit 15 clear,
 high-threshold bit 15 set, and an enabled comparator queue. Mode, latch,
@@ -368,10 +401,10 @@ but its behavior has intentionally hardened in 2.0:
 | Surface | 2.0 contract |
 | --- | --- |
 | `Config` / `begin()` | Synchronous compatibility facade; initialization now always performs full readback. |
-| `recover()` / `shutdown()` | Bounded synchronous facades over the same engine; recovery uses 7 callbacks, while shutdown uses one write plus bounded CONFIG/OS readiness polls. Shutdown needs `Config::nowMs` for continuous or untrusted state; a clean verified single-shot profile retains a clockless write/readback path. |
+| `recover()` / `shutdown()` | Bounded synchronous facades over the same engine. Recovery normally uses 7 callbacks; active or uncertain conversion state adds idle reconciliation before replay. Shutdown uses one write plus bounded CONFIG/OS readiness polls. Timed idle waits require `Config::nowMs`; a clean verified single-shot shutdown retains a clockless write/readback path. |
 | `end()` | Bus-silent alias for `unbind()`; call `shutdown()` explicitly when hardware idle is required. |
-| Direct setters | Advanced diagnostics; a successful direct mutation makes profile state `UNKNOWN` until verified replay. |
-| Raw register writes | Advanced diagnostics; always mark cache/hardware state dirty or preserve an ambiguous write failure. |
+| Direct setters / `writeConfig()` | Advanced diagnostics; a successful mutation becomes the desired recovery profile and makes profile state `UNKNOWN` until verified replay. |
+| Raw register writes | Advanced diagnostics; mark cache/hardware state dirty and preserve ambiguous write failures. Raw CONFIG writes require conversion reconciliation; raw writes do not replace the desired recovery profile. |
 | `conversionReady()` bool overload | Lossy compatibility only; `false` conflates not-ready and error. |
 | Blocking reads | Bounded compatibility convenience requiring `Config::nowMs`; single-shot verified profiles only. |
 | Continuous mode | Latest-register diagnostics only; owner-safe `startRead()` deliberately rejects it. |
@@ -379,7 +412,7 @@ but its behavior has intentionally hardened in 2.0:
 
 Status enum values from 1.x retain their numeric values. New 2.0 values are
 appended: `CANCELLED`, `CONFIG_UNKNOWN`, `RESULT_NOT_AVAILABLE`,
-`TOKEN_MISMATCH`, and `INDETERMINATE`. This release is a major version because
+`TOKEN_MISMATCH`, and `INDETERMINATE`. Version 2.0 was a major release because
 lifecycle, verification, shutdown, health-admission, continuous-read, and
 configuration-trust behavior changed.
 

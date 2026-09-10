@@ -161,27 +161,10 @@ void printStatus(const ADS1115::Status& st) {
 }
 
 ADS1115::Status applyCachedProfileVerified() {
-  ADS1115::Status st = device.startApplyConfigJob();
-  if (!st.inProgress()) {
-    return st;
-  }
-  for (uint8_t step = 0; step < 3U; ++step) {
-    const ADS1115::PollResult progress = device.pollApplyConfig(millis(), 3);
-    if (!progress.done) {
-      continue;
-    }
-    ADS1115::OperationResult terminal;
-    st = device.takeResult(progress.token, terminal);
-    return st.ok() ? terminal.status : st;
-  }
-  const ADS1115::OperationToken token = device.activeOperationToken();
-  device.cancelJob();
-  ADS1115::OperationResult terminal;
-  if (device.terminalResultAvailable()) {
-    (void)device.takeResult(token, terminal);
-  }
-  return ADS1115::Status::Error(ADS1115::Err::INDETERMINATE,
-                                "Config verification did not terminate");
+  // Every caller has just used typed setters, which update the desired profile.
+  // Reuse the bounded replay facade so idle guards use the configured real clock
+  // and yield hook, and any failed reconciliation retains its original status.
+  return device.recover();
 }
 
 ADS1115::Status mutateAndVerify(const ADS1115::Status& mutation) {
@@ -640,7 +623,7 @@ ADS1115::Status beginDriverAtAddress(uint8_t address) {
 
 bool restoreStressBaseline(const ADS1115::SettingsSnapshot& baseline,
                            ADS1115::Status& failure) {
-  failure = device.setMode(baseline.mode);
+  failure = mutateAndVerify(device.setMode(baseline.mode));
   if (!failure.ok()) {
     return false;
   }
@@ -854,25 +837,6 @@ void printSettingsSnapshot() {
                 static_cast<int>(snap.lastRawValue));
 }
 
-bool isSingleShotJobState(ADS1115::JobState st) {
-  using ADS1115::JobState;
-  return st == JobState::SINGLE_SHOT_WRITE_CONFIG ||
-         st == JobState::SINGLE_SHOT_WAIT_CONVERSION ||
-         st == JobState::SINGLE_SHOT_POLL_READY ||
-         st == JobState::SINGLE_SHOT_READ_CONVERSION ||
-         st == JobState::WAIT_IDLE_AFTER_ABANDON;
-}
-
-bool isApplyJobState(ADS1115::JobState st) {
-  using ADS1115::JobState;
-  return st == JobState::APPLY_WRITE_LOW_THRESHOLD ||
-         st == JobState::APPLY_WRITE_HIGH_THRESHOLD ||
-         st == JobState::APPLY_WRITE_CONFIG ||
-         st == JobState::APPLY_VERIFY_LOW_THRESHOLD ||
-         st == JobState::APPLY_VERIFY_HIGH_THRESHOLD ||
-         st == JobState::APPLY_VERIFY_CONFIG;
-}
-
 void printJobStatus() {
   Serial.println("=== Job Status ===");
   Serial.printf("  Active: %s\n", device.jobActive() ? "YES" : "NO");
@@ -950,13 +914,9 @@ void handleJobCommand(const String& cmd) {
         return;
       }
     }
-    const ADS1115::JobState st = device.jobState();
-    if (isSingleShotJobState(st)) {
+    if (device.jobActive() || device.terminalResultAvailable()) {
       printAndAcknowledgePollResult(
-          device.pollSingleShot(millis(), static_cast<uint8_t>(budget)));
-    } else if (isApplyJobState(st)) {
-      printAndAcknowledgePollResult(
-          device.pollApplyConfig(millis(), static_cast<uint8_t>(budget)));
+          device.poll(millis(), static_cast<uint8_t>(budget)));
     } else {
       Serial.println("No active pollable job");
       printJobStatus();
@@ -1506,7 +1466,7 @@ void runSelfTest() {
   ADS1115::Status st = device.readConfig(cfg);
   reportStatusCheck("readConfig", st, false);
 
-  st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+  st = mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT));
   reportStatusCheck("setMode(single)", st, false);
   ADS1115::Status verifySt = st.ok() ? device.readConfig(cfg) : st;
   if (st.ok() && verifySt.ok()) {
@@ -1528,7 +1488,7 @@ void runSelfTest() {
     reportStatusCondition("verify mode continuous", false, verifySt, "write/read verify failed", false);
   }
 
-  st = device.setMode(ADS1115::Mode::SINGLE_SHOT);
+  st = mutateAndVerify(device.setMode(ADS1115::Mode::SINGLE_SHOT));
   reportStatusCheck("restore mode(single)", st, false);
 
   st = device.setGain(ADS1115::Gain::FSR_2_048V);

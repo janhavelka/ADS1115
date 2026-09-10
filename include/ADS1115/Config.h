@@ -20,6 +20,14 @@ namespace ADS1115 {
 /// @param user     User context pointer passed through from Config
 /// @return Meaningful library Status; preserve transport-native detail and do
 ///         not report definite address/data NACK unless the phase is proven.
+///         Return a terminal Status: callbacks complete synchronously. Only
+///         I2C_NACK_ADDR, INVALID_CONFIG and INVALID_PARAM prove that no write
+///         took effect; report the latter two only before starting a transfer.
+///         All other failures conservatively mean a write may have reached
+///         hardware. A pre-transfer lock timeout may therefore dirty trust;
+///         never mislabel it as a NACK to avoid reconciliation.
+///         The driver converts unsupported IN_PROGRESS to INDETERMINATE while
+///         preserving detail, as for I2cWriteReadFn.
 using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
                               uint32_t timeoutMs, void* user);
 
@@ -37,6 +45,9 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @param user     User context pointer passed through from Config
 /// @return Meaningful library Status; preserve transport-native detail and do
 ///         not report definite address/data NACK unless the phase is proven.
+///         Return a terminal Status: callbacks complete synchronously. The
+///         driver converts an unsupported IN_PROGRESS result to INDETERMINATE
+///         and preserves its detail field.
 using I2cWriteReadFn = Status (*)(uint8_t addr, const uint8_t* txData, size_t txLen,
                                   uint8_t* rxData, size_t rxLen, uint32_t timeoutMs,
                                   void* user);
