@@ -3,6 +3,12 @@
 
 #include <unity.h>
 #include <type_traits>
+#include <Wire.h>
+
+TwoWire Wire;
+#define ARDUINO_ARCH_ESP32 1
+#include "common/I2cTransport.h"
+#undef ARDUINO_ARCH_ESP32
 
 #define private public
 #include "ADS1115/ADS1115.h"
@@ -431,6 +437,34 @@ OperationResult finishModeledOwnerOperation(ADS1115::ADS1115& dev, FakeBus& bus,
 }
 
 }  // namespace
+
+void test_example_bus_clear_releases_lines_and_bounds_stuck_clock() {
+  const int stuckPins[] = {-1, 8, 9};
+  for (int stuckPin : stuckPins) {
+    Wire = TwoWire{};
+    resetStubPins();
+    gMicrosValue = UINT32_MAX - 1000U;
+    const uint32_t startedUs = gMicrosValue;
+    if (stuckPin >= 0) gStubPins[stuckPin].heldLow = true;
+    TEST_ASSERT_EQUAL(stuckPin < 0, transport::initWire(8, 9, 400000, 3));
+    TEST_ASSERT_EQUAL_UINT32(stuckPin < 0 ? 1U : 0U, Wire._beginCalls);
+    TEST_ASSERT_EQUAL_UINT32(0, gActiveHighWrites);
+    TEST_ASSERT_EQUAL_INT(OUTPUT_OPEN_DRAIN, gStubPins[8].mode);
+    TEST_ASSERT_EQUAL_INT(OUTPUT_OPEN_DRAIN, gStubPins[9].mode);
+    TEST_ASSERT_EQUAL_INT(HIGH, gStubPins[8].level);
+    TEST_ASSERT_EQUAL_INT(HIGH, gStubPins[9].level);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(3000U, gMicrosValue - startedUs);
+  }
+  Wire = TwoWire{};
+  resetStubPins();
+  gMicrosValue = 0;
+  gStubPins[9].lowReadsRemaining = 2;
+  TEST_ASSERT_TRUE(transport::initWire(8, 9, 400000, 3));
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2000U, gMicrosValue);
+  TEST_ASSERT_EQUAL_UINT32(0, gActiveHighWrites);
+  resetStubPins();
+  Wire = TwoWire{};
+}
 
 void setUp() {}
 void tearDown() {}
@@ -4435,6 +4469,41 @@ void test_owner_safe_profile_validation_boundaries() {
                           static_cast<uint8_t>(validateChannelRequest(request).code));
 }
 
+void test_owner_rebind_preserves_address_on_invalid_or_busy_candidate() {
+  FakeBus bus;
+  ADS1115::ADS1115 dev;
+  initializeOwnerSafe(dev, bus, makeDeviceProfile());
+  resetIoCounters(bus);
+  DeviceProfile candidate = makeDeviceProfile();
+  const uint8_t invalidAddresses[] = {0x47, 0x4C};
+  for (uint8_t address : invalidAddresses) {
+    candidate.i2cAddress = address;
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::INVALID_CONFIG),
+        static_cast<uint8_t>(dev.bind(makeDriverConfig(bus), candidate).code));
+    TEST_ASSERT_EQUAL_HEX8(0x48, dev.getConfig().i2cAddress);
+    TEST_ASSERT_TRUE(dev.isInitialized());
+    assertNoIoSince(bus, 0, 0);
+  }
+  candidate.i2cAddress = 0x49;
+  OperationToken token;
+  ChannelRequest request;
+  TEST_ASSERT_TRUE(dev.startRead(request, 100, 1000, token).inProgress());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+      static_cast<uint8_t>(dev.bind(makeDriverConfig(bus), candidate).code));
+  TEST_ASSERT_EQUAL_HEX8(0x48, dev.getConfig().i2cAddress);
+  (void)dev.cancelActiveOperation();
+  TEST_ASSERT_TRUE(dev.terminalResultAvailable());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Err::BUSY),
+      static_cast<uint8_t>(dev.bind(makeDriverConfig(bus), candidate).code));
+  TEST_ASSERT_EQUAL_HEX8(0x48, dev.getConfig().i2cAddress);
+  OperationResult result;
+  TEST_ASSERT_TRUE(dev.takeResult(token, result).ok());
+  TEST_ASSERT_TRUE(dev.bind(makeDriverConfig(bus), candidate).ok());
+  TEST_ASSERT_EQUAL_HEX8(0x49, dev.getConfig().i2cAddress);
+  TEST_ASSERT_FALSE(dev.isInitialized());
+  assertNoIoSince(bus, 0, 0);
+}
+
 void test_owner_safe_bind_and_unbind_are_zero_i2c() {
   FakeBus bus;
   ADS1115::ADS1115 dev;
@@ -6812,6 +6881,7 @@ void test_direct_busy_readback_drift_requires_idle_recovery_before_further_conve
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_example_bus_clear_releases_lines_and_bounds_stuck_clock);
   RUN_TEST(test_status_ok);
   RUN_TEST(test_status_error);
   RUN_TEST(test_status_in_progress);
@@ -6981,6 +7051,7 @@ int main() {
   RUN_TEST(test_end_while_offline_does_not_touch_bus);
   RUN_TEST(test_owner_safe_pure_helpers_cover_boundaries_and_exact_units);
   RUN_TEST(test_owner_safe_profile_validation_boundaries);
+  RUN_TEST(test_owner_rebind_preserves_address_on_invalid_or_busy_candidate);
   RUN_TEST(test_owner_safe_bind_and_unbind_are_zero_i2c);
   RUN_TEST(test_owner_safe_initialize_uses_one_transfer_polls_and_commits_generation_after_readback);
   RUN_TEST(test_owner_safe_initialize_readback_failure_keeps_generation_zero_and_unknown);

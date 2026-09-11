@@ -266,7 +266,7 @@ void printHelp() {
   cli::printHelpItem("job poll [0..255]", "Poll active job with bounded instruction budget");
   cli::printHelpItem("job cancel", "Cancel active poll-chunked job");
   cli::printHelpItem("own", "Show owner-safe lifecycle state");
-  cli::printHelpItem("own bind", "Bus-silent bind using the remembered profile");
+  cli::printHelpItem("own bind [address]", "Bus-silent bind using the remembered profile (0x48..0x4B)");
   cli::printHelpItem("own init", "Schedule owner-safe initialization");
   cli::printHelpItem("own read <0..3>", "Schedule an owner-safe single-ended read");
   cli::printHelpItem("own poll [0..255]", "Advance owner work with a callback budget");
@@ -517,6 +517,9 @@ bool isValidAds1115Address(uint32_t address) {
 void printActiveAddress() {
   Serial.printf("  Active ADS1115 address: 0x%02X\n", activeI2cAddress);
   Serial.printf("  Requested ADS1115 address: 0x%02X\n", requestedI2cAddress);
+  if (device.isBound()) {
+    Serial.printf("  Bound driver address: 0x%02X\n", device.getConfig().i2cAddress);
+  }
   if (device.isInitialized()) {
     Serial.printf("  Initialized driver address: 0x%02X\n", activeI2cAddress);
   } else {
@@ -571,8 +574,8 @@ void rememberVerifiedOwnerProfile() {
   if (device.getAppliedProfile(applied).ok() &&
       applied.state == ADS1115::ConfigurationState::VERIFIED) {
     ownerProfile = applied.profile;
+    activeI2cAddress = applied.profile.i2cAddress;
   }
-  ownerProfile.i2cAddress = activeI2cAddress;
 }
 
 ADS1115::Status probeAddressRaw(uint8_t address) {
@@ -929,6 +932,9 @@ void handleJobCommand(const String& cmd) {
 void printOwnerState() {
   Serial.println("=== Owner API State ===");
   Serial.printf("  Bound: %s\n", device.isBound() ? "YES" : "NO");
+  if (device.isBound()) {
+    Serial.printf("  Bound driver address: 0x%02X\n", device.getConfig().i2cAddress);
+  }
   Serial.printf("  Initialized: %s\n", device.isInitialized() ? "YES" : "NO");
   Serial.printf("  Active: %s\n", device.jobActive() ? "YES" : "NO");
   Serial.printf("  Terminal pending: %s\n",
@@ -969,12 +975,30 @@ void handleOwnerCommand(const String& cmd) {
     return;
   }
 
-  if (cmd == "own bind") {
-    if (device.isBound()) {
-      rememberVerifiedOwnerProfile();
+  if (cmd == "own bind" || cmd.startsWith("own bind ")) {
+    uint32_t address = activeI2cAddress;
+    if (cmd.length() > 8) {
+      String argument = cmd.substring(9);
+      argument.trim();
+      if (argument.startsWith("-") || !parseU32(argument, address) ||
+          !isValidAds1115Address(address)) {
+        LOGW("Usage: own bind [0x48..0x4B]");
+        return;
+      }
     }
-    ownerProfile.i2cAddress = activeI2cAddress;
-    printStatus(device.bind(makeOwnerDriverConfig(), ownerProfile));
+    ADS1115::DeviceProfile candidate = ownerProfile;
+    ADS1115::AppliedProfileSnapshot applied;
+    if (device.getAppliedProfile(applied).ok() &&
+        applied.state == ADS1115::ConfigurationState::VERIFIED) {
+      candidate = applied.profile;
+    }
+    candidate.i2cAddress = static_cast<uint8_t>(address);
+    const ADS1115::Status status = device.bind(makeOwnerDriverConfig(), candidate);
+    if (status.ok()) {
+      ownerProfile = candidate;
+      requestedI2cAddress = candidate.i2cAddress;
+    }
+    printStatus(status);
   } else if (cmd == "own init") {
     const uint32_t now = millis();
     ADS1115::OperationToken token;
@@ -1037,7 +1061,7 @@ void handleOwnerCommand(const String& cmd) {
       printStatus(ADS1115::Status::Ok());
     }
   } else {
-    LOGW("Usage: own [bind|init|read <0..3>|poll [0..255]|cancel|recover|shutdown|unbind]");
+    LOGW("Usage: own [bind [address]|init|read <0..3>|poll [0..255]|cancel|recover|shutdown|unbind]");
   }
   printOwnerState();
 }

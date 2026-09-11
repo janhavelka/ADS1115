@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Example startup bus clear uses open-drain releases, one bounded clock-wait
+  deadline, and checks both lines before Wire initialization. Native regressions
+  reproduce the former active-HIGH drive and cover held lines and clock wrap.
+- The diagnostic `own bind [address]` accepts only 0x48..0x4B, preserves the
+  existing binding on rejection, and reports the bound address separately from
+  the last initialized address so real missing-device recovery can be tested.
+
+
 - Owner-cancellation HIL now shares the conservative 8-SPS reconciliation
   delay with other cancellation and cleanup paths. Cleanup accepts an already
   completed cancellation only with matching terminal state/status and no I2C.

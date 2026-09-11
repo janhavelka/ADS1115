@@ -179,3 +179,15 @@ A release-facing result should contain only identity, a concise result matrix,
 failures, remaining gaps, and stable physical-evidence references. Remove
 resolved items from the active follow-up list. Never claim unrun hardware
 coverage.
+
+### Bound missing-address recovery diagnostic
+
+`own bind [0x48..0x4B]` changes only the bus-silent owner binding. It validates
+before replacing the current binding and rejects active operations or retained
+terminal results. `own` reports the bound address; `addr` also reports the last
+initialized address. Select a verified empty legal address, then run `own init`,
+`own poll 255`, `own read 0`, `own recover`, and `own poll 255` to retain actual
+initialization/recovery errors. A missing never-initialized target remains
+UNINIT; this is not evidence of a physical READY-to-OFFLINE unplug transition.
+Restore with `own bind 0x48`, `own init`, `own poll 255`, and a validated read.
+Keep this expected-error trace separate from healthy soak counters.
