@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Increased the README and production owner example's initialization/recovery
+  deadline from 200 ms to 500 ms. With a 20-ms callback cap, the prior budget
+  could expire during a valid conservative idle preflight and profile replay.
+  Read budgets now include both the extra callback and the wait for one
+  readiness retry.
+- Aligned the README, ESP-IDF guide, and Doxygen contracts with conditional idle
+  verification, persistent conversion uncertainty, owner health timestamps,
+  and configuration generations that can advance before a sample read fails.
 - Doxygen now selects the root README by path, avoiding duplicate main pages
   from `docs/README.md` with the 1.9.8 version used by CI.
 - Unknown write errors now preserve hardware uncertainty by default. Transport
@@ -131,12 +139,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The native fake now has opt-in CONFIG/OS conversion lifecycle behavior,
   post-callback time advancement, and a reset helper that clears every sticky
   status and read mask used by fault-injection tests.
-- The owner example budgets four callbacks for single-shot reads, allowing the
-  initial OS check plus one bounded retry, and the HIL raw CONFIG exercise uses
-  the non-converting `0x0583` value.
+- The HIL raw CONFIG exercise uses the non-converting `0x0583` value.
 
 ### Changed
 
+- Documented the remaining release and native ESP-IDF production-example work,
+  the intentional acquisition/API limits, and commit-specific CI evidence.
 - Documented two datasheet constraints the driver cannot enforce: comparator
   threshold codes must be recalculated when the PGA range changes
   (`setGain()`, `startRead()`), and a latched ALERT/RDY assertion is cleared as
@@ -149,8 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `service()` no longer duplicates the readiness timing rule. It delegates to
   the readiness path, which already owns the two-period continuous settle.
 - Replaced the completed one-off audit report with `docs/CODE_AUDIT.md`, an
-  open backlog of remaining defects and cleanups with proposed fixes. Corrected
-  the differential-channel count, the data-rate tolerance wording, the
+  open backlog limited to confirmed, actionable defects and contract gaps.
+  Corrected the differential-channel count, the data-rate tolerance wording, the
   continuous-mode settle step, and two missing I2C limits in the datasheet
   reference notes.
 
@@ -158,8 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the duplicate synchronous apply/verify implementation (`_applyConfig()`,
   `_verifyConfigReadback()`) is removed. The five hand-rolled copies of the
   conversion-abandon sequence are folded into one helper, and
-  `_buildConfigRegister()` delegates to `_buildConfigRegisterFor()`. The core is
-  about 75 lines smaller with no public API change.
+  `_buildConfigRegister()` delegates to `_buildConfigRegisterFor()`.
 - Corrected Doxygen contracts that did not match the implementation: transaction
   counts for `readRaw()` and `readBlocking()`, the readiness time-source
   requirement, `pollApplyConfig()`'s `nowMs`, `setThresholds()` ordering versus

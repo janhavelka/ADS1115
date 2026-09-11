@@ -45,7 +45,7 @@ enum class OperationState : uint8_t {
   ACTIVE,        ///< Operation may perform bounded work through poll()
   RECONCILING,   ///< Bus-silent wait for a possibly active conversion
   SUCCEEDED,     ///< Terminal successful result
-  FAILED,        ///< Terminal definite failure
+  FAILED,        ///< Terminal failed result; hardware certainty is reported separately
   CANCELLED,     ///< Terminal caller cancellation
   TIMED_OUT,     ///< Terminal whole-operation deadline expiry
   INDETERMINATE  ///< Terminal state with uncertain hardware effect
@@ -58,8 +58,10 @@ enum class OperationState : uint8_t {
 struct OperationToken {
   uint32_t value = 0; ///< Zero means no accepted operation
 
-  /// @brief Check whether the token identifies an accepted operation.
-  /// @return true when this token identifies an accepted operation.
+  /// @brief Check whether the token value is nonzero.
+  /// This does not prove that the token is current or unconsumed; takeResult()
+  /// checks it against the pending terminal result.
+  /// @return true when the token value is nonzero.
   constexpr bool valid() const { return value != 0; }
 };
 
@@ -67,11 +69,13 @@ struct OperationToken {
 enum class CancelDisposition : uint8_t {
   NO_ACTIVE_OPERATION,       ///< Nothing was active to cancel
   CANCELLED_BEFORE_EFFECT,   ///< Terminal cancellation before hardware effect
-  CANCELLED_AFTER_EFFECT,    ///< Terminal cancellation after a safe known effect
+  CANCELLED_AFTER_EFFECT,    ///< Terminal cancellation after a possible hardware effect
   RECONCILIATION_REQUIRED    ///< Bus-silent quiet interval must finish first
 };
 
 /// @brief Provenance and boundary flags carried by SampleResult::flags.
+/// Code-limit flags report the digital endpoint; they do not prove analog
+/// overrange or a wiring fault and do not invalidate an otherwise valid sample.
 enum class SampleFlag : uint16_t {
   NONE = 0,                              ///< No flags set
   CONFIG_VERIFIED = 1U << 0,             ///< Sample uses verified clean config
@@ -84,6 +88,10 @@ enum class SampleFlag : uint16_t {
 /// microvolts is the ADC-input value for the recorded PGA gain. Board divider,
 /// shunt, amplifier, offset, calibration, and engineering-unit conversion stay
 /// in the application.
+/// A result carries no timestamp, freshness limit, or board-level validity test.
+/// All signed 16-bit codes are representable, including either code limit.
+/// CONFIG_VERIFIED records profile verification for this sample; it does not
+/// establish device identity or electrical accuracy.
 struct SampleResult {
   int16_t rawCode = 0; ///< Signed two's-complement conversion code
   int32_t microvolts = 0; ///< Deterministically rounded nominal ADC-input value
@@ -105,7 +113,11 @@ struct SampleResult {
 /// so those two fields track what is latched in the device CONFIG register.
 /// Each verified commit increments generation, including reads with unchanged
 /// settings; generation does not identify unique register values.
-/// startRecover() and startApplyProfile() replay the owner's desired profile.
+/// A read commits after CONFIG/OS verification, before fetching conversion data;
+/// generation can therefore advance even if that fetch later fails or is cancelled.
+/// It wraps UINT32_MAX to 1; unbind() resets it to zero.
+/// startRecover() replays the owner's desired profile; startApplyProfile()
+/// verifies and commits its supplied candidate as the new desired profile.
 struct AppliedProfileSnapshot {
   DeviceProfile profile{}; ///< Last committed record; validity is qualified by state
   ConfigurationState state = ConfigurationState::UNBOUND; ///< Current trust state
@@ -162,7 +174,7 @@ struct PollResult {
 
 /// @brief Snapshot of driver configuration and runtime state without I2C access.
 struct SettingsSnapshot {
-  bool initialized = false; ///< Compatibility begin() completed successfully
+  bool initialized = false; ///< Owner initialization/recovery or compatibility begin() succeeded
   bool bound = false; ///< A valid transport/profile binding exists
   DriverState state = DriverState::UNINIT; ///< Passive transport-health state
   ConfigurationState configurationState = ConfigurationState::UNBOUND; ///< Trust state
@@ -187,7 +199,7 @@ struct SettingsSnapshot {
   int alertRdyPin = -1; ///< Configured ALERT/RDY GPIO number
   bool alertRdyPinConfigured = false; ///< ALERT/RDY pin and GPIO callback are configured
   bool conversionReadyModeEnabled = false; ///< Thresholds encode ready mode
-  bool usesAlertRdyPin = false; ///< GPIO readiness path is active
+  bool usesAlertRdyPin = false; ///< Legacy GPIO readiness path is configured; owner reads still poll CONFIG
   Mux mux = Mux::AIN0_GND; ///< Cached MUX selection
   Gain gain = Gain::FSR_2_048V; ///< Cached PGA range
   DataRate dataRate = DataRate::SPS_128; ///< Cached data rate
@@ -198,7 +210,7 @@ struct SettingsSnapshot {
   ComparatorQueue compQueue = ComparatorQueue::DISABLE; ///< Queue setting
   int16_t compThresholdHigh = 0x7FFF; ///< Cached signed high threshold
   int16_t compThresholdLow = static_cast<int16_t>(0x8000); ///< Cached low threshold
-  bool conversionStarted = false; ///< A direct conversion is outstanding
+  bool conversionStarted = false; ///< Conversion activity is tracked or remains uncertain
   bool conversionReady = false; ///< Cached direct-conversion readiness
   uint32_t conversionStartMs = 0; ///< Direct conversion start timestamp
   int16_t lastRawValue = 0; ///< Most recent successfully read raw code
@@ -246,8 +258,8 @@ public:
   /// If conversion state is uncertain or the probe shows continuous mode or OS
   /// busy, poll() first requests single-shot idle, waits the conservative 8-SPS
   /// interval (140 ms), and verifies CONFIG and OS before replaying the profile.
-  /// Budget seven callbacks
-  /// without that preflight, otherwise eight plus idle-readiness polls and the wait.
+  /// Budget seven callbacks without that preflight, otherwise eight plus
+  /// idle-readiness polls and the wait.
   /// @param nowMs Current owner monotonic time.
   /// @param deadlineMs Absolute wrap-safe deadline in the same time domain;
   ///        it must be in the future by no more than INT32_MAX milliseconds.
@@ -284,6 +296,8 @@ public:
   /// Schedule one typed, provenance-preserving single-shot conversion without I2C.
   /// Requires successful initialization and a VERIFIED single-shot profile with
   /// clean hardware state.
+  /// Readiness is established through timed CONFIG/OS polling. This owner path
+  /// does not sample ALERT/RDY GPIO, even with a CONVERSION_READY profile.
   /// ChannelRequest::gain may differ from the profile default. The driver writes
   /// and verifies it, but it does not rewrite the comparator thresholds, whose
   /// codes then denote different voltages. For fixed voltage trip points, keep
@@ -312,6 +326,9 @@ public:
   /// Advance the active operation by at most maxTransactions callbacks.
   /// Timed waits require an advancing caller clock. Repeated identical timestamps
   /// leave waits pending while each call remains bounded and returns.
+  /// A reconciliation wait may outlive the original operation deadline. Inspect
+  /// done, keep polling until terminal, then consume the matching result token;
+  /// an error status alone does not mean that cleanup is complete.
   /// @param nowMs Current time in the operation's original time domain.
   /// @param maxTransactions Callback budget, clamped to three and to the whole
   ///        milliseconds remaining before the deadline; zero is bus-silent.
@@ -327,6 +344,10 @@ public:
   /// VERIFIED/clean state. A cancellation during existing reconciliation leaves
   /// the original failure and terminal disposition unchanged; the returned
   /// RECONCILIATION_REQUIRED reports pending cleanup, not a replacement error.
+  /// The quiet interval uses the conservative 8-SPS bound when trust is unknown.
+  /// It cannot stop unexpectedly continuous hardware. If conversion uncertainty
+  /// persists at terminal completion, consume the result and explicitly recover,
+  /// apply a profile, or shut down to request and verify idle.
   /// @return Immediate disposition and whether reconciliation remains active.
   CancelDisposition cancelActiveOperation();
   /// Consume the pending terminal result exactly once by token without I2C.
@@ -393,7 +414,8 @@ public:
   /// another operation is accepted.
   Status shutdown();
 
-  /// Check if begin() completed successfully and end() has not been called.
+  /// Check whether owner initialization/recovery or compatibility begin()
+  /// succeeded and the binding has not been ended or replaced.
   /// @return true when the driver is initialized.
   bool isInitialized() const { return _initialized; }
   /// @return true when a valid transport/profile binding exists.
@@ -480,9 +502,12 @@ public:
   uint32_t lastErrorMs() const { return _lastErrorMs; }
   /// @return Most recent tracked error.
   Status lastError() const { return _lastError; }
-  /// @return true when a failed multi-register update may have left hardware out of sync.
+  /// @return true when raw writes, ambiguous/partial effects, or observed drift
+  ///         leave hardware/cache agreement untrusted.
   bool hardwareConfigDirty() const { return _hardwareConfigDirty; }
-  /// @return Original Status from the failed transaction that dirtied hardware config.
+  /// @return Diagnostic from the latest hardware-affecting step. A first ambiguous
+  ///         error is retained until later effect evidence replaces it; transport
+  ///         detail is preserved, and raw-write diagnostics carry the register.
   Status hardwareConfigDirtyError() const { return _hardwareConfigDirtyError; }
   /// @return Compatibility alias for hardwareConfigDirty().
   bool isHardwareConfigDirty() const { return hardwareConfigDirty(); }
@@ -492,9 +517,9 @@ public:
   Status lastConfigApplyError() const { return hardwareConfigDirtyError(); }
   /// @return Consecutive tracked failures since the last success.
   uint8_t consecutiveFailures() const { return _consecutiveFailures; }
-  /// @return Lifetime tracked failure count.
+  /// @return Tracked failure count since bind()/unbind(), saturating at UINT32_MAX.
   uint32_t totalFailures() const { return _totalFailures; }
-  /// @return Lifetime tracked success count.
+  /// @return Tracked success count since bind()/unbind(), saturating at UINT32_MAX.
   uint32_t totalSuccess() const { return _totalSuccess; }
 
   /// @}
@@ -860,11 +885,12 @@ public:
   /// @return Cached comparator queue setting.
   ComparatorQueue getComparatorQueue() const { return _config.compQueue; }
 
-  /// @return true when Config::alertRdyPin is configured.
+  /// @return true when Config::alertRdyPin and Config::gpioRead are both configured.
   bool isAlertRdyPinConfigured() const;
   /// @return true when comparator thresholds are configured for conversion-ready mode.
   bool isConversionReadyModeEnabled() const;
-  /// @return true when conversion readiness uses the ALERT/RDY GPIO callback.
+  /// @return true when legacy conversion readiness can use the ALERT/RDY GPIO
+  ///         callback; owner startRead()/poll() always use CONFIG/OS readiness.
   bool usesAlertRdyPinForConversionReady() const;
 
   /// Program ADS1115 threshold/comparator fields for conversion-ready ALERT/RDY mode.

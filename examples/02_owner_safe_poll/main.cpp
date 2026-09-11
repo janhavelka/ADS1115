@@ -23,7 +23,9 @@ constexpr uint32_t OWNER_SCHEDULING_MARGIN_MS = 5;
 // Start write, initial OS read, one bounded OS retry, and conversion read.
 constexpr uint32_t READ_CALLBACK_COUNT = 4;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 1000;
-constexpr uint32_t RECOVERY_DEADLINE_MS = 200;
+// 140-ms idle guard + ten 20-ms callbacks + one 18-ms idle retry leaves
+// 142 ms for owner scheduling. Rebudget when changing the transport/cadence.
+constexpr uint32_t PROFILE_DEADLINE_MS = 500;
 constexpr uint8_t MAX_RECOVERY_ATTEMPTS = 2;
 
 struct SharedBusOwner {
@@ -202,7 +204,7 @@ void startRecovery(uint32_t nowMs, const ADS1115::Status& cause) {
 
   recoveryAttempts++;
   ADS1115::Status status = adc.startRecover(
-      nowMs, nowMs + RECOVERY_DEADLINE_MS, activeToken);
+      nowMs, nowMs + PROFILE_DEADLINE_MS, activeToken);
   if (!status.inProgress()) {
     fail(status);
     return;
@@ -211,7 +213,8 @@ void startRecovery(uint32_t nowMs, const ADS1115::Status& cause) {
 }
 
 void startInitialization(uint32_t nowMs) {
-  ADS1115::Status status = adc.startInitialize(nowMs, nowMs + 200U, activeToken);
+  ADS1115::Status status = adc.startInitialize(
+      nowMs, nowMs + PROFILE_DEADLINE_MS, activeToken);
   if (!status.inProgress()) {
     fail(status);
     return;
@@ -225,9 +228,12 @@ void startSample(uint32_t nowMs) {
   request.mux = ADS1115::Mux::AIN0_GND;
   request.gain = ADS1115::Gain::FSR_2_048V;
 
+  const uint32_t readyRetryMs =
+      (ADS1115::worstCaseConversionTimeUs(profile.dataRate) + 7999U) / 8000U;
   const uint32_t durationMs = ADS1115::operationDeadlineMs(
       1, profile.dataRate,
-      READ_CALLBACK_COUNT * TRANSFER_TIMEOUT_MS + OWNER_SCHEDULING_MARGIN_MS);
+      READ_CALLBACK_COUNT * TRANSFER_TIMEOUT_MS + readyRetryMs +
+          OWNER_SCHEDULING_MARGIN_MS);
   ADS1115::Status status = adc.startRead(
       request, nowMs, nowMs + durationMs, activeToken);
   if (!status.inProgress()) {

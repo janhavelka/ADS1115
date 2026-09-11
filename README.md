@@ -66,6 +66,28 @@ All driver calls require external serialization. No public API is ISR-safe.
 - Partial/ambiguous write diagnostics and explicit configuration trust state
 - Native ESP-IDF component metadata and diagnostic example
 
+## Scope And Remaining Work
+
+The reviewed core has no open confirmed defects in
+[`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md). Known follow-ups beyond hardware
+qualification are:
+
+- **Release the accumulated fixes.** They are under `Unreleased`; the published
+  `v2.0.1` tag does not include them. Until a new release is approved, consume a
+  reviewed commit containing the fixes.
+- **Provide a dedicated native ESP-IDF production owner-loop example** if that
+  integration is needed. The current native IDF example is a diagnostic CLI;
+  the complete production ownership example uses Arduino. The same core owner
+  API is available to both frameworks.
+
+Production acquisition intentionally supports one single-shot request at a
+time, using CONFIG polling. Continuous acquisition and the legacy GPIO
+readiness shortcut are diagnostic surfaces. Channel scanning, buffering,
+interrupt scheduling, sample timestamps, calibration, and bus recovery policy
+belong to the application. These are API scope limits, not unfinished core
+implementations. Board and workload qualification remains in
+[`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
+
 ## Installation
 
 The framework-neutral core requires C++11. Repository examples build as C++17.
@@ -100,6 +122,13 @@ or data NACK only when the transport can prove the phase. A generic NACK after
 a potentially mutating write is not definite address absence. All callbacks
 and driver calls require serialized task context and are not ISR-safe.
 
+Callbacks must complete synchronously. `IN_PROGRESS` from a callback is an
+invalid transport outcome and becomes `INDETERMINATE`, preserving its detail.
+For writes, only `I2C_NACK_ADDR` and pre-transfer `INVALID_CONFIG`/
+`INVALID_PARAM` prove no effect. Every other error conservatively leaves
+hardware uncertain, including a lock timeout; never relabel it as an address
+NACK to avoid reconciliation.
+
 ## Owner-Safe Quick Start
 
 Transport callbacks must serialize the shared bus and honor the supplied
@@ -130,7 +159,9 @@ profile.comparator.use = ADS1115::ComparatorUse::OFF;
 ADS1115::Status st = adc.bind(transport, profile); // no I2C
 if (st.ok()) {
   const uint32_t nowMs = appNowMs();
-  st = adc.startInitialize(nowMs, nowMs + 200U, token); // no I2C
+  // At a 20-ms transfer cap, 500 ms covers idle preflight, full replay,
+  // one readiness retry, and owner scheduling allowance.
+  st = adc.startInitialize(nowMs, nowMs + 500U, token); // no I2C
   initializationPending = st.inProgress();
 }
 
@@ -159,17 +190,24 @@ request.mux = ADS1115::Mux::AIN2_GND;
 request.gain = ADS1115::Gain::FSR_1_024V;
 
 const uint32_t nowMs = appNowMs();
+const uint32_t retryIntervalMs =
+    (ADS1115::worstCaseConversionTimeUs(profile.dataRate) + 7999U) / 8000U;
 const uint32_t durationMs =
     ADS1115::operationDeadlineMs(1, profile.dataRate,
-                                 3 * transport.transferTimeoutMs + 5);
+                                 4 * transport.transferTimeoutMs +
+                                 retryIntervalMs + 5U);
 st = adc.startRead(request, nowMs, nowMs + durationMs, token);
 ```
 
 `operationDeadlineMs()` returns a duration, not an absolute timestamp. It uses
 the datasheet's -10% data-rate tolerance plus a one-millisecond conversion
-guard and the caller's scheduling margin. For a read, that margin must cover
-the three possible callback runtimes plus owner scheduling jitter; the helper
-cannot infer application transport timing from a `DataRate` alone.
+guard and the caller's scheduling margin. The read example reserves four
+callbacks: start, initial OS check, one OS retry, and conversion read. It adds
+the retry interval and 5 ms of total scheduling allowance. Adapt these budgets
+to the actual owner cadence and callback cap; the helper cannot infer them
+from a `DataRate` alone. With the shown 20-ms cap, initialization/recovery can
+need 140 ms of idle guard, ten callbacks including one idle retry, and an 18-ms
+retry interval. A 500-ms deadline leaves 142 ms for owner scheduling.
 
 ## Profiles And Configuration Trust
 
@@ -179,14 +217,17 @@ default MUX/gain, data rate, mode, and comparator configuration.
 `ChannelRequest` records the application channel ID, MUX, and gain for one
 single-shot conversion.
 
-Owner initialization and recovery always perform:
+Successful owner initialization and recovery perform:
 
 1. CONFIG-register reachability probe;
-2. low-threshold, high-threshold, and CONFIG writes;
-3. low-threshold, high-threshold, and masked CONFIG readback.
+2. single-shot idle request, conservative wait, and CONFIG/OS verification when
+   activity is observed or remains uncertain;
+3. low-threshold, high-threshold, and CONFIG writes;
+4. low-threshold, high-threshold, and CONFIG readback.
 
 ADS1115 has no chip-ID register. This proves address reachability and register
-profile plausibility, not silicon identity. The dynamic CONFIG OS bit is masked.
+profile plausibility, not silicon identity. The dynamic OS bit is excluded from
+writable-field equality, but single-shot idle verification checks it separately.
 The initialization/recovery reachability read is health-tracked; the public
 diagnostic `probe()` intentionally remains raw and leaves health unchanged.
 
@@ -239,8 +280,8 @@ instead of relying on cached mode or rate fields.
 
 Initialization and recovery probe the hardware before replay. If conversion
 state remains uncertain or CONFIG shows continuous mode or an active
-conversion, they first write single-shot mode,
-wait the conservative 8-SPS interval, and verify both CONFIG and OS idle.
+conversion, they first write single-shot mode, wait the conservative 8-SPS
+interval, and verify both CONFIG and OS idle.
 Profile apply uses the same path for tracked continuous or uncertain conversion
 state. Only then does the full profile replay begin. Additional idle polls are
 bounded by the operation deadline; size the deadline for the extra transfers,
@@ -270,8 +311,10 @@ apply, recover, read, and shutdown operations.
 `done` remains false; keep polling until terminal, then call `takeResult()` and
 inspect `OperationResult::status`.
 
-When `PollResult::done` becomes true, call `takeResult()` with the matching
-token. A wrong token returns `TOKEN_MISMATCH` without consuming the result.
+For an accepted operation, when `PollResult::done` becomes true, call
+`takeResult()` with the matching token. An idle poll can also return `done=true`
+without any result; `done` means no operation is active, not that it succeeded.
+A wrong token returns `TOKEN_MISMATCH` without consuming the result.
 Reading twice returns `RESULT_NOT_AVAILABLE`. A new operation remains blocked
 until the pending terminal result is consumed.
 
@@ -283,9 +326,11 @@ until the pending terminal result is consumed.
 - configuration generation and monotonic successful-sample sequence;
 - verified-configuration and positive/negative code-limit flags.
 
-Configuration generation identifies a successful verified commit. It advances
-after each successful typed read, including consecutive reads with identical
-settings; it is not a hash or identity of the register values.
+Configuration generation counts verified configuration commits, including a
+read's CONFIG/OS verification even when settings are unchanged. That commit
+precedes the conversion-register read, so the generation can advance even if
+the sample read later fails or is cancelled. Sample sequence advances only
+when a successful sample is published.
 
 The result is a value object. No pointer into mutable driver storage is exposed.
 It contains a sequence and configuration provenance, but no timestamp,
@@ -439,10 +484,10 @@ It deliberately does not supply the production mutex or scheduling policy shown 
 4. A transport callback may block only up to its supplied timeout and must
    return a meaningful `Status`.
 5. `unbind()` and `end()` are always bus-silent; shutdown is an explicit fallible
-   operation.
-   Cancel and finish wait-idle reconciliation before unbinding an active
-   conversion; otherwise the caller must enforce the same worst-case quiet
-   interval before reusing that physical device.
+   operation. Cancel, finish reconciliation, and consume the result before
+   unbinding active work. If hardware idle is required, complete a successful
+   shutdown first. A quiet interval alone cannot stop continuous or uncertain
+   conversion activity; unbinding only discards local state.
 6. PGA full-scale selection does not change ADS1115 absolute input limits.
    Keep analog pins within the powered-device datasheet limits.
 7. The ADDR pin is continuously sampled. Board strap choice and I2C/ALERT pull-up
@@ -459,6 +504,12 @@ It deliberately does not supply the production mutex or scheduling policy shown 
    Issue it from the application when a hard device reset is required.
 
 ## Validation And Reproducibility
+
+The [2026-09-10 CI run for `ac44202`](https://github.com/janhavelka/ADS1115/actions/runs/34501370488)
+passed all nine jobs: 216 native tests, four Arduino firmware builds, native
+ESP-IDF builds for ESP32-S2 and ESP32-S3, documentation, and package/contract
+validation. This is build and host-test evidence for that commit; physical
+qualification remains open.
 
 CI pins PlatformIO Core `6.1.19`, PlatformIO Native `1.2.1`, and the exact
 pioarduino espressif32 `55.03.311` release archive. That Arduino platform
@@ -481,6 +532,8 @@ On Windows hosts with Win32 long-path support disabled, keep the wrapper's
 short default or explicitly set `PLATFORMIO_CORE_DIR` to another short,
 application-owned directory before the first package installation.
 
+On Windows, replace `python -m platformio` below with `.\scripts\pio.cmd`.
+Run native ESP-IDF commands in an environment with the selected IDF SDK active.
 Configured CI runs:
 
 ```bash
@@ -501,10 +554,10 @@ idf.py -C examples/esp_idf/basic set-target esp32s3 build
 idf.py -C examples/esp_idf/basic set-target esp32s2 build
 ```
 
-Package validation uses an explicit release allow-list, verifies that the
-tracked generated `Version.h` is present, unpacks the archive, and compiles the
-packed core with host C++11. Repository-only CI, test, tool, and reference files
-remain outside the consumer archive.
+PlatformIO package validation uses an explicit release allow-list, verifies
+that the tracked generated `Version.h` is present, unpacks the archive, and
+compiles the packed core with host C++11. Repository-only CI, test, tool, and
+reference files remain outside the consumer archive.
 
 Hardware coverage is not implied by CI. Physical qualification -- calibrated
 analog accuracy, all four address straps, ALERT/RDY and comparator electrical

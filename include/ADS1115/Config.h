@@ -17,7 +17,7 @@ namespace ADS1115 {
 /// @param data     Pointer to data to write
 /// @param len      Number of bytes to write
 /// @param timeoutMs Maximum time to wait for completion
-/// @param user     User context pointer passed through from Config
+/// @param user     Application context from DriverConfig::i2cUser or Config::i2cUser
 /// @return Meaningful library Status; preserve transport-native detail and do
 ///         not report definite address/data NACK unless the phase is proven.
 ///         Return a terminal Status: callbacks complete synchronously. Only
@@ -42,7 +42,7 @@ using I2cWriteFn = Status (*)(uint8_t addr, const uint8_t* data, size_t len,
 /// @param rxData   Pointer to buffer for read data
 /// @param rxLen    Number of bytes to read
 /// @param timeoutMs Maximum time to wait for completion
-/// @param user     User context pointer passed through from Config
+/// @param user     Application context from DriverConfig::i2cUser or Config::i2cUser
 /// @return Meaningful library Status; preserve transport-native detail and do
 ///         not report definite address/data NACK unless the phase is proven.
 ///         Return a terminal Status: callbacks complete synchronously. The
@@ -163,17 +163,20 @@ struct ComparatorProfile {
 /// @brief Non-owning transport binding used by the owner-safe API.
 ///
 /// Bus handles, pins, locking, clock rate, retries, recovery, and scheduling
-/// remain owned by the application. Each callback must enforce transferTimeoutMs.
+/// remain owned by the application. Each callback must enforce its supplied
+/// timeoutMs, which can be shorter than transferTimeoutMs after deadline/budget
+/// clamping by poll().
 /// The context and callback targets must outlive the binding. Calls require
 /// externally serialized task context and are not ISR-safe. Owner-safe bindings
 /// use the fixed passive offline threshold of five tracked consecutive failures;
-/// it is diagnostic only and never gates I2C. Owner time comes only from the
-/// nowMs argument supplied to poll(); the owner-safe path does not sample GPIO.
+/// it is diagnostic only and never gates I2C. Owner time comes from the nowMs
+/// arguments supplied to start*()/poll() in one advancing monotonic domain;
+/// the owner-safe path does not sample a clock hook or GPIO.
 struct DriverConfig {
   I2cWriteFn i2cWrite = nullptr; ///< Required application-owned write callback
   I2cWriteReadFn i2cWriteRead = nullptr; ///< Required repeated-start read callback
   void* i2cUser = nullptr; ///< Opaque application transport context
-  uint32_t transferTimeoutMs = 50; ///< Per-callback cap; poll clamps to deadline remaining
+  uint32_t transferTimeoutMs = 50; ///< Cap in 1..INT32_MAX ms; poll may supply a shorter timeout
 };
 
 /// @brief Complete desired hardware register profile.
@@ -225,6 +228,10 @@ uint32_t worstCaseConversionTimeUs(DataRate rate);
 /// @return Positive full-scale magnitude in microvolts, or zero if invalid.
 int32_t gainFullScaleMicrovolts(Gain gain);
 /// Convert a signed code to rounded ADC-input microvolts using int64 arithmetic.
+/// Scaling uses raw * fullScaleMicrovolts / 32768; the negative endpoint is
+/// exactly negative full scale and the positive endpoint is one code below
+/// positive full scale before rounding. This is nominal scaling, with no
+/// calibration or analog-range validation.
 /// @param raw Signed ADC conversion code.
 /// @param gain PGA range used for the conversion.
 /// @param[out] out Rounded ADC-input microvolts, or zero on invalid gain.
@@ -262,9 +269,15 @@ struct Config {
   // === Timing Hooks (optional; required by blocking conversion APIs) ===
   /// Monotonic source. Required by readBlocking* and by direct timing-based
   /// readiness checks that should advance without tick(nowMs)/service(nowMs).
-  /// Without this hook, health timestamps are unavailable and report as 0;
-  /// ALERT/RDY readiness still needs an external tick/service timebase to pass
-  /// the conversion interval before the GPIO path is evaluated.
+  /// Also required by synchronous initialization/recovery/profile-apply/shutdown
+  /// paths when timed idle verification is needed; see begin() and recover() for
+  /// continuing an unfinished operation through owner poll().
+  /// Direct compatibility transport timestamps report zero without this hook;
+  /// tracked owner callbacks still use their poll(nowMs) timestamp. ALERT/RDY
+  /// readiness needs an external tick/service timebase without the hook to pass
+  /// the conversion interval before the GPIO path is evaluated. When combining
+  /// these surfaces, use the same monotonic domain for the hook and start*(),
+  /// poll(), tick(), and service() timestamps.
   NowMsFn nowMs = nullptr;
   YieldFn cooperativeYield = nullptr;      ///< Cooperative scheduler hint
   void* timeUser = nullptr;                ///< User context for timing hooks
