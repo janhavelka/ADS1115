@@ -1212,7 +1212,7 @@ def parser_self_test() -> None:
             return data
 
         def flush(self) -> None:
-            pass
+            raise AssertionError("serial flush is an unbounded host drain")
 
         def write(self, data: bytes) -> int:
             command = data.replace(CLI_CANCEL_BYTE, b"").decode("ascii").strip()
@@ -1251,6 +1251,40 @@ def parser_self_test() -> None:
                 response = responses.get(command, "Status: OK\n> ")
             self.buffer += response.encode("ascii")
             return len(data)
+
+    sync_text, sync_timeout = synchronize_cli(SelfTestSerial(), 0.01)
+    if sync_timeout or not has_completed_cli_sync(sync_text):
+        raise AssertionError("full sync write must complete without host drain")
+
+    class ShortWriteSelfTestSerial(SelfTestSerial):
+        def __init__(self) -> None:
+            super().__init__()
+            self.writes = 0
+
+        def write(self, data: bytes) -> int:
+            self.writes += 1
+            return len(data) - 1
+
+        def read(self, size: int) -> bytes:
+            raise AssertionError("must not read after a partial command write")
+
+    short_sync_serial = ShortWriteSelfTestSerial()
+    try:
+        synchronize_cli(short_sync_serial, 0.01)
+        raise AssertionError("short sync write was accepted")
+    except OSError as exc:
+        if "short serial write" not in str(exc) or short_sync_serial.writes != 1:
+            raise AssertionError("short sync write must fail once with its cause")
+    short_command_serial = ShortWriteSelfTestSerial()
+    short_write_log: list[str] = []
+    short_write_row = run_one_step(
+        short_command_serial, CommandSpec("SHORT-WRITE", "Test", "read", "sample"),
+        idle_s=0.001, default_timeout_s=0.001, command_delay_s=0,
+        write_log=short_write_log.append, health_after_command=True,
+    )
+    if (short_write_row.result != RESULT_FAIL or short_command_serial.writes != 1
+            or "short serial write" not in "".join(short_write_log)):
+        raise AssertionError("partial command must fail, retain cause, and skip health query")
 
     short_soak_args = parse_args(
         [
@@ -1424,10 +1458,8 @@ def read_command_response(ser: object, idle_s: float, timeout_s: float) -> tuple
 def synchronize_cli(ser: object, timeout_s: float) -> tuple[str, bool]:
     """Cancel stale partial input and establish framing bus-silently."""
     chunks: list[bytes] = []
-    ser.write(CLI_SYNC_BYTES)
-    flush = getattr(ser, "flush", None)
-    if callable(flush):
-        flush()
+    if ser.write(CLI_SYNC_BYTES) != len(CLI_SYNC_BYTES):
+        raise OSError("short serial write while synchronizing CLI")
 
     started_at = time.monotonic()
     while (time.monotonic() - started_at) < timeout_s:
@@ -1492,8 +1524,9 @@ def run_one_step(
     write_log(f"\n>>> {spec.command}\n")
     start = time.monotonic()
     try:
-        ser.write((spec.command + "\r\n").encode("utf-8"))
-        ser.flush()
+        payload = (spec.command + "\r\n").encode("utf-8")
+        if ser.write(payload) != len(payload):
+            raise OSError("short serial write while sending command")
         if command_delay_s > 0:
             time.sleep(command_delay_s)
         response, timed_out = read_command_response(
