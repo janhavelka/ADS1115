@@ -285,7 +285,7 @@ Injected transport callbacks (DriverConfig/Config)
 - `_lastErrorMs` - timestamp of last failed I2C operation
 - `_lastError` - most recent error Status
 - `_consecutiveFailures` - failures since last success (resets on success)
-- `_totalFailures` / `_totalSuccess` - lifetime counters (wrap at max)
+- `_totalFailures` / `_totalSuccess` - lifetime counters (saturate at max)
 
 ---
 

@@ -191,3 +191,8 @@ initialization/recovery errors. A missing never-initialized target remains
 UNINIT; this is not evidence of a physical READY-to-OFFLINE unplug transition.
 Restore with `own bind 0x48`, `own init`, `own poll 255`, and a validated read.
 Keep this expected-error trace separate from healthy soak counters.
+
+`own poll 255` is capped by the driver's real per-poll callback limit; it does
+not promise completion in one call. Continue polling with advancing time until
+`Done: YES`, within the started operation's deadline, before the dependent
+command. Zero-budget polls may arm post-write waits without touching the bus.
