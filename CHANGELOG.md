@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added opt-in HIL health snapshots after each completed command, retaining
+  timestamped cache-only state/counter/error evidence without advancing jobs
+  or consuming results. Missing snapshot evidence fails the associated command.
 - Added fault-model regressions for uncertain CONFIG effects, slow-rate and
   continuous-mode drift, stale OS-idle probes, recovery interruption, and
   synchronous clock failures; explicit status-number and four-address guards

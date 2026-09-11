@@ -89,6 +89,14 @@ it is not a pass and must be closed with the analog, timing, comparator, or
 fault evidence below. Preserve coarse transport mappings as observed. Do not
 reinterpret a generic read failure as a proven address NACK.
 
+Add `--health-after-command` to capture timestamped, cache-only `drv` output
+after every completed command, including failed device operations. These inline
+snapshots retain state, counters and last-error details without I2C, owner polls
+or result consumption. They add serial overhead but never shorten an existing
+quiet interval. Snapshot failures fail the associated command; lost framing or
+a reset skips the snapshot until the runner's normal synchronization/cleanup.
+Snapshots appear in the raw transcript, not the workload operation counts.
+
 ## Electrical and Analog Procedure
 
 - Keep every analog input within ADS1115 absolute limits; PGA selection does

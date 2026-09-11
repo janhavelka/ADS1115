@@ -334,6 +334,12 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
         elif validator == "driver_ready":
             if "State: READY" not in plain and "state=READY" not in plain:
                 return "driver state is not READY"
+        elif validator == "health_snapshot":
+            if not re.search(r"\bState:\s*(UNINIT|READY|DEGRADED|OFFLINE)\b", plain):
+                return "health state not found"
+            for label in ("Consecutive failures", "Total success", "Total failures"):
+                if not re.search(rf"\b{label}:\s*\d+\b", plain):
+                    return f"health field {label} not found"
         elif validator == "firmware_clean_commit":
             match = FIRMWARE_COMMIT_RE.search(plain)
             if match is None:
@@ -1278,6 +1284,40 @@ def parser_self_test() -> None:
 
     if not CLI_SYNC_BYTES.startswith(CLI_CANCEL_BYTE) or CLI_SYNC_BYTES.startswith(b"\n"):
         raise AssertionError("CLI synchronization must cancel, not dispatch, stale partial input")
+    class HealthSelfTestSerial(SelfTestSerial):
+        def __init__(self, read_output: str, health_output: str) -> None:
+            super().__init__()
+            self.commands: list[str] = []
+            self.outputs = {"read": read_output, "drv": health_output}
+
+        def write(self, data: bytes) -> int:
+            command = data.decode("ascii").strip()
+            self.commands.append(command)
+            self.buffer += self.outputs[command].encode("ascii")
+            return len(data)
+
+    health_output = (
+        "=== Driver Health ===\nState: DEGRADED\nConsecutive failures: 1\n"
+        "Total success: 10\nTotal failures: 1\nError code: I2C_TIMEOUT\n> "
+    )
+    for read_output, snapshot, expected, commands in (
+        ("Raw: 1\n> ", health_output, RESULT_PASS, ["read", "drv"]),
+        ("Status: I2C_TIMEOUT\n> ", health_output, RESULT_FAIL, ["read", "drv"]),
+        ("Raw: 1\n> ", "=== Driver Health ===\n> ", RESULT_FAIL, ["read", "drv"]),
+        ("", health_output, RESULT_FAIL, ["read"]),
+    ):
+        serial = HealthSelfTestSerial(read_output, snapshot)
+        captured: list[str] = []
+        row = run_one_step(
+            serial, CommandSpec("HEALTH-TEST", "Test", "read", "Read sample",
+                                ("Raw:",), timeout_s=0.001),
+            idle_s=0.001, default_timeout_s=0.001, command_delay_s=0,
+            write_log=captured.append, health_after_command=True,
+        )
+        if row.result != expected or serial.commands != commands:
+            raise AssertionError("health capture must preserve failures and avoid lost framing")
+        if "drv" in commands and "Error code:" in snapshot and snapshot not in "".join(captured):
+            raise AssertionError("health error evidence must remain in the raw transcript")
     stale_prompt = "> \n=== Version Info ===\nArduino-ESP32: 3.3.11\n"
     if has_completed_cli_sync(stale_prompt):
         raise AssertionError("a stale prompt before the sync marker must not complete synchronization")
@@ -1392,7 +1432,10 @@ def run_one_step(
     default_timeout_s: float,
     command_delay_s: float,
     write_log,
+    health_after_command: bool = False,
 ) -> StepResult:
+    if health_after_command:
+        write_log(f"\n# COMMAND UTC {dt.datetime.now(dt.timezone.utc).isoformat()}\n")
     write_log(f"\n>>> {spec.command}\n")
     start = time.monotonic()
     try:
@@ -1426,9 +1469,7 @@ def run_one_step(
     result, reason = classify_output(spec, response, timed_out=timed_out)
     observed = summarize_observed(response)
     write_log(f"# RESULT {spec.test_id}: {result} - {reason} ({elapsed:.3f}s)\n")
-    if spec.post_delay_s > 0:
-        time.sleep(spec.post_delay_s)
-    return StepResult(
+    row = StepResult(
         test_id=spec.test_id,
         feature=spec.feature,
         command=spec.command,
@@ -1440,6 +1481,31 @@ def run_one_step(
         evidence_required=spec.unknown_on_pass,
         reset_observed=any(marker in strip_ansi(response) for marker in REBOOT_MARKERS),
     )
+    if health_after_command and spec.command != "drv":
+        # `drv` only reads cached health: no I2C, owner poll, or result
+        # consumption. Never send another command after lost CLI framing.
+        if timed_out or row.reset_observed:
+            write_log("# HEALTH NOT_RUN: command framing lost or target reset\n")
+        else:
+            health = run_one_step(
+                ser,
+                CommandSpec(
+                    f"{spec.test_id}-HEALTH", "Health Snapshot", "drv",
+                    "Capture cached health without advancing the driver",
+                    ("=== Driver Health ===",), ("health_snapshot",),
+                ),
+                idle_s=idle_s,
+                default_timeout_s=default_timeout_s,
+                command_delay_s=0.0,
+                write_log=write_log,
+            )
+            if health.result == RESULT_FAIL:
+                row.result = RESULT_FAIL
+                row.notes += f"; health capture failed: {health.notes}"
+                write_log(f"# HEALTH_CAPTURE_FAIL {spec.test_id}: {health.notes}\n")
+    if spec.post_delay_s > 0:
+        time.sleep(spec.post_delay_s)
+    return row
 
 
 def not_run_result(spec: CommandSpec, reason: str) -> StepResult:
@@ -1781,6 +1847,7 @@ def run_soak_epilogue(
                 default_timeout_s=args.timeout_s,
                 command_delay_s=args.command_delay_s,
                 write_log=write_log,
+                health_after_command=args.health_after_command,
             )
         except KeyboardInterrupt:
             row = runtime_failure_result(
@@ -1880,6 +1947,7 @@ def run_live(args: argparse.Namespace, specs: list[CommandSpec]) -> tuple[list[S
                             default_timeout_s=args.timeout_s,
                             command_delay_s=args.command_delay_s,
                             write_log=write_log,
+                            health_after_command=args.health_after_command,
                         )
                         rows.append(row)
                         next_spec_index = index + 1
@@ -1952,6 +2020,7 @@ def run_soak(ser: object, args: argparse.Namespace, write_log) -> SoakStats:
                     default_timeout_s=args.timeout_s,
                     command_delay_s=args.command_delay_s,
                     write_log=write_log,
+                    health_after_command=args.health_after_command,
                 )
                 row = record_soak_row(stats, row, cycle=cycle)
                 if row.result == RESULT_FAIL:
@@ -2085,6 +2154,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--command-delay-s", type=non_negative_float, default=0.0)
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--verbose", action="store_true", help="Echo transcript while running")
+    parser.add_argument("--health-after-command", action="store_true", help="Capture cache-only drv health after each framed command; snapshots stay in the raw transcript and do not count as workload operations")
     parser.add_argument("--stop-on-fail", action="store_true")
     parser.add_argument("--fail-on-unknown", "--fail-on-evidence-required",
                         dest="fail_on_unknown", action="store_true",
