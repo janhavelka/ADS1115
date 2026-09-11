@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ESP32 example startup supplies the desired frequency directly to `Wire.begin`.
+  This avoids Arduino-ESP32 3.3.11's false `setClock` failure on a newly opened
+  bus with no device handles, which previously stopped initialization before
+  any sensor transfer. Native coverage verifies the initialization frequency.
+
+
 - Example startup bus clear uses open-drain releases, one bounded clock-wait
   deadline, and checks both lines before Wire initialization. Native regressions
   reproduce the former active-HIGH drive and cover held lines and clock wrap.
