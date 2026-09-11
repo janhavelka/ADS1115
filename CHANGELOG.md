@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Owner-cancellation HIL now shares the conservative 8-SPS reconciliation
+  delay with other cancellation and cleanup paths. Cleanup accepts an already
+  completed cancellation only with matching terminal state/status and no I2C.
 - HIL staged-read plans now explicitly arm the post-write conversion wait
   before delaying and requiring completion. Three-board ESP32-S3 reproduction
   confirmed the old plans mistook the correct zero-callback arm for failure;

@@ -34,7 +34,7 @@ MAX_SOAK_DIAGNOSTIC_ROWS = 100
 # 139,889 us. Cancellation reconciliation starts its quiet interval on the
 # first owner poll after cancellation, so cleanup waits beyond that bound.
 MAX_ADS1115_CONVERSION_S = 0.140
-CLEANUP_RECONCILIATION_DELAY_S = 0.200
+RECONCILIATION_DELAY_S = MAX_ADS1115_CONVERSION_S + 0.060
 EXPECTED_ARDUINO_ESP32_VERSION = "3.3.11"
 EXPECTED_ESP_IDF_VERSION = "v5.5.5"
 CLI_SYNC_COMMAND = "version"
@@ -436,7 +436,13 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
                 and "State: WAIT_IDLE_AFTER_ABANDON" in plain
                 and status_token(plain) is not None
             )
-            if not (no_active or reconciling):
+            completed_cancel = (
+                "Done: YES" in plain
+                and "Instructions used: 0" in plain
+                and "State: CANCELLED" in plain
+                and status_token(plain) == "CANCELLED"
+            )
+            if not (no_active or reconciling or completed_cancel):
                 return "cancelled job neither armed reconciliation nor became inactive"
         elif validator == "job_reconciliation_armed":
             if not (
@@ -883,7 +889,7 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
         CommandSpec("TGT-{address}-OWN-CANCEL-READ", "Owner API", "own read 1", "Schedule a read for cancellation", ("Status: IN_PROGRESS",), ("status_in_progress",)),
         CommandSpec("TGT-{address}-OWN-CANCEL-WRITE", "Owner API", "own poll 1", "Confirm the cancellable start write", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
         CommandSpec("TGT-{address}-OWN-CANCEL", "Owner API", "own cancel", "Enter owner wait-idle reconciliation", ("=== Owner Cancel ===",), ("job_active",), expected_failure=True),
-        CommandSpec("TGT-{address}-OWN-CANCEL-ARM", "Owner API", "own poll 1", "Arm cancellation reconciliation after callback return", ("=== Owner Poll Result ===",), ("owner_poll_pending", "owner_poll_zero_callbacks"), expected_failure=True, post_delay_s=0.03),
+        CommandSpec("TGT-{address}-OWN-CANCEL-ARM", "Owner API", "own poll 1", "Arm cancellation reconciliation after callback return", ("=== Owner Poll Result ===",), ("owner_poll_pending", "owner_poll_zero_callbacks"), expected_failure=True, post_delay_s=RECONCILIATION_DELAY_S),
         CommandSpec("TGT-{address}-OWN-CANCEL-DONE", "Owner API", "own poll 1", "Complete and acknowledge cancellation reconciliation", ("=== Owner Poll Result ===", "Status: CANCELLED"), ("status_cancelled", "owner_poll_done"), expected_failure=True),
         CommandSpec("TGT-{address}-OWN-RECOVER", "Owner API", "own recover", "Schedule owner verified recovery", ("Status: IN_PROGRESS",), ("status_in_progress",)),
         CommandSpec("TGT-{address}-OWN-RECOVER-POLL-1", "Owner API", "own poll 3", "Advance owner recovery callbacks 1-3", ("=== Owner Poll Result ===",), ("owner_poll_pending",)),
@@ -944,7 +950,7 @@ def exhaustive_diagnostic_plan(address: str) -> list[CommandSpec]:
         CommandSpec("DIAG-{address}-RECON-START", "Cancellation", "job single", "Start staged job for post-write cancellation", ("=== Job Status ===",), ("job_active",)),
         CommandSpec("DIAG-{address}-RECON-WRITE", "Cancellation", "job poll 1", "Confirm the conversion-start write", ("State: SINGLE_SHOT_WAIT_CONVERSION",), timeout_s=5.0),
         CommandSpec("DIAG-{address}-RECON-CANCEL", "Cancellation", "job cancel", "Enter bus-silent wait-idle reconciliation", ("=== Job Status ===",), ("job_reconciliation_active",), expected_failure=True),
-        CommandSpec("DIAG-{address}-RECON-ARM", "Cancellation", "job poll 0", "Arm the trusted post-callback quiet interval without I2C", ("=== Job Poll Result ===",), ("job_reconciliation_armed",), expected_failure=True, post_delay_s=CLEANUP_RECONCILIATION_DELAY_S),
+        CommandSpec("DIAG-{address}-RECON-ARM", "Cancellation", "job poll 0", "Arm the trusted post-callback quiet interval without I2C", ("=== Job Poll Result ===",), ("job_reconciliation_armed",), expected_failure=True, post_delay_s=RECONCILIATION_DELAY_S),
         CommandSpec("DIAG-{address}-RECON-SETTLE", "Cancellation", "job poll 3", "Finish bounded cancellation reconciliation", ("=== Job Poll Result ===",), ("job_cleanup_terminal",), expected_failure=True),
         CommandSpec("DIAG-{address}-RECON-DIRTY", "Cancellation", "settings", "Post-write cancellation leaves configuration trust dirty", ("Hardware/cache dirty:",), ("dirty_yes",)),
         CommandSpec("DIAG-{address}-RECON-RECOVER", "Cancellation", "recover", "Reapply and verify the cached profile after cancellation", ("Status: OK",), ("status_ok",), timeout_s=8.0),
@@ -1071,6 +1077,19 @@ def parser_self_test() -> None:
     if len(targeted_ids) != len(set(targeted_ids)):
         raise AssertionError("targeted plan test IDs must be unique")
     targeted = {spec.test_id: spec for spec in targeted_plan}
+    if targeted["TGT-48-OWN-CANCEL-ARM"].post_delay_s < MAX_ADS1115_CONVERSION_S:
+        raise AssertionError("owner cancellation must wait beyond the conservative 8-SPS bound")
+    cleanup_arm = CommandSpec("T", "Cleanup", "job poll 0", "", (),
+                              ("job_cleanup_armed_or_inactive",), expected_failure=True)
+    for state, done, status, expected in (
+        ("CANCELLED", "YES", "CANCELLED", RESULT_PASS),
+        ("WAIT_IDLE_AFTER_ABANDON", "YES", "CANCELLED", RESULT_FAIL),
+        ("CANCELLED", "NO", "CANCELLED", RESULT_FAIL),
+        ("CANCELLED", "YES", "IN_PROGRESS", RESULT_FAIL),
+    ):
+        output = f"Status: {status}\nInstructions used: 0\nDone: {done}\nState: {state}\n> "
+        if classify_output(cleanup_arm, output)[0] != expected:
+            raise AssertionError("completed cancellation cleanup requires matching state/status and Done:YES")
     continuous = targeted.get("TGT-48-MODE-RAW")
     if continuous is None or continuous.command != "raw" or continuous.validators != ("raw_sample",):
         raise AssertionError("targeted continuous-mode contract must use latest raw diagnostics")
@@ -1566,7 +1585,7 @@ def soak_epilogue_plan(addresses: list[str]) -> list[CommandSpec]:
             ("=== Job Poll Result ===", "No active pollable job"),
             ("job_cleanup_armed_or_inactive",),
             expected_failure=True,
-            post_delay_s=CLEANUP_RECONCILIATION_DELAY_S,
+            post_delay_s=RECONCILIATION_DELAY_S,
         ),
         CommandSpec(
             "SOAK-EPILOGUE-SETTLE-CURRENT",
