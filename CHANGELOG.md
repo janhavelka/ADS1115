@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Removed unnecessary scanner console flushes. The native USB flush API can
+  discard queued text on a transient disconnected observation; normal queued
+  writes retain ordering. This is the same audited console hazard as the
+  reproduced INA228 HIL trailer loss, not a claimed scanner hardware failure.
+
+- HIL health capture now checks every complete status/counter/time line and
+  any recorded error details, rejecting deleted or partial diagnostic evidence.
+
 - ESP32 example startup supplies the desired frequency directly to `Wire.begin`.
   This avoids Arduino-ESP32 3.3.11's false `setClock` failure on a newly opened
   bus with no device handles, which previously stopped initialization before

@@ -335,11 +335,24 @@ def validate_output(spec: CommandSpec, text: str) -> str | None:
             if "State: READY" not in plain and "state=READY" not in plain:
                 return "driver state is not READY"
         elif validator == "health_snapshot":
-            if not re.search(r"\bState:\s*(UNINIT|READY|DEGRADED|OFFLINE)\b", plain):
-                return "health state not found"
-            for label in ("Consecutive failures", "Total success", "Total failures"):
-                if not re.search(rf"\b{label}:\s*\d+\b", plain):
-                    return f"health field {label} not found"
+            required_lines = (
+                r"=== Driver Health ===",
+                r"State: (?:UNINIT|READY|DEGRADED|OFFLINE)",
+                r"Online: (?i:yes|no)",
+                r"Consecutive failures: \d+",
+                r"Total success: \d+",
+                r"Total failures: \d+",
+                r"Success rate: \d+\.\d+%",
+                r"Last OK: (?:never|\d+ ms ago \(at \d+ ms\))",
+                r"Last error: (?:never|\d+ ms ago \(at \d+ ms\))",
+            )
+            for pattern in required_lines:
+                if len(re.findall(rf"(?m)^[ \t]*{pattern}[ \t]*$", plain)) != 1:
+                    return f"incomplete health line: {pattern}"
+            if re.search(r"(?m)^[ \t]*Last error: \d", plain) or "Error code:" in plain:
+                for pattern in (r"Error code: [A-Z0-9_]+", r"Error detail: -?\d+"):
+                    if len(re.findall(rf"(?m)^[ \t]*{pattern}[ \t]*$", plain)) != 1:
+                        return f"incomplete health error line: {pattern}"
         elif validator == "firmware_clean_commit":
             match = FIRMWARE_COMMIT_RE.search(plain)
             if match is None:
@@ -1328,9 +1341,18 @@ def parser_self_test() -> None:
             return len(data)
 
     health_output = (
-        "=== Driver Health ===\nState: DEGRADED\nConsecutive failures: 1\n"
-        "Total success: 10\nTotal failures: 1\nError code: I2C_TIMEOUT\n> "
+        "=== Driver Health ===\nState: DEGRADED\nOnline: yes\nConsecutive failures: 1\n"
+        "Total success: 10\nTotal failures: 1\nSuccess rate: 90.9%\n"
+        "Last OK: 2 ms ago (at 10 ms)\nLast error: 1 ms ago (at 11 ms)\n"
+        "Error code: I2C_TIMEOUT\nError detail: 5\n> "
     )
+    health_spec = CommandSpec("HEALTH-COMPLETE", "Test", "drv", "Complete health",
+                              ("=== Driver Health ===",), ("health_snapshot",))
+    for line in health_output.splitlines(keepends=True):
+        if line.startswith(">"):
+            continue
+        if validate_output(health_spec, health_output.replace(line, "")) is None:
+            raise AssertionError("missing health line accepted: " + line.strip())
     for read_output, snapshot, expected, commands in (
         ("Raw: 1\n> ", health_output, RESULT_PASS, ["read", "drv"]),
         ("Status: I2C_TIMEOUT\n> ", health_output, RESULT_FAIL, ["read", "drv"]),
