@@ -749,7 +749,8 @@ def per_address_plan(address: str, *, full: bool, benchmark: bool) -> list[Comma
             CommandSpec("DIRTY-{address}-004", "Dirty State", "settings", "Dirty state clears after recovery", ("Hardware/cache dirty:",), ("dirty_no",), timeout_s=5.0),
             CommandSpec("JOB-{address}-001", "Staged Jobs", "job single", "Start poll-chunked single-shot job", ("Status:", "=== Job Status ==="), ("job_active",), timeout_s=5.0),
             CommandSpec("JOB-{address}-002", "Staged Jobs", "job poll 0", "Zero-budget poll consumes no transport instructions", ("=== Job Poll Result ===",), ("job_zero_budget",), timeout_s=5.0),
-            CommandSpec("JOB-{address}-003", "Staged Jobs", "job poll 1", "One-instruction poll advances single-shot job", ("=== Job Poll Result ===",), timeout_s=5.0, post_delay_s=0.03),
+            CommandSpec("JOB-{address}-003", "Staged Jobs", "job poll 1", "One-instruction poll advances single-shot job", ("=== Job Poll Result ===",), timeout_s=5.0),
+            CommandSpec("JOB-{address}-ARM", "Staged Jobs", "job poll 0", "Arm the post-callback wait without I2C", ("State: SINGLE_SHOT_WAIT_CONVERSION",), ("job_zero_budget",), post_delay_s=0.03),
             CommandSpec("JOB-{address}-004", "Staged Jobs", "job poll 3", "Full-budget poll completes single-shot job", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
             CommandSpec("JOB-{address}-005", "Staged Jobs", "job apply", "Start poll-chunked config apply job", ("Status:", "=== Job Status ==="), ("job_active",), timeout_s=5.0),
             CommandSpec("JOB-{address}-006", "Staged Jobs", "job poll 0", "Zero-budget apply poll consumes no instructions", ("=== Job Poll Result ===",), ("job_zero_budget",), timeout_s=5.0),
@@ -856,7 +857,8 @@ def targeted_address_plan(address: str) -> list[CommandSpec]:
         CommandSpec("TGT-{address}-JOB-SINGLE-BUSY", "Staged Jobs", "job single", "Repeated single-shot job start is BUSY", ("Status:",), ("status_busy",), timeout_s=5.0),
         CommandSpec("TGT-{address}-JOB-POLL0", "Staged Jobs", "job poll 0", "Zero-budget poll consumes no instructions", ("=== Job Poll Result ===",), ("job_zero_budget",), timeout_s=5.0),
         CommandSpec("TGT-{address}-JOB-READ-BUSY", "Staged Jobs", "read", "Read is BUSY while staged job is active", ("Status:",), ("status_busy",), timeout_s=5.0),
-        CommandSpec("TGT-{address}-JOB-POLL1", "Staged Jobs", "job poll 1", "One-instruction poll advances job", ("=== Job Poll Result ===",), timeout_s=5.0, post_delay_s=0.03),
+        CommandSpec("TGT-{address}-JOB-POLL1", "Staged Jobs", "job poll 1", "One-instruction poll advances job", ("=== Job Poll Result ===",), timeout_s=5.0),
+        CommandSpec("TGT-{address}-JOB-ARM", "Staged Jobs", "job poll 0", "Arm the post-callback wait without I2C", ("State: SINGLE_SHOT_WAIT_CONVERSION",), ("job_zero_budget",), post_delay_s=0.03),
         CommandSpec("TGT-{address}-JOB-POLL255", "Staged Jobs", "job poll 255", "Huge budget is clamped and completes single-shot job", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
         CommandSpec("TGT-{address}-JOB-POLL-DONE", "Staged Jobs", "job poll", "Poll after complete reports no active job", ("No active pollable job",), ("no_active_job",), timeout_s=5.0),
         CommandSpec("TGT-{address}-JOB-APPLY", "Staged Jobs", "job apply", "Start staged config apply job", ("=== Job Status ===",), ("job_active",), timeout_s=5.0),
@@ -989,7 +991,8 @@ def soak_step_plan(addresses: list[str]) -> list[CommandSpec]:
         CommandSpec("SOAK-{address}-NOMINAL-GAIN", "Soak", "gain 2", "Nominal range restore", ("Status: OK",), ("status_ok",)),
         CommandSpec("SOAK-{address}-NOMINAL-RATE", "Soak", "rate 4", "Nominal rate restore", ("Status: OK",), ("status_ok",)),
         CommandSpec("SOAK-{address}-JOB", "Soak", "job single", "Staged single-shot start", ("=== Job Status ===",), ("job_active",)),
-        CommandSpec("SOAK-{address}-JOB-P1", "Soak", "job poll 1", "Staged single-shot first poll", ("=== Job Poll Result ===",), timeout_s=5.0, post_delay_s=0.03),
+        CommandSpec("SOAK-{address}-JOB-P1", "Soak", "job poll 1", "Staged single-shot first poll", ("=== Job Poll Result ===",), timeout_s=5.0),
+        CommandSpec("SOAK-{address}-JOB-ARM", "Soak", "job poll 0", "Arm the post-callback wait without I2C", ("State: SINGLE_SHOT_WAIT_CONVERSION",), ("job_zero_budget",), post_delay_s=0.03),
         CommandSpec("SOAK-{address}-JOB-P3", "Soak", "job poll 3", "Staged single-shot completion", ("=== Job Poll Result ===",), ("job_done",), timeout_s=8.0),
         CommandSpec("SOAK-{address}-SETTINGS", "Soak", "settings", "Settings snapshot", ("=== Cached Settings ===",), ("driver_ready",), timeout_s=5.0),
         CommandSpec("SOAK-{address}-DRV", "Soak", "drv", "Health snapshot", ("=== Driver Health ===",), ("driver_ready",), timeout_s=5.0),
@@ -1082,6 +1085,15 @@ def parser_self_test() -> None:
             apply_poll_2 is None or "job_done" not in apply_poll_2.validators):
         raise AssertionError("six-transfer staged apply must require both clamped polls")
     full_plan = per_address_plan("0x48", full=True, benchmark=False)
+    for plan, write_id in (
+        (full_plan, "JOB-48-003"),
+        (targeted_plan, "TGT-48-JOB-POLL1"),
+        (soak_step_plan(["0x48"]), "SOAK-48-JOB-P1"),
+    ):
+        write_index = next(index for index, item in enumerate(plan) if item.test_id == write_id)
+        arm = plan[write_index + 1]
+        if arm.command != "job poll 0" or "job_zero_budget" not in arm.validators or arm.post_delay_s < 0.03:
+            raise AssertionError("each staged read must arm its post-write wait before delaying for completion")
     full_ids = [spec.test_id for spec in full_plan]
     if len(full_ids) != len(set(full_ids)):
         raise AssertionError("full address plan test IDs must be unique")

@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- HIL staged-read plans now explicitly arm the post-write conversion wait
+  before delaying and requiring completion. Three-board ESP32-S3 reproduction
+  confirmed the old plans mistook the correct zero-callback arm for failure;
+  one additional poll completed with zero transport failures on every board.
+- Corrected the diagnostic startup message to reflect the adapter's existing
+  per-callback Wire timeout configuration.
 - Increased the README and production owner example's initialization/recovery
   deadline from 200 ms to 500 ms. With a 20-ms callback cap, the prior budget
   could expire during a valid conservative idle preflight and profile replay.

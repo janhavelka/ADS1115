@@ -2046,7 +2046,7 @@ void setup() {
        board::I2C_SCL,
        static_cast<unsigned long>(board::I2C_FREQ_HZ),
        static_cast<unsigned>(board::I2C_TIMEOUT_MS));
-  LOGW("Arduino example adapter uses Wire's global timeout; per-call timeoutMs is advisory");
+  LOGI("Arduino example adapter applies each callback timeout to Wire");
 
   board::initAlertRdyPin();
 
