@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-09-12
+
 ### Added
 
 - Added opt-in HIL health snapshots after each completed command, retaining
@@ -24,35 +26,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The HIL runner now rejects partial serial writes immediately, preserves the
+  host-side error, and does not read, flush, or issue a follow-up health command
+  after incomplete command transmission. A soak that reaches its duration
+  without completing a cycle now fails while still running its bounded cleanup.
+- The owner-safe README quick start now constructs `DriverConfig` using C++11-
+  compatible member assignment, matching the core library's documented minimum
+  language level.
 - Removed unnecessary scanner console flushes. The native USB flush API can
   discard queued text on a transient disconnected observation; normal queued
-  writes retain ordering. This is the same audited console hazard as the
-  reproduced INA228 HIL trailer loss, not a claimed scanner hardware failure.
-
+  writes retain ordering.
 - HIL health capture now checks every complete status/counter/time line and
   any recorded error details, rejecting deleted or partial diagnostic evidence.
-
 - ESP32 example startup supplies the desired frequency directly to `Wire.begin`.
   This avoids Arduino-ESP32 3.3.11's false `setClock` failure on a newly opened
   bus with no device handles, which previously stopped initialization before
   any sensor transfer. Native coverage verifies the initialization frequency.
-
-
 - Example startup bus clear uses open-drain releases, one bounded clock-wait
   deadline, and checks both lines before Wire initialization. Native regressions
   reproduce the former active-HIGH drive and cover held lines and clock wrap.
 - The diagnostic `own bind [address]` accepts only 0x48..0x4B, preserves the
   existing binding on rejection, and reports the bound address separately from
   the last initialized address so real missing-device recovery can be tested.
-
-
 - Owner-cancellation HIL now shares the conservative 8-SPS reconciliation
   delay with other cancellation and cleanup paths. Cleanup accepts an already
   completed cancellation only with matching terminal state/status and no I2C.
 - HIL staged-read plans now explicitly arm the post-write conversion wait
-  before delaying and requiring completion. Three-board ESP32-S3 reproduction
-  confirmed the old plans mistook the correct zero-callback arm for failure;
-  one additional poll completed with zero transport failures on every board.
+  before delaying and requiring completion. The old plans mistook the correct
+  zero-callback arm step for a failure.
 - Corrected the diagnostic startup message to reflect the adapter's existing
   per-callback Wire timeout configuration.
 - Increased the README and production owner example's initialization/recovery
@@ -91,8 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once through `takeResult()`.
 - Public API comments now describe configuration trust, cancellation after
   verified idle, original-error preservation, verified-commit generations, and
-  shared clock domains. The README distinguishes unreleased behavior from the
-  pinned release, and the audit backlog contains only unresolved findings.
+  shared clock domains. The README documents the release behavior and pinned
+  installation.
 - Native builds enable compiler warnings; ESP-IDF component packages explicitly
   exclude local PlatformIO state and HIL logs.
 - The Arduino example transport now applies the driver-supplied per-callback
@@ -136,9 +137,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   desired profile, so `recover()` and `startRecover()` replay what the operator
   set instead of silently reverting to the profile captured at `bind()`/`begin()`
   while reporting success.
-- Readiness polling no longer promotes configuration trust to `VERIFIED` or
-  increments the configuration generation from a CONFIG-only readback that never
-  read the threshold registers. It still detects CONFIG drift.
+- Direct compatibility readiness polling no longer promotes configuration trust
+  to `VERIFIED` or increments the configuration generation from a CONFIG-only
+  readback that never read the threshold registers. It still detects CONFIG
+  drift; owner-safe typed reads retain their verified-commit behavior.
 - Continuous-mode settle windows are honored in three cases that skipped them:
   initialization no longer exempts itself from the two-period settle,
   `readLatestRaw()` no longer resets the settle counter, and a compatibility
@@ -190,12 +192,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was unreachable; PGA alias normalization is unchanged.
 - `service()` no longer duplicates the readiness timing rule. It delegates to
   the readiness path, which already owns the two-period continuous settle.
-- Replaced the completed one-off audit report with `docs/CODE_AUDIT.md`, an
-  open backlog limited to confirmed, actionable defects and contract gaps.
-  Corrected the differential-channel count, the data-rate tolerance wording, the
+- Corrected the differential-channel count, the data-rate tolerance wording, the
   continuous-mode settle step, and two missing I2C limits in the datasheet
   reference notes.
-
 - `enableConversionReadyPin()` applies through the shared operation engine, and
   the duplicate synchronous apply/verify implementation (`_applyConfig()`,
   `_verifyConfigReadback()`) is removed. The five hand-rolled copies of the
@@ -208,9 +207,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cancelActiveOperation()`, `disableComparator()`'s threshold behavior,
   `getConfig()`'s exposure of the live transport callbacks, and the `Mux`
   "default" marker.
-- Reduced the documentation set to current contracts: removed prompt-era and
-  subagent-role material from `AGENTS.md`, the embedded HIL run report from
-  `README.md`, and duplicated evidence-retention policy across `docs/`.
+- Reduced the documentation set to durable current contracts: removed completed
+  audit backlogs, obsolete internal process material, embedded HIL reports, and
+  duplicated validation/evidence tracking while preserving the reusable hardware
+  procedures, results template, and datasheet reference corpus.
 - Lowered the framework-neutral core and packed-component requirement to C++11,
   added ESP-IDF repository-file exclusions, deterministic build metadata with
   optional `SOURCE_DATE_EPOCH`, and compile-time register/enum contract checks.
@@ -432,8 +432,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HIL runner analog/electrical evidence gaps are reported as
   `EVIDENCE_REQUIRED`; `UNKNOWN` is reserved for genuinely ambiguous runner
   outcomes.
-- Release-facing docs now collapse prompt-era COM8 HIL reports and tracked local
-  HIL summaries into one compact validation summary.
+- Release-facing docs now collapse obsolete HIL reports and tracked local
+  summaries into one compact validation summary.
 
 ### Fixed
 - First poll-single-shot CONFIG write failures no longer mark hardware/cache
@@ -473,8 +473,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Driver core timing/yield ownership moved fully behind application callbacks;
   Arduino examples now provide explicit timing hooks instead of relying on core fallbacks.
-- Doxyfile project metadata now matches `library.json`, and archived prompt
-  metadata no longer contains placeholder ownership values.
+- Doxyfile project metadata now matches `library.json`.
 - Core guard script now rejects framework leakage and dynamic allocation patterns
   in `include/` and `src/`, including Arduino/Wire symbols, ESP-IDF/FreeRTOS
   symbols, logging calls, `std::string`, `std::vector`, and heap allocation.
@@ -493,9 +492,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sources or compatibility facades.
 - `examples/common/` is now Arduino example glue only; the IDF example owns its
   native stdio CLI, GPIO, timing, scan, and transport code.
-- Release-facing documentation now has an explicit `docs/README.md` index.
-  Historical audit and hardening reports were separated from active guidance
-  at release and removed in the later documentation cleanup.
+- Release-facing documentation now has an explicit `docs/README.md` index that
+  points to current guidance and the retained reference corpus.
 - README validation wording now distinguishes limited COM19 HIL evidence from
   hardware validation that remains pending.
 
@@ -598,7 +596,8 @@ Includes earlier development work that had no separate published release.
 - Comparator configuration and ALERT/RDY support
 - Bringup CLI example for ESP32-S2 / ESP32-S3
 
-[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/janhavelka/ADS1115/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/janhavelka/ADS1115/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/janhavelka/ADS1115/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/janhavelka/ADS1115/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...v1.2.0

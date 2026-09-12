@@ -1,7 +1,7 @@
 # ADS1115 Documentation
 
-Only current contracts, open work, and the datasheet reference corpus belong
-here.
+Only durable current contracts, open validation work, reusable procedures, and
+the datasheet reference corpus belong here.
 
 ## Current documents
 
@@ -9,7 +9,6 @@ here.
 | --- | --- |
 | [`../README.md`](../README.md) | User guide, owner-safe API contract, examples, and reproducible checks. |
 | [`OPEN_ITEMS.md`](OPEN_ITEMS.md) | Outstanding hardware and integration evidence only. |
-| [`CODE_AUDIT.md`](CODE_AUDIT.md) | Open, independently confirmed code defects and contract gaps. |
 | [`IDF_PORT.md`](IDF_PORT.md) | ESP-IDF adapter ownership, timeout, and error-mapping contract. |
 | [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for physical validation, including the evidence-retention rule. |
 | [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md) | Dated hardware-result template. |

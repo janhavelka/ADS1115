@@ -11,10 +11,8 @@ surface of synchronous facades and direct register setters is retained for
 bring-up and service tools. Outstanding hardware qualification is tracked in
 [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md).
 
-This README describes the current source tree, including the fixes listed in
-[`CHANGELOG.md` under Unreleased](CHANGELOG.md#unreleased). The `v2.0.1` tag
-predates those fixes; use the documentation at that tag when consuming that
-release.
+This README describes version 2.0.2. See [`CHANGELOG.md`](CHANGELOG.md) for the
+release history and any subsequent unreleased changes.
 
 ## Production Contract
 
@@ -66,19 +64,12 @@ All driver calls require external serialization. No public API is ISR-safe.
 - Partial/ambiguous write diagnostics and explicit configuration trust state
 - Native ESP-IDF component metadata and diagnostic example
 
-## Scope And Remaining Work
+## Scope And Project Status
 
-The reviewed core has no open confirmed defects in
-[`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md). Known follow-ups beyond hardware
-qualification are:
-
-- **Release the accumulated fixes.** They are under `Unreleased`; the published
-  `v2.0.1` tag does not include them. Until a new release is approved, consume a
-  reviewed commit containing the fixes.
-- **Provide a dedicated native ESP-IDF production owner-loop example** if that
-  integration is needed. The current native IDF example is a diagnostic CLI;
-  the complete production ownership example uses Arduino. The same core owner
-  API is available to both frameworks.
+The native ESP-IDF example is a diagnostic CLI; the complete production
+owner-loop example uses Arduino. The same core owner API is available to both
+frameworks, but a dedicated native ESP-IDF production owner-loop example is not
+currently included.
 
 Production acquisition intentionally supports one single-shot request at a
 time, using CONFIG polling. Continuous acquisition and the legacy GPIO
@@ -92,18 +83,15 @@ implementations. Board and workload qualification remains in
 
 The framework-neutral core requires C++11. Repository examples build as C++17.
 Pin production dependencies to an approved tag or full commit instead of
-tracking a moving branch. The following example installs the published
-`v2.0.1` source, which excludes the Unreleased changes described above:
+tracking a moving branch. The following example installs version `v2.0.2`:
 
 ```ini
 lib_deps =
-  https://github.com/janhavelka/ADS1115.git#v2.0.1
+  https://github.com/janhavelka/ADS1115.git#v2.0.2
 ```
 
 For ESP-IDF, place the repository under the application's `components/`
-directory and pin it, for example with a submodule checked out at `v2.0.1`.
-To consume Unreleased fixes, pin a reviewed full commit containing them in
-either integration.
+directory and pin it, for example with a submodule checked out at `v2.0.2`.
 The native component example is under `examples/esp_idf/basic`. A source-vendored
 installation must preserve both `include/ADS1115/` and `src/`.
 
@@ -145,8 +133,11 @@ ADS1115::OperationToken token;
 bool initializationPending = false;
 
 // In setup():
-ADS1115::DriverConfig transport{
-    appI2cWrite, appI2cWriteRead, &sharedBusOwner, 20};
+ADS1115::DriverConfig transport;
+transport.i2cWrite = appI2cWrite;
+transport.i2cWriteRead = appI2cWriteRead;
+transport.i2cUser = &sharedBusOwner;
+transport.transferTimeoutMs = 20;
 
 ADS1115::DeviceProfile profile;
 profile.i2cAddress = 0x48;
@@ -438,15 +429,12 @@ The affected address remains available through
 `SettingsSnapshot::hardwareConfigDirtyAddress`. Only a complete verified replay
 clears the dirty state.
 
-## Migration From v2.0.1 To Unreleased
+## Migration From v2.0.1 To v2.0.2
 
-The latest published release is
-[v2.0.1](https://github.com/janhavelka/ADS1115/releases/tag/v2.0.1).
-Current development retains the owner-polled API while correcting uncertainty,
-sample validity and recovery behavior. Keep honoring operation results and
-hardware-config-dirty state, and review the
-[Unreleased notes](CHANGELOG.md#unreleased) before rebuilding against a chosen
-source commit. The older 1.x compatibility surface is described below.
+Version 2.0.2 retains the owner-polled API while correcting uncertainty, sample
+validity, and recovery behavior. Keep honoring operation results and
+hardware-config-dirty state, and review the [2.0.2 notes](CHANGELOG.md) before
+upgrading. The older 1.x compatibility surface is described below.
 
 ## Migrating From 1.x And Advanced Diagnostics
 
@@ -515,8 +503,8 @@ It deliberately does not supply the production mutex or scheduling policy shown 
 
 ## Validation And Reproducibility
 
-The [2026-09-10 CI run for `ac44202`](https://github.com/janhavelka/ADS1115/actions/runs/34501370488)
-passed all nine jobs: 216 native tests, four Arduino firmware builds, native
+The [2026-09-12 CI run for `4a1c4aa`](https://github.com/janhavelka/ADS1115/actions/runs/34684794645)
+passed all nine jobs: 218 native tests, four Arduino firmware builds, native
 ESP-IDF builds for ESP32-S2 and ESP32-S3, documentation, and package/contract
 validation. This is build and host-test evidence for that commit; physical
 qualification remains open.

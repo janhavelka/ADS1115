@@ -16,22 +16,6 @@ Do not commit full serial transcripts, generated runner summaries, firmware
 dumps, or superseded fixture notes. Store required lab evidence in the approved
 evidence system and record its stable reference in the dated result.
 
-## Unfinished Gates
-
-| Gate | Required coverage | Evidence needed |
-| --- | --- | --- |
-| Runtime identity | Clean firmware matching the intended commit, pioarduino `55.03.311`, Arduino-ESP32 `3.3.11`, ESP-IDF `v5.5.5`, and build timestamp | Build and startup identity record |
-| Arduino diagnostic HIL (remaining) | ESP32-S3 targeted and exhaustive plans, including `own bind/init/read/poll/cancel/recover/shutdown/unbind`; populated and expected-absent addresses | Dated result and external evidence reference |
-| Address straps | Physical ADDR-to-GND/VDD/SDA/SCL setups (`0x48`-`0x4B`) | Wiring record/photo and observed address behavior |
-| Calibrated analog | All eight MUX choices, six PGA ranges, and eight data rates using safe, measured sources | DMM/source readings, raw codes, converted values, tolerances |
-| Timing and ALERT/RDY | Single-shot readiness and 8/128/860 SPS timing; conversion-ready pulses | Timestamp data and scope/logic captures |
-| Comparator electrical | Traditional/window, polarity, latch, and queue depth | Applied stimulus, thresholds, output levels, captures |
-| Physical faults and recovery | Missing device, unplug/replug, stuck SDA/SCL, ADS1115 brownout/reset, raw-write dirty state, partial/ambiguous transfer | Exact status/detail/message, dirty/trust state, recovery result |
-| Shared-bus workload | External serialization, contention, bounded callback latency, cancellation/reconciliation, production task cadence | Compact integration timing/fault result |
-| Native ESP-IDF hardware | ESP32-S2 and ESP32-S3 native examples; no Arduino compatibility layer | Compact build/flash/monitor outcomes |
-| Final-workload endurance | Acceptance-duration nominal soak and worst-rate stress on the selected final board/workload, with limits chosen before the run | Duration, cycles/commands, latency, failures, resets, environment |
-| Final-board acceptance | Actual product board supply, pull-ups, protection, source impedance, disconnect/saturation behavior, calibration | Schematic/setup identity and signed acceptance record |
-
 ## Record Identity Before Testing
 
 Use `docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`. At minimum record:
@@ -58,6 +42,9 @@ python scripts/generate_version.py check
 python -m platformio run -e esp32s2dev
 python -m platformio run -e esp32s3dev
 ```
+
+On Windows, use `.\scripts\pio.cmd run -e <environment>` for PlatformIO
+commands as required by the repository workflow.
 
 Do not proceed as release-candidate evidence if the worktree or runtime
 `version` output is dirty, or if the firmware identity does not match the

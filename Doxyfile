@@ -2,7 +2,7 @@
 # Generated and maintained for unified API documentation.
 
 PROJECT_NAME           = "ADS1115"
-PROJECT_NUMBER         = "2.0.1"
+PROJECT_NUMBER         = "2.0.2"
 PROJECT_BRIEF          = "ADS1115 embedded library API documentation"
 OUTPUT_DIRECTORY       = docs/doxygen
 CREATE_SUBDIRS         = NO
@@ -36,7 +36,6 @@ INPUT                  = README.md \
                          include \
                          docs/README.md \
                          docs/OPEN_ITEMS.md \
-                         docs/CODE_AUDIT.md \
                          docs/IDF_PORT.md \
                          docs/ADS1115_HARDWARE_VALIDATION_PLAN.md \
                          docs/ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md

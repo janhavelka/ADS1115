@@ -18,7 +18,7 @@ public:
   bool setClock(uint32_t freq) { (void)freq; ++_clockCalls; return _clockResult; }
   void setTimeOut(uint32_t timeoutMs) { _timeoutMs = timeoutMs; }
   uint32_t getTimeOut() const { return _timeoutMs; }
-  
+
   void beginTransmission(uint8_t addr) {
     (void)addr;
     _txLen = 0;
@@ -33,8 +33,8 @@ public:
     return accepted;
   }
   uint8_t endTransmission(bool stop = true) { (void)stop; return _endTransmissionResult; }
-  
-  size_t requestFrom(uint8_t addr, size_t len) { 
+
+  size_t requestFrom(uint8_t addr, size_t len) {
     (void)addr;
     if (_requestFromOverrideEnabled) {
       _rxLen = _requestFromOverride;
@@ -44,9 +44,9 @@ public:
     _rxIdx = 0;
     return _rxLen;
   }
-  
+
   int available() { return _rxLen - _rxIdx; }
-  int read() { 
+  int read() {
     if (_rxIdx < _rxLen) {
       ++_rxIdx;
       return 0;
