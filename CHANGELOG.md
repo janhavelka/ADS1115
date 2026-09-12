@@ -516,38 +516,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardware/build validation status must be tracked through explicit run logs,
   not inferred from this changelog entry.
 
-## [0.4.0] - 2026-04-05
+### Earlier development work
 
-### Added
+Includes earlier development work that had no separate published release.
+
+#### Added
 - Public lifecycle introspection helpers: `isInitialized()` and `getConfig()`.
 - Public tracked raw-register helpers: `readRegister16()` and `writeRegister16()`.
 - `Err::MEASUREMENT_NOT_READY` alias for cross-library uniformity.
 
-### Changed
+#### Changed
 - `end()` now best-effort returns the ADC to single-shot idle and clears cached conversion state.
 - `recover()` now clears conversion state and re-applies cached configuration after the tracked probe succeeds.
 - Bringup CLI now exposes `reg` / `wreg` diagnostics for raw register inspection and service writes.
 
-## [0.3.0] - 2026-04-03
-
-### Added
+#### Added
 - Granular I2C transport status codes: `I2C_NACK_ADDR`, `I2C_NACK_DATA`, `I2C_TIMEOUT`, and `I2C_BUS`.
 
-### Changed
+#### Changed
 - Documented the newer transport contract in the README, including granular `I2C_*` status mapping, `i2cUser` usage, and manager-owned timeout guidance.
 - `examples/common/I2cTransport.h` now uses `TwoWire*` via `i2cUser`, validates buffer parameters, and treats per-call `timeoutMs` as advisory.
 - Added native coverage for raw transport parameter validation.
 
-### Fixed
+#### Fixed
 - `_i2cWriteRaw()` and `_i2cWriteReadRaw()` now reject null and zero-length transactions before calling the injected transport.
 
-## [0.2.1] - 2026-04-03
-
-### Added
+#### Added
 - `CommandHandler.h` example helper for serial command parsing (`cmd::readLine`, `cmd::match`, `cmd::parseInt`).
 - `HealthDiag.h` example helper with verbose health diagnostics, color-coded output, snapshots, diffs, and `HealthMonitor` class for continuous monitoring.
 
-### Changed
+#### Changed
 - `I2cScanner.h` upgraded: advanced table-format scan, bus recovery via `recoverBus()`, timeout support, yield() calls, common address hints, `LOG_SERIAL` macro usage.
 - `I2cTransport.h` upgraded: `TwoWire*` via user pointer (no global Wire), null pointer checks, 128-byte buffer validation, detailed per-error-code mapping, `ARDUINO_ARCH_ESP32` guards.
 - `BusDiag.h` updated to use `i2c_scanner::scan(Wire)` and include `<Wire.h>`.
@@ -605,10 +603,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [2.0.0]: https://github.com/janhavelka/ADS1115/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/janhavelka/ADS1115/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/janhavelka/ADS1115/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.4.0...v1.0.0
-[0.4.0]: https://github.com/janhavelka/ADS1115/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.1...v0.3.0
-[0.2.1]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...v0.2.1
+[1.0.0]: https://github.com/janhavelka/ADS1115/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/janhavelka/ADS1115/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/janhavelka/ADS1115/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/janhavelka/ADS1115/compare/v0.1.0...v0.1.1

@@ -438,6 +438,16 @@ The affected address remains available through
 `SettingsSnapshot::hardwareConfigDirtyAddress`. Only a complete verified replay
 clears the dirty state.
 
+## Migration From v2.0.1 To Unreleased
+
+The latest published release is
+[v2.0.1](https://github.com/janhavelka/ADS1115/releases/tag/v2.0.1).
+Current development retains the owner-polled API while correcting uncertainty,
+sample validity and recovery behavior. Keep honoring operation results and
+hardware-config-dirty state, and review the
+[Unreleased notes](CHANGELOG.md#unreleased) before rebuilding against a chosen
+source commit. The older 1.x compatibility surface is described below.
+
 ## Migrating From 1.x And Advanced Diagnostics
 
 The 1.x surface remains available for migration, bring-up, and service tools,
