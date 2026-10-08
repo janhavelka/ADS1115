@@ -1,5 +1,7 @@
 # AGENTS.md - ADS1115 Production Embedded Guidelines
 
+Always synchronize Git with the intended upstream branch before starting work by fetching and fast-forwarding safely, preserving existing local changes and reporting any divergence, conflict, or synchronization failure.
+
 ## PlatformIO
 
 On Windows, use `.\scripts\pio.cmd <arguments>`; it selects the current user's
