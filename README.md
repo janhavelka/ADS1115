@@ -565,6 +565,7 @@ is tracked in [`docs/OPEN_ITEMS.md`](docs/OPEN_ITEMS.md) and executed with
 
 ## Documentation
 
+- [Retained branch review](docs/RETAINED_BRANCH_AUDIT.md) - current implementation coverage and retain/retire workflow
 - [`CHANGELOG.md`](CHANGELOG.md) - release history and 2.0 migration notes
 - `docs/README.md` - index of the `docs/` tree
 - `CONTRIBUTING.md` and `AGENTS.md` - contribution workflow and binding

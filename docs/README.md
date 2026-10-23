@@ -9,6 +9,7 @@ the datasheet reference corpus belong here.
 | --- | --- |
 | [`../README.md`](../README.md) | User guide, owner-safe API contract, examples, and reproducible checks. |
 | [`OPEN_ITEMS.md`](OPEN_ITEMS.md) | Outstanding hardware and integration evidence only. |
+| [`RETAINED_BRANCH_AUDIT.md`](RETAINED_BRANCH_AUDIT.md) | Retained branch inventory, semantic comparison, and retain/retire workflow. |
 | [`IDF_PORT.md`](IDF_PORT.md) | ESP-IDF adapter ownership, timeout, and error-mapping contract. |
 | [`ADS1115_HARDWARE_VALIDATION_PLAN.md`](ADS1115_HARDWARE_VALIDATION_PLAN.md) | Procedure for physical validation, including the evidence-retention rule. |
 | [`ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md`](ADS1115_HARDWARE_VALIDATION_RESULTS_TEMPLATE.md) | Dated hardware-result template. |
