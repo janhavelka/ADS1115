@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Linked the retained-branch audit from README.md and docs/README.md by its GitHub URL, as sibling libraries do, because the file is not a Doxygen input; this fixes the docs job unresolved-reference errors.
 - Unified author, copyright and contact metadata: THYMOS Solution s.r.o., Jan Havelka, info@thymos.cz.
 
 ## [2.0.2] - 2026-09-12
