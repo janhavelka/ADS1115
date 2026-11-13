@@ -27,7 +27,7 @@
     "url": "https://github.com/janhavelka/ADS1115.git"
   },
   "license": "MIT",
-  "homepage": "https://www.thymos.cz",
+  "homepage": "https://github.com/janhavelka/ADS1115",
   "frameworks": [
     "arduino",
     "espidf"
