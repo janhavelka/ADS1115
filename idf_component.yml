@@ -3,6 +3,8 @@ description: "Framework-neutral ADS1115 I2C driver"
 url: "https://github.com/janhavelka/ADS1115"
 repository: "https://github.com/janhavelka/ADS1115.git"
 license: "MIT"
+maintainers:
+  - "Jan Havelka (THYMOS Solution s.r.o.) <info@thymos.cz>"
 targets:
   - esp32s2
   - esp32s3

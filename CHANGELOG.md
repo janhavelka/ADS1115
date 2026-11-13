@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Unified author, copyright and contact metadata: THYMOS Solution s.r.o., Jan Havelka, info@thymos.cz.
+
 ## [2.0.2] - 2026-09-12
 
 ### Added
